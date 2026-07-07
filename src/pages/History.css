@@ -1,0 +1,190 @@
+.history { display: flex; flex-direction: column; gap: 12px; height: 100%; }
+/* 2026-07-05: 대시보드 부제목 하단 간격(12px)과 통일 — 컨테이너 gap이
+   이미 12px이라, 공통 .page-header 기본 margin-bottom(18px)을 0으로
+   낮춰서 합계가 12px이 되도록 함. */
+.history .page-header { margin-bottom: 0; }
+
+/* ── 필터 바 ─────────────────────────────────────────────────── */
+.history-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.history-search-wrap {
+  position: relative;
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.history-search-icon {
+  position: absolute;
+  left: 10px;
+  font-size: 13px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.history-search {
+  width: 100%;
+  padding-left: 30px !important;
+}
+
+.history-status-filter {
+  width: 120px !important;
+  flex-shrink: 0;
+}
+
+.history-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: 0 4px;
+}
+
+/* ── 테이블 래퍼 ─────────────────────────────────────────────── */
+.history-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+}
+
+/* ── 테이블 ──────────────────────────────────────────────────── */
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+
+/* 컬럼 너비 고정 */
+.history-table colgroup col:nth-child(1) { width: 80px; }   /* 상태 */
+.history-table colgroup col:nth-child(2) { width: auto; }    /* 제목 (나머지 공간) */
+.history-table colgroup col:nth-child(3) { width: 90px; }   /* 계정 */
+.history-table colgroup col:nth-child(4) { width: 108px; }  /* 예약일시 */
+.history-table colgroup col:nth-child(5) { width: 108px; }  /* 발행일시 */
+.history-table colgroup col:nth-child(6) { width: 40px; }   /* 삭제 */
+
+.history-table thead tr {
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.history-table th {
+  padding: 10px 8px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.history-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  text-align: center;
+  overflow: hidden;
+}
+
+.history-table tbody tr:last-child td { border-bottom: none; }
+.history-table tbody tr:hover td { background: var(--bg-elevated); }
+
+.history-title-cell { }
+.history-title-cell span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.history-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 3px;
+  white-space: pre-wrap;
+}
+
+.history-account {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.history-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.history-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.history-link:hover { text-decoration: underline; }
+
+.history-none { color: var(--text-muted); font-size: 12px; }
+
+.history-delete-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+}
+.history-delete-btn:hover {
+  opacity: 1;
+  background: rgba(248, 113, 113, 0.15);
+}
+
+.history-export-btn {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.history-export-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── 뱃지 ───────────────────────────────────────────────────── */
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.badge-scheduled  { background: rgba(79,216,110,0.15); color: var(--accent); }
+.badge-published  { background: rgba(52,211,153,0.15); color: var(--success); }
+.badge-publishing { background: rgba(251,191,36,0.15); color: var(--warning); }
+.badge-failed     { background: rgba(248,113,113,0.15); color: var(--danger); }
+.badge-cancelled  { background: var(--bg-elevated); color: var(--text-muted); }
+.badge-draft      { background: var(--bg-elevated); color: var(--text-muted); }
+
+/* ── 빈 상태 ─────────────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+  color: var(--text-muted);
+}
+.empty-icon { font-size: 28px; margin-bottom: 8px; }
+.empty-sub  { font-size: 12px; margin-top: 3px; }

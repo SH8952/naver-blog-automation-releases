@@ -1,0 +1,841 @@
+/* ── 자동화 루프 탭 (2026-07-05 신규) ─────────────────────── */
+/* 2026-07-06: 총 실행 사이클 수 입력칸 — 숫자 스핀 버튼을 숨겨
+   PublishScheduler .sf-input과 동일하게 text-align:center가 박스
+   전체 너비 기준으로 정확히 중앙정렬되도록 함 (스핀 버튼이 남아있으면
+   그 영역을 제외한 좁은 구간 기준으로 중앙정렬되어 왼쪽으로 치우쳐
+   보임). */
+.cycle-count-input::-webkit-inner-spin-button,
+.cycle-count-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.loop-radio-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+/* 2026-07-06 신규: "계정 모두 보기" 토글을 라디오 행의 가장 우측에 배치 */
+.loop-show-all-toggle {
+  margin-left: auto;
+}
+
+/* 2026-07-06: 자동화 루프 탭만 세로 스크롤 허용 — 발행 계정 선택
+   섹션이 길어져도(카테고리 드롭다운 확장 등) 하단 섹션이 잘리지 않고
+   스크롤로 보이도록 함. 다른 탭(.settings-tab-content 기본값인
+   overflow:hidden)에는 영향 없음.
+   2026-07-06 수정: 단일 클래스 선택자(.loop-tab-scroll)는 이후에 정의된
+   .settings-tab-content { overflow:hidden } 규칙과 명시도가 같아서, 스타일
+   시트 순서상 뒤에 나오는 overflow:hidden에 밀려 실제로는 적용되지 않고
+   있었음(스크롤 자체가 걸리지 않아 "키워드 소진 시 동작" 섹션이 잘리는
+   원인). 두 클래스를 함께 명시(.settings-tab-content.loop-tab-scroll)해
+   명시도를 높여 확실히 이기도록 수정. */
+.settings-tab-content.loop-tab-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 2026-07-06 재수정: 사용자 피드백 — 스크롤바가 카드 내용 바로 옆(이
+   .settings-tab-content 안쪽, 페이지 좌우 32px 여백 안쪽)에 붙어있어
+   다른 페이지들과 위치가 다름. 다른 페이지는 .main-inner(MainLayout.css,
+   페이지 전체 바깥쪽 컨테이너, overflow-y:auto)에서 스크롤이 걸려
+   스크롤바가 화면 가장 바깥쪽 가장자리에 붙음. 자동화 루프 탭도 동일한
+   위치에서 스크롤되도록, 루프 탭이 활성화된 동안만(.settings-loop-active)
+   .settings 루트의 height:100%/overflow:hidden 제약을 풀어 콘텐츠가
+   자연스러운 높이로 늘어나게 하고, .main-inner의 기존 스크롤이 담당하게
+   함. 다른 탭(api/post/system)에는 이 클래스가 붙지 않아 영향 없음. */
+.settings.settings-loop-active {
+  height: auto;
+  overflow: visible;
+}
+.settings.settings-loop-active .settings-tab-content.loop-tab-scroll {
+  overflow: visible;
+}
+
+/* 2026-07-07: 글 설정 탭도 동일한 문제 발생 — "본문 서식 스타일" 카드
+   추가로 카드 4개가 각자 flex:N, overflowY:auto로 높이를 나눠 갖던
+   기존 방식이 화면보다 좁아져 카드마다 개별 스크롤바가 생김(사용자
+   스크린샷으로 확인). 루프 탭과 동일하게: 카드들의 개별 flex/overflow
+   inline 스타일을 제거하고(자연스러운 높이로 쌓이게), 탭 활성화 시에만
+   (.settings-post-active) 루트 제약을 풀고 .settings-tab-content에
+   post-tab-scroll을 붙여 페이지 바깥쪽 .main-inner가 스크롤을 담당하게
+   함 — 다른 탭에는 영향 없음. */
+.settings-tab-content.post-tab-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.settings.settings-post-active {
+  height: auto;
+  overflow: visible;
+}
+.settings.settings-post-active .settings-tab-content.post-tab-scroll {
+  overflow: visible;
+}
+
+/* 2026-07-06: "발행 계정 선택" 타이틀 + "실제 카테고리 불러오기" 버튼을
+   같은 줄 좌/우로 배치하기 위한 헤더 행. 기존 .settings-section-title의
+   margin/border를 이 행으로 옮기고, 안의 h2는 중복되지 않도록 제거. */
+.settings-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -8px; /* 2026-07-06: 카드 상단 패딩(16px)이 이 행 아래쪽
+    여백(padding-bottom 8px)보다 커서 위아래가 비대칭이었음 — 위쪽만
+    8px 당겨 아래 여백과 동일하게 맞춤 */
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.settings-section-title-row .settings-section-title {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.loop-cattopic-header-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.loop-cattopic-header-msg {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* 2026-07-06: "사용할 계정" select 너비 축소 — 기존 .input 기본값이
+   100% 폭이라 계정명 길이와 무관하게 불필요하게 넓었음. */
+.loop-single-account-select {
+  width: auto;
+  max-width: 260px;
+}
+
+/* 2026-07-06: 1계정 발행 섹션 2단 그리드 — 왼쪽 열은 "사용할 계정" 한
+   줄, 오른쪽 열은 "배정 카테고리"(사용할 계정과 같은 줄) → "네이버
+   카테고리"(그 바로 아래 줄)가 세로로 쌓임. 빈 셀(loop-single-grid-cell
+   단독 사용, 자식 없음)은 왼쪽 열 2번째 줄을 비워두기 위한 자리표시자. */
+.loop-single-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  column-gap: 24px;
+  row-gap: 10px;
+  align-items: start;
+}
+.loop-single-grid-cell label {
+  display: block;
+}
+/* 부연설명은 각 필드 아래가 아니라 섹션 맨 하단에 모아서 표시 */
+.loop-single-desc-block {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.loop-field-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 0 6px 0;
+  line-height: 1.5;
+}
+.loop-field-desc:last-child { margin-bottom: 0; }
+/* 2026-07-06: 원인 발견 — globals.css의 .form-group label { display:block;
+   ... }이 .loop-radio(클래스 1개, 명시도 0,1,0)보다 명시도가 높아
+   (클래스 1개+태그 1개, 0,1,1) display:flex를 이겨서 block으로 깨지고
+   있었음. gap은 flex 전용 속성이라 display가 block이 되는 순간 완전히
+   무시됨(그래서 gap 변경이 하나도 반영 안 됐던 것) — position:relative
+   기반의 top은 flex 여부와 무관해 정상 반영됐던 것과 대조됨. 해결:
+   .loop-radio-row .loop-radio로 명시도를 (0,2,0)까지 올려 확실히 이김. */
+.loop-radio-row .loop-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+/* 네이티브 라디오/체크박스 위치를 글자 기준으로 맞추기 위한 미세 조정값 —
+   사용자가 원하는 위치가 될 때까지 여러 번 조정. 2026-07-06: "라디오
+   박스만" 위로 올려달라는 요청으로 type별로 분리 — 라디오는 -1px,
+   체크박스("계정 모두 보기")는 기존 0px 유지. */
+.loop-radio-row .loop-radio input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; position: relative; top: -1px; }
+.loop-radio-row .loop-radio input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; position: relative; top: 0px; }
+
+.loop-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  /* 2026-07-06: 이전에는 max-height:220px + overflow-y:auto로 이 목록
+     안에서만 따로 스크롤했는데, 파일럿 계정(들)의 카테고리 쌍 추가로
+     블록 하나가 커지면서 이 작은 내부 스크롤 박스 안에 모든 내용이
+     다 안 보이는 문제가 생김. 자체 스크롤을 없애고, 대신 이미 페이지
+     전체에 적용된 바깥쪽 스크롤(.main-inner, settings-loop-active)이
+     이 목록을 포함한 전체 내용을 보여주도록 함 — 스크롤 영역을 하나로
+     통일해 항상 모든 계정/쌍을 볼 수 있게 함. */
+}
+.loop-account-row {
+  display: flex;
+  flex-wrap: wrap; /* 2026-07-06: 배정 카테고리 + 네이버 카테고리 select 2개가
+                      한 줄에 다 안 들어가면 다음 줄로 넘어가도록 */
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  padding: 7px 10px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+}
+/* 2026-07-06: 위와 동일한 원인(.form-group label과의 명시도 충돌)으로
+   .loop-account-list를 앞에 붙여 명시도를 (0,2,1)까지 올려 확실히 이김. */
+.loop-account-list .loop-account-row > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.loop-account-list .loop-account-row input { accent-color: var(--accent); width: 15px; height: 15px; position: relative; top: 0px; }
+.loop-account-expired {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--danger);
+}
+.loop-empty-hint { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+
+/* 2026-07-06 신규: 계정당 여러 배정/네이버 카테고리 쌍(파일럿: skysmoga만)
+   — 기본 행 + 추가된 쌍 행들을 하나의 블록으로 묶음 */
+.loop-account-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* 2026-07-06 재수정: 추가된 쌍이 있으면(hasExtra) 줄마다 따로 배경 박스를
+   주는 대신, 계정 블록 전체를 배경색 하나로 감싸 "이 계정 칸이 아래로
+   확장된" 느낌을 줌(사용자 확인 완료). 개별 행(.loop-account-row/-extra)의
+   배경은 투명하게 만들고, 행 사이는 얇은 구분선으로만 나눔. */
+.loop-account-block.loop-account-block-grouped {
+  gap: 0;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.loop-account-block.loop-account-block-grouped .loop-account-row,
+.loop-account-block.loop-account-block-grouped .loop-account-row-extra {
+  background: transparent;
+  border-radius: 0;
+  margin-left: 0;
+}
+/* 2026-07-06: 추가된 행 사이 구분선(border-top)을 넣었었는데, 사용자
+   피드백으로 완전히 제거 — 하나의 박스 안에 이어지는 느낌만 유지. */
+/* 추가된 쌍 행에서 체크박스/계정명 자리를 비워 카테고리 select들의
+   좌우 위치를 기본 행과 맞춤(.loop-account-row > label과 동일한 flex) */
+.loop-pair-indent { flex: 1; min-width: 0; }
+.loop-pair-add-btn,
+.loop-pair-remove-btn {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+.loop-pair-add-btn:hover,
+.loop-pair-remove-btn:hover { text-decoration: underline; }
+.loop-pair-add-btn:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.loop-pair-remove-btn { color: var(--danger); }
+.loop-pair-msg {
+  font-size: 11px;
+  color: var(--danger);
+  margin: 0 0 0 12px;
+}
+
+/* 계정별 카테고리 배정 select (2026-07-05 신규, Method 2) */
+.loop-category-select {
+  width: auto;
+  max-width: 160px;
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+/* 2026-07-06: "네이버 카테고리" 버튼(.naver-cat-picker-btn)과 "배정
+   카테고리" select(.loop-category-select)의 상하 여백(박스 높이)을
+   동일하게 고정 — 두 요소 모두 padding은 4px 8px로 같지만, 네이티브
+   <select>는 브라우저가 드롭다운 화살표 영역만큼 내부적으로 조금 더
+   여유를 두고 렌더링해 커스텀 버튼보다 살짝 더 높게 보이는 경우가 있음.
+   min-height를 동일하게 명시해 두 박스의 상하 여백이 항상 같게 맞춤. */
+.loop-category-select,
+.naver-cat-picker-btn {
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+/* 네이버 카테고리 커스텀 드롭다운 (2026-07-06 신규) — 네이티브 select는
+   세로 목록만 가능해서, 타이틀 기준 가로 배치를 위해 버튼+포털 패널로
+   직접 구현. 라디오 버튼 없이 클릭 가능한 항목으로 구성.
+   2026-07-06 수정: 사용할 계정/배정 카테고리(.input, .loop-category-select)
+   와 외형을 통일 — 배경색(var(--bg-secondary)→var(--bg-elevated)), 폰트
+   (font-family 미지정 상태였음 → var(--font-sans) 명시)를 동일하게 맞춤.
+   기능(클릭 시 가로 그룹형 패널이 열리는 것)은 그대로 유지. */
+.naver-cat-picker { display: inline-block; }
+.naver-cat-picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: auto;
+  max-width: 220px;
+  min-width: 140px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.naver-cat-picker-btn:hover { border-color: var(--accent); }
+.naver-cat-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.naver-cat-picker-arrow { font-size: 9px; color: var(--text-secondary); flex-shrink: 0; }
+
+.naver-cat-panel {
+  position: fixed;
+  z-index: 3000;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  padding: 8px;
+  max-height: 70vh;
+  overflow-y: auto;
+  overflow-x: auto; /* 2026-07-06: 창이 매우 좁아 자동 정렬 전환으로도
+    폭이 부족할 때를 위한 안전망 — 가로 스크롤로 잘림 방지 */
+}
+.naver-cat-panel-clear {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.naver-cat-panel-clear:hover { background: var(--bg-secondary); }
+.naver-cat-panel-clear.selected { color: var(--accent); font-weight: 600; }
+/* 2026-07-06: flex:1 방식이 실제로는 4개 컬럼을 균등하게 채우지 못하고
+   우측에 빈 공간이 남는 문제가 있어, 폭 분배가 훨씬 안정적인 CSS
+   Grid(4개 동일 트랙)로 교체함. */
+.naver-cat-panel-columns {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px; /* 2026-07-06: 컬럼 폭 축소에 맞춰 간격도 살짝 줄임 */
+  align-items: start;
+}
+.naver-cat-panel-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.naver-cat-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+.naver-cat-panel-item {
+  font-size: 12px;
+  color: var(--text-primary);
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: normal; /* 2026-07-06: 고정폭 컬럼에서 실제 카테고리명이
+    붙어 길어질 수 있어 nowrap 대신 줄바꿈 허용 */
+  word-break: keep-all;
+  line-height: 1.4;
+}
+.naver-cat-panel-item:hover { background: var(--bg-secondary); }
+.naver-cat-panel-item.selected { color: var(--accent); font-weight: 600; background: var(--bg-secondary); }
+.naver-cat-panel-real { color: var(--text-secondary); font-weight: 400; }
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── 탭 콘텐츠 영역 — 남은 높이를 꽉 채움 ─────────────────── */
+.settings-tab-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 글 설정 탭 — 카드 내부 패딩 조정 ──────────────────────── */
+.settings .settings-section { padding: 16px 18px; }
+.settings .settings-section .form-group { margin-bottom: 10px; }
+.settings .settings-section .form-group:last-child { margin-bottom: 0; }
+
+/* ── 설정 탭 버튼 ─────────────────────────────────────────── */
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.settings-tab {
+  padding: 7px 20px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-tab:hover { border-color: var(--accent); color: var(--text-primary); }
+.settings-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 헤더 + 저장 버튼 한 줄 (2026-07-05: 다른 화면과 동일하게 부제목 줄
+   높이에 맞춰 정렬되도록 align-items를 flex-end로 통일) */
+.settings-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 0 !important;
+}
+.settings-header > div { flex: 1; }
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ── API 섹션 구분선 ────────────────────────────────────────── */
+.api-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 10px 0;
+}
+
+/* ── form-group-sm (API 설정용 컴팩트) ─────────────────────── */
+.form-group-sm {
+  margin-bottom: 12px;
+}
+.form-group-sm:last-child { margin-bottom: 0; }
+
+.label-sm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.label-link {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  margin-left: auto;
+}
+.label-link:hover { text-decoration: underline; }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 18px;
+}
+
+/* ── AI 제공자 탭 ───────────────────────────────────────────── */
+.provider-tabs {
+  display: flex;
+  gap: 8px;
+}
+.provider-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+  text-align: center;
+  min-width: 0;
+}
+.provider-tab:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+.provider-tab.active {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.08);
+}
+.provider-tab-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.provider-tab.active .provider-tab-name { color: var(--accent); }
+.provider-tab-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── 필드 힌트 ──────────────────────────────────────────────── */
+.field-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 5px;
+}
+.field-hint a { color: var(--accent); text-decoration: none; }
+.field-hint a:hover { text-decoration: underline; }
+
+/* ── API 키 입력 행 ─────────────────────────────────────────── */
+.api-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-toggle {
+  position: relative;
+  flex: 1;
+}
+.input-with-toggle .input {
+  padding-right: 36px;
+}
+.toggle-eye {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  transition: color var(--transition);
+}
+.toggle-eye:hover { color: var(--text-secondary); }
+
+/* ── API 상태 뱃지 ──────────────────────────────────────────── */
+.api-status {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 99px;
+}
+.api-status.ok    { background: rgba(52, 211, 153, 0.12); color: var(--success); }
+.api-status.error { background: rgba(248, 113, 113, 0.12); color: var(--danger); }
+
+/* ── 숫자 입력 + 단위 ───────────────────────────────────────── */
+.input-suffix-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.input-suffix-wrap .input { width: 100px; text-align: right; }
+.input-suffix {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── 저장 버튼 영역 ─────────────────────────────────────────── */
+.settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+.btn-saved { background: var(--success) !important; }
+
+/* ── 발행 안전 + 시스템 나란히 ──────────────────────────────── */
+.settings-bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.settings-bottom-card { height: 100%; box-sizing: border-box; }
+
+/* ════════════════════════════════════════════════════════════
+   ✏️  발행 안전 설정 — 위치 수동 조정 변수
+   아래 값만 바꾸면 레이아웃이 바뀝니다.
+   ════════════════════════════════════════════════════════════ */
+.sf-grid {
+  /* 항목 좌우 간격 (두 항목 사이 거리) */
+  --sf-col-gap: 40px;
+
+  /* 항목 상하 간격 (1행·2행 사이 거리) */
+  --sf-row-gap: 16px;
+
+  /* 전체 블록 좌우 이동 (양수 = 오른쪽, 음수 = 왼쪽) */
+  --sf-offset-x: 0px;
+
+  /* 전체 블록 상하 이동 (양수 = 아래, 음수 = 위) */
+  --sf-offset-y: 0px;
+
+  /* 입력칸 너비 */
+  --sf-input-w: 96px;
+
+  /* ── 실제 적용 (아래는 수정하지 마세요) ── */
+  display: grid;
+  grid-template-columns: 1fr var(--sf-col-gap) 1fr;
+  gap: var(--sf-row-gap) 0;
+  position: relative;
+  left: var(--sf-offset-x);
+  top: var(--sf-offset-y);
+}
+/* ══════════════════════════════════════════════════════════ */
+
+.sf-full { grid-column: 1 / -1; margin-top: 4px; }
+.sf-tilde {
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  padding: 0 12px;
+}
+.sf-interval-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.sf-item { display: flex; flex-direction: column; gap: 6px; }
+.sf-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.sf-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sf-row-end   { justify-content: flex-end; }
+.sf-row-start { justify-content: flex-start; }
+.sf-input {
+  width: var(--sf-input-w);
+  flex: 0 0 var(--sf-input-w);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 7px 10px;
+  text-align: center;
+  outline: none;
+  transition: border-color var(--transition);
+  box-sizing: border-box;
+}
+.sf-input:focus { border-color: var(--accent); }
+.sf-input::-webkit-inner-spin-button,
+.sf-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.sf-input { -moz-appearance: textfield; }
+.sf-unit {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── 라이선스 (2026-07-04 신규) ─────────────────────────────── */
+.license-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.license-input-row .input { flex: 1; }
+.license-msg {
+  font-size: 12px;
+  margin-top: 6px;
+}
+.license-msg-ok    { color: var(--success); }
+.license-msg-error { color: var(--danger); }
+
+.license-status {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.license-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.license-status-label { color: var(--text-muted); }
+.license-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+}
+.license-badge-standard { background: var(--bg-elevated); color: var(--text-secondary); }
+.license-badge-premium  { background: var(--accent-light); color: var(--accent); }
+.license-expired { color: var(--danger); }
+.license-dday    { color: var(--warning); }
+
+/* ── 오류 로그 ──────────────────────────────────────────────── */
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.log-clear-btn { color: var(--danger) !important; }
+.log-path-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 모달 오버레이 (공통) ────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+/* ── 로그 팝업 모달 ──────────────────────────────────────────── */
+.log-modal {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 720px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.55);
+  overflow: hidden;
+}
+.log-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+.log-modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.log-modal-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.log-modal-path {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 6px 18px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.log-modal-content {
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+  padding: 14px 18px;
+  margin: 0;
+  flex: 1;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* 드래그 선택 영역 하이라이트 */
+.log-modal-content::selection,
+.log-modal-content *::selection {
+  background: rgba(99, 102, 241, 0.35);
+  color: var(--text-primary);
+}
+
+/* 복사 완료 토스트 */
+.log-copy-toast {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 99px;
+  pointer-events: none;
+  animation: toast-in 0.15s ease;
+  white-space: nowrap;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}

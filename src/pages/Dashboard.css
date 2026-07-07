@@ -1,0 +1,365 @@
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.dashboard .page-header {
+  margin-bottom: 0;
+  flex-shrink: 0;
+  display: flex;
+  /* 우측 버튼 그룹을 h1이 아니라 부제목(p) 줄에 맞춰 정렬 —
+     아래 통계 카드와의 간격이 좌/우 양쪽 모두 동일해지도록 함
+     (2026-07-05) */
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.dashboard .page-header h1 { font-size: 18px; }
+.dashboard .page-header p  {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── 통계 카드 4개 ────────────────────────────────────────── */
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  flex-shrink: 0;
+}
+.stat-card { padding: 14px 16px; }
+.stat-value { font-size: 26px; font-weight: 800; line-height: 1; }
+.stat-unit  { font-size: 13px; font-weight: 500; margin-left: 3px; opacity: 0.7; }
+.stat-label { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+
+/* ── 차트 영역 ────────────────────────────────────────────── */
+.dashboard-charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.chart-card { padding: 14px 16px; }
+
+.chart-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.chart-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* SVG 트렌드 차트 */
+.trend-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+/* 계정 수평 바차트 */
+.account-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+.acc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.acc-name {
+  font-size: 11px;
+  color: var(--text-secondary);
+  width: 80px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acc-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-elevated);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.acc-bar {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 2px;
+}
+.acc-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  width: 22px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 80px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chart-skeleton {
+  height: 80px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  animation: shimmer 1.2s ease infinite alternate;
+}
+
+/* ── 하단 섹션 (최근글 + 빠른이동) ───────────────────────── */
+.dashboard-bottom {
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.dashboard-recent {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-quickactions {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 최근 발행 글 ─────────────────────────────────────────── */
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: 24px 0;
+}
+.empty-icon { font-size: 28px; margin-bottom: 8px; }
+.empty-sub  { font-size: 12px; margin-top: 3px; }
+
+.recent-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  gap: 12px;
+}
+.recent-item-left { flex: 1; min-width: 0; }
+.recent-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.recent-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 4px;
+}
+.recent-link {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.recent-link:hover { text-decoration: underline; }
+
+/* ── 빠른 이동 버튼 ──────────────────────────────────────── */
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+.quick-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.quick-action-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.quick-action-primary {
+  background: rgba(79,216,110,0.1);
+  border-color: rgba(79,216,110,0.3);
+  color: var(--accent);
+}
+.quick-action-primary:hover {
+  background: rgba(79,216,110,0.2);
+}
+.qa-icon  { font-size: 14px; flex-shrink: 0; }
+.qa-label { font-size: 12px; font-weight: 600; }
+
+/* ── 예약 배지 ───────────────────────────────────────────── */
+.scheduled-badge {
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(79,216,110,0.15);
+  color: var(--accent);
+  border: 1px solid rgba(79,216,110,0.3);
+  border-radius: 99px;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.scheduled-badge:hover { background: rgba(79,216,110,0.25); }
+
+/* ── 자동화 루프 컨트롤 (2026-07-05 신규) ────────────────── */
+.loop-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+}
+.loop-mode-btn {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 99px;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.loop-mode-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+.loop-mode-manual { color: var(--text-muted); }
+.loop-mode-auto   { background: rgba(79,216,110,0.15); color: var(--accent); }
+.loop-mode-semi   { background: rgba(96,165,250,0.15); color: var(--info); }
+
+.loop-startstop-btn {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 99px;
+  border: none;
+  cursor: pointer;
+  background: rgba(79,216,110,0.18);
+  color: var(--accent);
+  transition: background var(--transition);
+}
+.loop-startstop-btn:hover:not(:disabled) { background: rgba(79,216,110,0.3); }
+.loop-startstop-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+.loop-startstop-btn.running {
+  background: rgba(248,113,113,0.15);
+  color: var(--danger);
+}
+.loop-startstop-btn.running:hover:not(:disabled) { background: rgba(248,113,113,0.28); }
+
+.loop-error-banner {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--danger);
+  background: rgba(248,113,113,0.1);
+  border: 1px solid rgba(248,113,113,0.3);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.loop-status-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(79,216,110,0.08);
+  border: 1px solid rgba(79,216,110,0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+.loop-status-mode { font-weight: 700; color: var(--accent); }
+.loop-status-sep { color: var(--text-muted); }
+.loop-status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  animation: loop-pulse 1.4s ease infinite;
+  flex-shrink: 0;
+}
+@keyframes loop-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.loop-shutdown-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  background: rgba(248,113,113,0.12);
+  border: 1px solid rgba(248,113,113,0.35);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+/* ── 로딩 스켈레톤 ───────────────────────────────────────── */
+.stat-skeleton {
+  width: 60px;
+  height: 26px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  animation: shimmer 1.2s ease infinite alternate;
+}
+.loading-rows { display: flex; flex-direction: column; gap: 6px; }
+.loading-row {
+  height: 42px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  animation: shimmer 1.2s ease infinite alternate;
+}
+@keyframes shimmer { from { opacity: 0.4; } to { opacity: 0.8; } }

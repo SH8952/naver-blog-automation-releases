@@ -1,0 +1,91 @@
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  height: 100%;
+  /* 타이틀바가 별도 존재하므로 드래그 영역 불필요 */
+}
+
+/* 로고 */
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-logo-icon {
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(160deg, #4fd86e 0%, #03C75A 100%);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+}
+.sidebar-logo-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* 네비게이션 */
+.sidebar-nav {
+  flex: 1;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--text-secondary);
+  transition: background var(--transition), color var(--transition);
+  cursor: pointer;
+}
+.sidebar-nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sidebar-nav-item.active { background: var(--accent-light); color: var(--accent); }
+
+.sidebar-nav-icon { display: flex; align-items: center; flex-shrink: 0; }
+.sidebar-nav-label { font-size: 13px; font-weight: 500; }
+
+/* [개발용] 배포 시 삭제 — 전체 데이터 초기화 버튼.
+   2026-07-05: 대시보드 헤더에 있던 걸 사이드바 최하단 구분선(.sidebar-footer
+   의 border-top) 바로 위로 이동. */
+.sidebar-dev-reset-btn {
+  margin: 0 8px 8px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: rgba(248,113,113,0.15);
+  color: var(--danger);
+  border: 1px solid rgba(248,113,113,0.35);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.sidebar-dev-reset-btn:hover:not(:disabled) { background: rgba(248,113,113,0.25); }
+.sidebar-dev-reset-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 하단 */
+.sidebar-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+}

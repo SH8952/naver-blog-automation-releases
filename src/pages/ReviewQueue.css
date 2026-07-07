@@ -1,0 +1,90 @@
+.review-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  overflow-y: auto;
+}
+/* 2026-07-05: 대시보드 부제목 하단 간격(12px)과 통일 — 컨테이너 gap이
+   이미 12px이라, 공통 .page-header 기본 margin-bottom(18px)을 0으로
+   낮춰서 합계가 12px이 되도록 함. */
+.review-queue .page-header { margin-bottom: 0; }
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.review-item { padding: 0; overflow: hidden; }
+
+.review-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+.review-item-header:hover { background: var(--bg-hover); }
+
+.review-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.review-title {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.review-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.review-expand-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.review-item-body {
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--border);
+  margin-top: -1px;
+}
+.review-section {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  margin-top: 10px;
+}
+.review-section-body { max-height: 260px; overflow-y: auto; }
+
+.review-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+/* 2026-07-07 신규: 완전자동에서 누락 항목으로 인해 검수 대기로 이동된
+   글에 사유를 표시하는 배너 — 카드 헤더 바로 아래, 본문 펼침과 무관하게
+   항상 보이도록 함. */
+.review-item-memo {
+  margin: 0 16px 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-sm);
+}

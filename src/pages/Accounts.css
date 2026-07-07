@@ -1,0 +1,194 @@
+/* 2026-07-05: 대시보드 부제목 하단 간격(12px = margin-bottom 0 + 컨테이너
+   gap 12px)을 기준으로 통일 — .accounts는 자체 gap이 없어 margin-bottom이
+   전체 간격을 그대로 결정하므로 12px로 직접 설정. */
+.accounts .page-header { margin-bottom: 12px; }
+
+/* ─── 툴바 ──────────────────────────────────────────────────── */
+.accounts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* ─── 계정 추가 드롭다운 ─────────────────────────────────────── */
+.add-wrapper { position: relative; }
+
+.count-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+  z-index: 200;
+  min-width: 130px;
+}
+.count-dropdown-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 8px 6px;
+}
+.count-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.count-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ─── 진행 표시 ──────────────────────────────────────────────── */
+.add-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── 계정 수 뱃지 ───────────────────────────────────────────── */
+.account-count-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ─── 테이블 ─────────────────────────────────────────────────── */
+/* 아이디 길이는 예측 불가능하므로 열 너비를 줄이는 대신 가로 스크롤 허용
+   (2026-07-04: 긴 아이디 등록 시 우측 삭제 버튼이 잘리는 문제 수정) */
+.accounts-table-wrap { padding: 0; overflow-x: auto; overflow-y: hidden; }
+
+.accounts-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+.accounts-table th {
+  text-align: center;
+  padding: 12px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.accounts-table td {
+  padding: 11px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  text-align: center;
+}
+.accounts-table tbody tr:last-child td { border-bottom: none; }
+.accounts-table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+.accounts-table tbody tr.row-editing td { background: var(--bg-elevated); }
+
+/* ─── 열 너비 ────────────────────────────────────────────────── */
+.col-delete   { width: 24px; padding: 0 2px !important; text-align: center; vertical-align: middle; }
+.col-idx      { width: 36px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.col-id       { font-family: 'SF Mono', 'Menlo', monospace; font-size: 12.5px; text-align: center; white-space: nowrap; }
+.col-nickname { min-width: 110px; text-align: center; white-space: nowrap; }
+.col-status   { white-space: nowrap; text-align: center; }
+.col-lastlogin{ white-space: nowrap; font-size: 12px; color: var(--text-secondary); text-align: center; }
+.col-memo     { min-width: 160px; text-align: center; }
+.col-actions  { width: 90px; min-width: 90px; text-align: center; white-space: nowrap; }
+
+/* ─── 상태 뱃지 ──────────────────────────────────────────────── */
+.status-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.status-active {
+  background: rgba(52, 211, 153, 0.12);
+  color: var(--success);
+}
+.status-expired {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+}
+
+/* ─── 재로그인 버튼 ──────────────────────────────────────────── */
+.btn-relogin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.btn-relogin:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.1);
+}
+.btn-relogin:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── 인라인 편집 셀 ─────────────────────────────────────────── */
+.editable-cell {
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  min-width: 50px;
+  transition: background var(--transition);
+}
+.editable-cell:hover { background: var(--bg-hover); }
+.placeholder-text    { color: var(--text-muted); font-size: 11px; }
+
+.inline-input { padding: 5px 8px; }
+
+/* ─── 액션 버튼 ──────────────────────────────────────────────── */
+.action-btns { display: flex; gap: 6px; align-items: center; }
+.btn-sm      { padding: 5px 10px; font-size: 12px; }
+
+.btn-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), background var(--transition);
+}
+.btn-delete:hover {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+}

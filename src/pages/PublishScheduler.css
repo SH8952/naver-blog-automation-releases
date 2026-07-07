@@ -1,0 +1,463 @@
+/* ── 레이아웃 ─────────────────────────────────────────────── */
+/* main-inner(overflow-y:auto)가 전체 스크롤 담당.
+   scheduler는 자연 높이로 흐르고, 캘린더만 sticky로 고정.    */
+.scheduler {
+  display: flex;
+  flex-direction: column;
+}
+
+.scheduler-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;   /* 각 컬럼이 내용 높이만큼만 */
+}
+
+/* 캘린더 컬럼 — 스크롤 시 상단에 고정 */
+.scheduler-left {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: sticky;
+  top: 0;                    /* main-inner 기준 */
+  align-self: flex-start;
+}
+
+/* 콘텐츠 컬럼 — 자연 높이로 전체 표시 */
+.scheduler-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+
+/* ── 페이지 헤더 ─────────────────────────────────────────────── */
+/* 2026-07-05: 대시보드 부제목 하단 간격(12px)과 통일 (14px → 12px) */
+.scheduler .page-header { flex-shrink: 0; margin-bottom: 12px; }
+
+/* ── 캘린더 ─────────────────────────────────────────────────── */
+.calendar-card { padding: 16px; }
+
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.cal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.cal-nav {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition), color var(--transition);
+  line-height: 1;
+}
+.cal-nav:hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.cal-day-name {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 4px 0;
+  text-transform: uppercase;
+}
+.cal-day-name.sun { color: #f87171; }
+.cal-day-name.sat { color: #60a5fa; }
+
+.cal-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  min-height: 40px;
+  transition: background var(--transition);
+}
+.cal-cell:hover { background: var(--bg-elevated); }
+.cal-cell.today .cal-day-num {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cal-cell.selected { background: var(--bg-elevated); outline: 1px solid var(--accent); }
+.cal-cell.sun .cal-day-num { color: #f87171; }
+.cal-cell.sat .cal-day-num { color: #60a5fa; }
+
+.cal-day-num {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-dots {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.cal-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.cal-dot-scheduled      { background: var(--accent); }
+.cal-dot-reserved       { background: var(--accent); } /* 네이버 자체 예약 등록 완료 (2026-07-03) */
+.cal-dot-published      { background: var(--success); }
+.cal-dot-pending_confirm { background: var(--warning); }
+.cal-dot-publishing     { background: var(--warning); }
+.cal-dot-failed         { background: var(--danger); }
+.cal-dot-cancelled      { background: var(--text-muted); }
+.cal-dot-draft          { background: var(--border); }
+
+.cal-dot-more {
+  font-size: 9px;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.cal-legend {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── 월별 요약 ──────────────────────────────────────────────── */
+.month-summary { padding: 16px 18px; }
+.summary-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+.summary-item { display: flex; flex-direction: column; gap: 2px; }
+.summary-num  { font-size: 22px; font-weight: 700; }
+.summary-label { font-size: 11px; color: var(--text-muted); }
+
+/* ── 하단 전체 너비 영역 (날짜별 포스트 + 큐) ──────────────── */
+.scheduler-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-bottom: 24px;
+}
+
+/* ── 날짜 패널 헤더 ─────────────────────────────────────────── */
+.date-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.date-panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.date-panel-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 1px 8px;
+}
+
+/* ── 날짜별 포스트 2열 그리드 ──────────────────────────────── */
+.date-post-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  align-items: start;
+}
+.date-post-grid > * {
+  min-width: 0; /* 그리드 셀이 1fr을 밀어내지 않도록 — ellipsis 동작 보장 */
+}
+
+/* ── 포스트 목록 ────────────────────────────────────────────── */
+.post-list { display: flex; flex-direction: column; gap: 5px; }
+
+.post-item { padding: 10px 12px; }
+.post-item-compact { padding: 7px 12px; }
+
+.post-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.post-item-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.post-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+  margin-bottom: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.post-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 0;
+}
+
+.meta-chip {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 1px 7px;
+}
+
+.post-item-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 3px;
+  white-space: pre-wrap;
+}
+
+.post-item-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  display: inline-block;
+  margin-top: 3px;
+}
+.post-item-link:hover { text-decoration: underline; }
+
+.post-cancel-btn { margin-top: 6px; color: var(--danger); }
+
+/* ── 뱃지 ───────────────────────────────────────────────────── */
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.badge-scheduled  { background: rgba(79,216,110,0.15); color: var(--accent); }
+.badge-published  { background: rgba(52,211,153,0.15); color: var(--success); }
+.badge-publishing { background: rgba(251,191,36,0.15); color: var(--warning); }
+.badge-failed     { background: rgba(248,113,113,0.15); color: var(--danger); }
+.badge-cancelled  { background: var(--bg-elevated); color: var(--text-muted); }
+.badge-draft      { background: var(--bg-elevated); color: var(--text-muted); }
+
+/* ── 상단: 이번 달 현황 위 / 발행 안전 설정 아래 (세로 스택) ─── */
+.scheduler-top-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── 발행 안전 설정 카드 ─────────────────────────────────────── */
+.safe-card {
+  padding: 14px 16px;
+  --sf-input-w: 68px;   /* 입력칸 통일 크기 */
+}
+.safe-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.safe-card-header .summary-title { margin-bottom: 0; }
+
+/* 입력칸 공통 크기 */
+.safe-card .sf-input {
+  width: 60px;
+  flex: 0 0 60px;
+  text-align: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+  transition: border-color var(--transition);
+  -moz-appearance: textfield;
+}
+.safe-card .sf-input:focus { border-color: var(--accent); }
+.safe-card .sf-input::-webkit-inner-spin-button,
+.safe-card .sf-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* 전체 필드 컨테이너 */
+.safe-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 저품질 우려 소프트 경고 (2026-07-05 신규) — 하드 블록 아님, 안내용 */
+.safe-warning {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.safe-warning p {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger);
+  line-height: 1.6;
+}
+.safe-warning p + p { margin-top: 4px; }
+
+/* 상단 2열 행 */
+.safe-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* 각 필드 항목 공통 */
+.safe-field-item {
+  display: flex;
+  align-items: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  gap: 10px;
+}
+
+/* 상단 2열: label + input 중앙 정렬 */
+.safe-row-2col .safe-field-item {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 발행 간격(full행): label 좌 ↔ input 우 */
+.safe-fields > .safe-field-item {
+  justify-content: space-between;
+}
+
+/* input + 단위 묶음 */
+.safe-input-grp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── 하단 행: 발행 완료 + 예약 대기 ─────────────────────────── */
+.scheduler-bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-top: 4px;
+}
+.queue-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;        /* 콘텐츠가 1fr 비율을 밀어내지 않도록 */
+}
+
+.queue-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding-top: 4px;
+  text-align: center;  /* 중앙 기준 정렬 */
+}
+.queue-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── 발행완료 더보기 버튼 ────────────────────────────────────── */
+.published-toggle-btn {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 0;
+  text-align: center;
+}
+.published-toggle-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── 버튼 상태 ──────────────────────────────────────────────── */
+.btn-saved { background: var(--success) !important; }
+
+/* ── 스피너 ─────────────────────────────────────────────────── */
+.spinner-xs {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

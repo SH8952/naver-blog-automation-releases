@@ -1,0 +1,949 @@
+/* ── 글감 수집 페이지 — 한 화면 레이아웃 ───────────────────── */
+/* 2026-07-05 수정: 대시보드(.dashboard)는 자체 top padding이 없이 공통
+   .main-inner의 padding-top(24px)만 적용됨 — 그런데 이 페이지는 자체적으로
+   padding-top:18px를 추가로 더 얹고 있어서 h1이 대시보드보다 18px 더
+   아래에서 시작하고 있었음. 대시보드 h1 위치와 맞추기 위해 top padding 제거. */
+.research-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;      /* 뷰포트를 채우되, 내용이 넘치면 스크롤 허용 */
+  padding: 0;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+/* ── 헤더 ─────────────────────────────────────────────────── */
+/* 2026-07-05: 제목/부제목 구조를 공통 .page-header로 통일하면서
+   전용 .research-header/.research-title는 더 이상 쓰지 않음(제거).
+   .research-header-right는 우측 상태 배지 + 버튼 그룹 정렬용으로 유지. */
+/* 세로 스크롤 방지: .research-page가 flex gap:10px를 쓰고 있어서 margin-bottom과
+   더해지는 구조였음(18px + 10px = 28px 실제 간격) — 실제 하단 여백이 16px가
+   되도록 margin-bottom을 6px로 낮춤(6px + 10px gap = 16px)
+   2026-07-05 재조정: 대시보드 부제목 하단 간격(12px = margin-bottom 0 +
+   gap 12px)과 통일 — 이 페이지는 gap이 10px이므로 margin-bottom을
+   2px로 낮춰서 합계 12px을 맞춤(6px→2px). 간격이 4px 줄어드는 만큼
+   .trends-section 아래에 새 공백이 생기므로, 아래 .trends-section
+   height를 그만큼 늘려 하단 여백을 대시보드와 다시 맞춤(실측 후 확정). */
+.research-page .page-header { flex-shrink: 0; margin-bottom: 2px; }
+
+/* 2026-07-05: 상태 메시지를 버튼 줄(.research-header-right)이 아니라 h1과
+   같은 줄로 이동 — 버튼 줄 폭이 메시지 길이에 따라 늘어나 .page-header의
+   flex-wrap 때문에 버튼 전체가 아래로 밀려나던 문제 해결. 이제
+   .research-header-right는 버튼 2개로 폭이 항상 고정이라 절대 안 밀림. */
+/* 2026-07-05 추가: 알림 배지를 h1 줄 안에서 우측(버튼 그룹 바로 위)으로
+   정렬 — .research-header-left에 flex:1을 줘서 버튼 그룹 앞까지 남은
+   폭을 전부 차지하게 하고, .research-title-row에 justify-content:
+   space-between을 줘서 h1은 왼쪽 고정, 배지는 그 안에서 맨 오른쪽으로
+   밀려나 버튼들 바로 위 줄에 나타나도록 함. */
+/* 2026-07-06: 배지가 flex-wrap으로 다음 줄에 밀려날 때 .page-header
+   높이가 늘어나면서 전체 콘텐츠 높이가 뷰포트를 넘어 .main-inner에
+   불필요한 세로 스크롤이 생기는 문제 발견(키워드 추가 시 재현).
+   배지를 문서 흐름에서 빼서 position:absolute로 띄우면 나타나거나
+   사라져도 .research-title-row의 높이에 전혀 영향을 주지 않음 —
+   근본적으로 스크롤이 생길 여지를 없앰. 너무 긴 메시지가 좌측 h1을
+   가리지 않도록 max-width + ellipsis로 폭도 제한. */
+.research-header-left {
+  flex: 1;
+  min-width: 0;
+}
+.research-title-row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.research-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.research-status {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: min(60%, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(3,199,90,0.12);
+  color: var(--accent);
+}
+.research-status.err {
+  background: rgba(239,68,68,0.12);
+  color: #ef4444;
+}
+.btn-collect-all,
+.btn-collect-now {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity var(--transition), background var(--transition);
+  white-space: nowrap;
+}
+.btn-collect-all {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+}
+.btn-collect-now {
+  background: rgba(251,191,36,0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(251,191,36,0.35);
+}
+.btn-collect-all:hover:not(:disabled)  { opacity: 0.85; }
+.btn-collect-now:hover:not(:disabled)  { background: rgba(251,191,36,0.22); }
+.btn-collect-all:disabled,
+.btn-collect-now:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── 달력 오버레이 (딤 처리) ────────────────────────────────── */
+.cal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  background: rgba(0,0,0,0.45);
+}
+
+/* ── 달력 팝업 — 화면 중앙 모달 ────────────────────────────── */
+.cal-popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 200;
+  background: #1e2130;          /* 완전 불투명 고정 색상 */
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+  padding: 14px;
+  width: 256px;
+  user-select: none;
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cal-nav {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 6px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition);
+}
+.cal-nav:hover { color: var(--accent); }
+
+/* 7열 그리드 */
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-dow {
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 2px 0 4px;
+}
+
+/* 날짜 버튼 */
+.cal-day {
+  font-size: 12px;
+  text-align: center;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background var(--transition), color var(--transition);
+  position: relative;
+}
+.cal-day:hover { background: var(--bg-tertiary); }
+
+.cal-today { font-weight: 700; color: var(--accent); }
+
+/* 범위 내 날짜 */
+.cal-in {
+  background: rgba(3,199,90,0.12);
+  border-radius: 0;
+  color: var(--text-primary);
+}
+
+/* 시작/종료 날짜 */
+.cal-start,
+.cal-end {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+/* 하단 영역 */
+.cal-foot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.cal-sel-txt {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-foot-btns { display: flex; gap: 4px; }
+
+.cal-btn-clear,
+.cal-btn-apply {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.cal-btn-clear {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.cal-btn-clear:hover { color: #ef4444; border-color: #ef4444; }
+.cal-btn-apply {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+}
+.cal-btn-apply:hover { opacity: 0.85; }
+
+/* ── 키워드 입력 폼 ────────────────────────────────────────── */
+.research-form {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  align-items: center;
+}
+/* globals.css의 .input { width: 100% }를 !important로 덮어씀 */
+/* 2026-07-06: 수집 키워드 입력칸에도 지우기(×) 버튼을 추가하면서 input을
+   .research-kw-wrap으로 감쌈 — flex 크기 지정은 원래 input에 있던 값을
+   그대로 wrap으로 옮기고, input 자체는 wrap 안에서 100% 너비만 채움. */
+.research-form .research-kw-wrap {
+  position: relative;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 60px;
+  display: flex;
+  align-items: center;
+}
+.research-form .research-kw-wrap .research-kw-input {
+  width: 100% !important;
+  padding-right: 26px !important; /* × 버튼과 텍스트 겹침 방지 */
+}
+/* 2026-07-06: 카테고리 입력칸에 지우기(×) 버튼을 추가하면서 input을
+   .research-cat-wrap으로 감쌈 — flex 크기 지정은 wrap이 담당하고,
+   input 자체는 wrap 안에서 100% 너비만 채움. */
+.research-form .research-cat-wrap {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 60px;
+  display: flex;
+  align-items: center;
+}
+.research-form .research-cat-wrap .research-cat-input {
+  width: 100% !important;
+  padding-right: 26px !important; /* × 버튼과 텍스트 겹침 방지 */
+}
+.research-cat-clear-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.research-cat-clear-btn:hover {
+  background: var(--danger);
+  color: #fff;
+}
+/* 수집 주기: "전체 수집" 버튼 크기와 동일한 고정 너비 */
+.research-form .research-interval-select {
+  flex: 0 0 100px !important;
+  width: 100px !important;
+  font-size: 12px;
+  height: 36px;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+.btn-add-kw {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.btn-add-kw:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn-add-kw:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── 2열 본문 ──────────────────────────────────────────────── */
+.research-body {
+  display: flex;
+  gap: 12px;
+  flex: 0 0 240px;      /* 키워드·글감 패널 고정 높이 240px */
+  min-height: 0;
+}
+
+/* ── 패널 공통 ─────────────────────────────────────────────── */
+.research-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 0;
+}
+.kw-panel    { width: 280px; flex-shrink: 0; }
+.items-panel { flex: 1; min-width: 0; }
+
+.panel-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+  overflow: hidden;  /* 자식이 넘치지 않도록 */
+}
+.panel-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;  /* 줄바꿈 방지 */
+  flex-shrink: 0;       /* 절대 줄어들지 않음 */
+}
+.panel-section-title em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+/* globals.css width:100% 덮어쓰기 */
+.panel-label-row .items-filter-select {
+  font-size: 12px;
+  height: 28px;
+  flex: 0 0 130px !important;   /* 고정 너비 */
+  width: 130px !important;       /* "전체 키워드 ▾" 가 잘리지 않는 너비 */
+  padding: 0 6px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 빈 메시지 ─────────────────────────────────────────────── */
+.empty-msg {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* ── 키워드 목록 ────────────────────────────────────────────── */
+.kw-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.kw-item {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-light, rgba(255,255,255,0.05));
+  transition: background var(--transition);
+}
+.kw-item:hover { background: var(--bg-tertiary); }
+.kw-item:last-child { border-bottom: none; }
+.kw-inactive { opacity: 0.45; }
+
+.kw-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.kw-active-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition);
+  padding: 0;
+}
+.kw-active-dot.active { background: var(--accent); }
+.kw-active-dot:hover   { opacity: 0.7; }
+
+.kw-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kw-cat {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(3,199,90,0.12);
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.kw-interval {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kw-item-bot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.kw-last {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.kw-actions { display: flex; gap: 4px; }
+
+/* ── 공통 소형 버튼 ─────────────────────────────────────────── */
+.btn-sm {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.btn-sm:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-collect { color: var(--accent); border-color: rgba(3,199,90,0.3); }
+.btn-del:hover { border-color: #ef4444 !important; color: #ef4444 !important; }
+.btn-del-all {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(239,68,68,0.35);
+  background: rgba(239,68,68,0.08);
+  color: #f87171;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn-del-all:hover { background: rgba(239,68,68,0.18); border-color: #ef4444; color: #ef4444; }
+.btn-used   { color: var(--accent); border-color: rgba(3,199,90,0.3); font-size: 11px; }
+.btn-unused { color: var(--text-secondary); }
+
+/* ── 글감 목록 ──────────────────────────────────────────────── */
+.items-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.item-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  transition: border-color var(--transition);
+}
+.item-card:hover { border-color: rgba(3,199,90,0.3); }
+.item-card.item-used { opacity: 0.5; }
+
+.item-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.item-kw-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(3,199,90,0.1);
+  color: var(--accent);
+}
+.item-src-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.item-src-naver { background: rgba(3,199,90,0.08); color: #03c75a; }
+.item-src-google { background: rgba(66,133,244,0.12); color: #4285f4; }
+.item-actions { display: flex; gap: 4px; }
+
+.item-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  margin-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item-title:hover { color: var(--accent); text-decoration: underline; }
+
+.item-summary {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 0 3px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.item-date {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* ── 스크롤바 ──────────────────────────────────────────────── */
+.kw-list::-webkit-scrollbar,
+.items-list::-webkit-scrollbar { width: 4px; }
+.kw-list::-webkit-scrollbar-track,
+.items-list::-webkit-scrollbar-track { background: transparent; }
+.kw-list::-webkit-scrollbar-thumb,
+.items-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── 스피너 ────────────────────────────────────────────────── */
+.spinner-sm {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 하단 스크롤 컨테이너 (키워드 분석 + 트렌드) ────────────── */
+.research-bottom-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── 키워드 분석 섹션 (CORE 05) ────────────────────────────── */
+.analyze-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  flex-shrink: 0;
+}
+
+.analyze-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.analyze-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analyze-icon { font-size: 16px; }
+.analyze-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.analyze-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.analyze-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+/* 2026-07-06: 키워드 분석 입력칸에도 지우기(×) 버튼 추가 — input을
+   .analyze-kw-wrap으로 감쌈. 기존 flex:1 값은 wrap이 담당. */
+.analyze-kw-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+.analyze-kw-wrap .analyze-kw-input {
+  width: 100% !important;
+  padding-right: 26px !important; /* × 버튼과 텍스트 겹침 방지 */
+}
+
+.btn-analyze {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity var(--transition);
+}
+.btn-analyze:hover:not(:disabled) { opacity: 0.85; }
+.btn-analyze:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.analyze-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 6px 10px;
+  background: rgba(248,113,113,0.08);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+}
+
+.analyze-table-wrap {
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.analyze-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.analyze-table th {
+  text-align: center;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.th-sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+.th-sortable:hover {
+  color: var(--accent);
+}
+
+.sort-icon {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 9px;
+  vertical-align: middle;
+}
+.sort-idle  { opacity: 0.35; }
+.sort-active { color: var(--accent); opacity: 1; }
+
+.analyze-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  text-align: center;
+}
+.analyze-table td:first-child {
+  text-align: left;
+}
+
+.analyze-table tr:last-child td { border-bottom: none; }
+.analyze-table tr:hover td { background: var(--bg-elevated); }
+
+.analyze-kw-cell { font-weight: 600; }
+
+.analyze-num {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.analyze-total {
+  font-weight: 700;
+  color: var(--accent) !important;
+}
+
+.comp-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  text-align: center;
+}
+.comp-low  { background: rgba(52,211,153,0.15); color: var(--success); }
+.comp-mid  { background: rgba(251,191,36,0.15);  color: var(--warning); }
+.comp-high { background: rgba(248,113,113,0.15); color: var(--danger); }
+
+/* ── 트렌드 키워드 섹션 ───────────────────────────────────── */
+/* 2026-07-05 (정정): 이전 지시대로 이 섹션은 위쪽 콘텐츠(특히 키워드 분석
+   결과 테이블)가 늘어나도 절대 크기가 줄어들면 안 됨 — flex:1은 공간이
+   부족하면 이 섹션이 줄어드는 방식이라 요구사항과 반대였음(되돌림).
+   고정 px 높이 + flex-shrink:0으로 항상 동일한 크기를 유지하고, 대신
+   전체 내용이 넘치면 .main-inner(overflow-y:auto)가 페이지 전체를
+   스크롤하도록 함 — 이전에 쓰던 calc(100vh - 562px)는 위쪽 섹션 크기가
+   바뀔 때마다 매직넘버를 다시 맞춰야 했던 게 문제였지, "고정"이라는
+   방향 자체는 원래 요구사항이 맞았음. */
+/* 높이 값은 실제 실행 중인 앱에서 DevTools로 직접 측정해서 산출함(2026-07-05):
+   window.innerHeight=860일 때 .research-page bottom이 864.09였고(=24.09px
+   초과), main-inner의 공통 padding-bottom 20px과 맞추려면(대시보드와 동일한
+   하단 여백) 300px에서 24.09px를 뺀 값이 필요 — 275px로 설정.
+   2026-07-05 재조정: .research-page의 top padding 18px을 제거(대시보드
+   h1 위치와 통일)하면서 이 섹션 아래에 18.91px 빈 여백이 새로 생김
+   (트렌드 섹션 bottom 821.09 vs 목표 840). 다른 코드는 건드리지 않고
+   이 섹션 높이만 늘려서 하단 여백을 대시보드와 다시 맞춤 — 275 + 18.91
+   ≈ 294px로 재측정 확정(실측: 294px 적용 시 bottom이 정확히 840로 일치).
+   2026-07-05 재재조정: 부제목 하단 간격을 대시보드 기준 12px로 통일하며
+   .page-header margin-bottom을 6px→2px로 4px 더 줄임 — 그만큼 이 섹션
+   아래에 다시 공백이 생겨(실측: bottom 836.09, 목표 840, 차이 3.91px)
+   294px → 298px로 재조정(실측 확정). */
+.trends-section {
+  flex-shrink: 0;
+  height: 298px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.trends-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.trends-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.trends-icon { font-size: 18px; }
+.trends-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.trends-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.06);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.btn-trends-load {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(3,199,90,0.35);
+  background: rgba(3,199,90,0.08);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn-trends-load:hover:not(:disabled) {
+  background: rgba(3,199,90,0.18);
+  border-color: var(--accent);
+}
+.btn-trends-load:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.trends-empty, .trends-error {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.trends-error { color: #f87171; }
+
+.trends-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  flex: 1;              /* 트렌드 섹션 내 남은 공간 */
+  min-height: 0;
+  overflow-y: auto;
+  align-content: start;
+  padding-right: 4px;
+}
+.trends-grid::-webkit-scrollbar { width: 4px; }
+.trends-grid::-webkit-scrollbar-track { background: transparent; }
+.trends-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.trend-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.15s;
+}
+.trend-chip:hover { border-color: rgba(3,199,90,0.3); }
+
+.trend-rank {
+  min-width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3,199,90,0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+}
+.trend-chip:nth-child(-n+3) .trend-rank {
+  background: rgba(251,191,36,0.15);
+  color: #fbbf24;
+}
+.trend-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trend-kw-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.trend-kw {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trend-traffic {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(3,199,90,0.12);
+  border: 1px solid rgba(3,199,90,0.25);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.2px;
+}
+.trend-news {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trend-add-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(3,199,90,0.3);
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.trend-add-btn:hover {
+  background: rgba(3,199,90,0.12);
+  border-color: var(--accent);
+}

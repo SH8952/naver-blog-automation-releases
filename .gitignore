@@ -1,0 +1,27 @@
+# 라이선스 개인키 — 절대 커밋/공유 금지 (2026-07-04)
+# 이 키가 유출되면 누구나 정상 서명된 라이선스 키를 위조할 수 있게 됨.
+keys/
+
+# node_modules 등 일반 제외 항목
+node_modules/
+build/
+.DS_Store
+
+# 환경 변수
+.env
+
+# 내부 작업용 문서/백업 (공개 저장소 비대상, 2026-07-08)
+backups/
+0naver_blog_automation_roadmap.md
+1naver_blog_automation_update.md
+네이버 블로그 자동화_컨텍스트.txt
+네이버 블로그 자동화_개발이력.txt
+
+# 아이콘 원본 소스 (public/icon.icns·ico로 이미 반영됨)
+네이버 블로그 자동화 아이콘.png
+Gemini_Generated_Image_*.png
+
+# 기타 OS/IDE
+*.log
+.vscode/
+.idea/
