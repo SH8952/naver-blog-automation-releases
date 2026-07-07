@@ -9,6 +9,8 @@
     "react-start": "react-scripts start",
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder",
+    "build:mac": "npm run react-build && electron-builder --mac",
+    "build:win": "npm run react-build && electron-builder --win",
     "electron": "electron ."
   },
   "keywords": [],
@@ -35,7 +37,12 @@
     "productName": "네이버 블로그 자동화",
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "public/icon.icns",
       "target": ["dmg", "zip"]
+    },
+    "win": {
+      "icon": "public/icon.ico",
+      "target": ["nsis"]
     },
     "files": [
       "build/**/*",

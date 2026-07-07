@@ -1,0 +1,92 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # v1.0.0 처럼 태그 push 시 자동 빌드
+  workflow_dispatch:  # GitHub Actions 탭에서 수동 실행도 가능
+
+jobs:
+  # ── macOS 빌드 (.dmg) ──────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 패키지 설치
+        run: npm ci
+
+      - name: React 빌드 + Electron 패키징
+        run: npm run build:mac
+        env:
+          CI: false   # react-scripts 경고를 에러로 처리하지 않음
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 빌드 결과물 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-build
+          path: dist/*.dmg
+
+  # ── Windows 빌드 (.exe) ────────────────────────────────────────
+  build-win:
+    runs-on: windows-2022   # VS 2022 (v17) 고정 — windows-latest는 VS 2025(v18)로 node-gyp 미지원
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node.js 설정
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 패키지 설치
+        run: npm ci
+
+      - name: React 빌드 + Electron 패키징
+        run: npm run build:win
+        env:
+          CI: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 빌드 결과물 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-build
+          path: dist/*.exe
+
+  # ── Release 생성 (태그 push 시만) ────────────────────────────────
+  release:
+    needs: [build-mac, build-win]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: mac 빌드 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-build
+          path: artifacts/mac
+
+      - name: win 빌드 다운로드
+        uses: actions/download-artifact@v4
+        with:
+          name: win-build
+          path: artifacts/win
+
+      - name: GitHub Release 생성 및 파일 첨부
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/mac/*.dmg
+            artifacts/win/*.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
