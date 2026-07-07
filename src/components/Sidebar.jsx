@@ -127,15 +127,17 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* [개발용] 배포 시 삭제 */}
-      <button
-        type="button"
-        className="sidebar-dev-reset-btn"
-        disabled={resetting}
-        onClick={handleDevReset}
-      >
-        {resetting ? '초기화 중…' : '🗑 초기화 [DEV]'}
-      </button>
+      {/* [개발용] 배포판(패키징 빌드)에서는 숨김 — npm start 개발 모드에서만 표시 */}
+      {process.env.NODE_ENV === 'development' && (
+        <button
+          type="button"
+          className="sidebar-dev-reset-btn"
+          disabled={resetting}
+          onClick={handleDevReset}
+        >
+          {resetting ? '초기화 중…' : '🗑 초기화 [DEV]'}
+        </button>
+      )}
 
       <div className="sidebar-footer">v1.0.0</div>
     </aside>
