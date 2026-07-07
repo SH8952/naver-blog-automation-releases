@@ -6,6 +6,9 @@ on:
       - 'v*'          # v1.0.0 처럼 태그 push 시 자동 빌드
   workflow_dispatch:  # GitHub Actions 탭에서 수동 실행도 가능
 
+permissions:
+  contents: write   # release 잡이 GitHub Release를 생성/첨부하려면 필요
+
 jobs:
   # ── macOS 빌드 (.dmg) ──────────────────────────────────────────
   build-mac:

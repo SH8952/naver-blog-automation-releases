@@ -9,8 +9,8 @@
     "react-start": "react-scripts start",
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder",
-    "build:mac": "npm run react-build && electron-builder --mac",
-    "build:win": "npm run react-build && electron-builder --win",
+    "build:mac": "npm run react-build && electron-builder --mac --publish never",
+    "build:win": "npm run react-build && electron-builder --win --publish never",
     "electron": "electron ."
   },
   "keywords": [],
