@@ -71,6 +71,22 @@
   overflow: visible;
 }
 
+/* 2026-07-08: API 설정 탭도 post/loop 탭과 동일한 방식으로 통일 — 카드
+   자체의 overflowY:auto(인라인 스타일) 대신 .main-inner가 스크롤을
+   담당하도록 함. Windows에서 이 탭만 스크롤바 위치/방식이 다르게
+   보이던 문제 수정. */
+.settings-tab-content.api-tab-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.settings.settings-api-active {
+  height: auto;
+  overflow: visible;
+}
+.settings.settings-api-active .settings-tab-content.api-tab-scroll {
+  overflow: visible;
+}
+
 /* 2026-07-06: "발행 계정 선택" 타이틀 + "실제 카테고리 불러오기" 버튼을
    같은 줄 좌/우로 배치하기 위한 헤더 행. 기존 .settings-section-title의
    margin/border를 이 행으로 옮기고, 안의 h2는 중복되지 않도록 제거. */

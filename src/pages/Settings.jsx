@@ -516,7 +516,7 @@ export default function Settings() {
   };
 
   return (
-    <div className={`settings${activeTab === 'loop' ? ' settings-loop-active' : ''}${activeTab === 'post' ? ' settings-post-active' : ''}`}>
+    <div className={`settings${activeTab === 'loop' ? ' settings-loop-active' : ''}${activeTab === 'post' ? ' settings-post-active' : ''}${activeTab === 'api' ? ' settings-api-active' : ''}`}>
       <div className="page-header settings-header">
         <div>
           <h1>환경설정</h1>
@@ -540,8 +540,12 @@ export default function Settings() {
       </div>
 
       {/* ── API 설정 ──────────────────────────────────────────── */}
-      {activeTab === 'api' && <div className="settings-tab-content">
-      <div className="card settings-section" style={{flex:1, overflowY:'auto', display:'flex', flexDirection:'column', justifyContent:'center'}}>
+      {/* 2026-07-08: 다른 탭(글 설정/자동화 루프)과 동일하게 카드 자체
+          overflow가 아니라 페이지 바깥쪽 .main-inner가 스크롤을 담당하도록
+          통일 — Windows에서 카드별 개별 스크롤이 다른 탭과 다르게 보이던
+          문제 수정. */}
+      {activeTab === 'api' && <div className="settings-tab-content api-tab-scroll">
+      <div className="card settings-section">
 
         {/* 제공자 탭 */}
         <div className="form-group">

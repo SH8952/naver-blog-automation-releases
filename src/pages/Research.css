@@ -3,12 +3,17 @@
    .main-inner의 padding-top(24px)만 적용됨 — 그런데 이 페이지는 자체적으로
    padding-top:18px를 추가로 더 얹고 있어서 h1이 대시보드보다 18px 더
    아래에서 시작하고 있었음. 대시보드 h1 위치와 맞추기 위해 top padding 제거. */
+/* 2026-07-08: gap 10px→6px로 소폭 축소 — Windows 폰트 렌더링 차이로 다른
+   섹션들 높이가 Mac보다 몇 px씩 커져 페이지 전체가 뷰포트를 넘어
+   불필요한 스크롤이 생기던 문제의 최소 버퍼용(섹션 3개 사이 gap이라
+   총 8px 확보). 시각적으로는 거의 티가 안 나는 수준. 트렌드 섹션
+   298px처럼 실측 확정된 값 자체는 건드리지 않음. */
 .research-page {
   display: flex;
   flex-direction: column;
   min-height: 100%;      /* 뷰포트를 채우되, 내용이 넘치면 스크롤 허용 */
   padding: 0;
-  gap: 10px;
+  gap: 6px;
   box-sizing: border-box;
 }
 
