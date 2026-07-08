@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  /** OS 플랫폼('darwin'/'win32'/'linux') — Mac 전용 UI(트래픽라이트 여백 등) 분기용 (2026-07-08 신규) */
+  platform: process.platform,
 
   // ── 계정 관리 ──────────────────────────────────────────────
   account: {

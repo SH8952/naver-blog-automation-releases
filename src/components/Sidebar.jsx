@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import './Sidebar.css';
 
@@ -98,6 +98,13 @@ export default function Sidebar() {
   // 쓸 수 없으므로, 초기화 이후에는 window.location.reload()로 전체
   // 렌더러를 새로고침해 어떤 페이지에 있든 최신 데이터를 다시 불러오게 함.
   const [resetting, setResetting] = useState(false);
+  // 2026-07-08: 하단 버전 표시가 "v1.0.0"으로 하드코딩되어 있어 실제
+  // package.json 버전(패키징 시 electron-builder가 반영)과 어긋나던 문제
+  // 수정 — main.js의 get-app-version IPC로 실제 앱 버전을 가져와 표시.
+  const [appVersion, setAppVersion] = useState('');
+  useEffect(() => {
+    window.electronAPI?.getAppVersion?.().then(setAppVersion).catch(() => {});
+  }, []);
 
   const handleDevReset = async () => {
     if (!window.confirm('계정을 제외한 모든 데이터(발행 이력, 예약 등)를 초기화합니다.\n계속하시겠습니까?')) return;
@@ -139,7 +146,7 @@ export default function Sidebar() {
         </button>
       )}
 
-      <div className="sidebar-footer">v1.0.0</div>
+      <div className="sidebar-footer">{appVersion && `v${appVersion}`}</div>
     </aside>
   );
 }
