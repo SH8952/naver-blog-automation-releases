@@ -11,9 +11,12 @@ export default function MainLayout() {
   // 겹쳐서 이 여백이 필요하지만, Windows는 기본 네이티브 타이틀바를 쓰므로
   // 이 여백이 불필요한 빈 공간 + 스크롤 발생의 원인이 되어 Mac에서만 렌더링.
   const isMac = window.electronAPI?.platform === 'darwin';
+  // 2026-07-08: Windows 전용 CSS 스코프용 클래스. 폰트 폭 차이로 인한
+  // 레이아웃 문제를 Mac에 영향 없이 Windows에서만 고치기 위한 용도.
+  const isWin = window.electronAPI?.platform === 'win32';
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${isWin ? ' platform-win' : ''}`}>
       {/* macOS 트래픽 라이트 전용 드래그 영역 */}
       {isMac && (
         <div className="app-titlebar">
