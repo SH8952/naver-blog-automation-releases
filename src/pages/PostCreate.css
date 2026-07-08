@@ -31,8 +31,11 @@
 .panel-row-last { }
 
 .panel-field       { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.panel-topic       { flex: 1; min-width: 120px; }
-.panel-keywords    { flex: 2; min-width: 140px; }
+/* 2026-07-08: 주제 칸 비중을 줄이고 키워드 칸에 더 배분 — Windows에서
+   "브라우저 표시"/"썸네일 자동 생성" 토글이 카드 밖으로 넘치던 문제를
+   글자 크기/간격 변경 없이 해결하기 위함(우측 정렬 유지). */
+.panel-topic       { flex: 0.8; min-width: 100px; }
+.panel-keywords    { flex: 2.2; min-width: 140px; }
 .panel-flex1       { flex: 1; min-width: 80px; }
 .panel-account     { flex: 1.2; min-width: 100px; }
 .panel-btn-field   { flex: 1; }
@@ -602,16 +605,10 @@
 }
 
 /* ── 키워드 라벨 행 (키워드 자동 생성 버튼 + 발행 옵션 토글) ── */
-/* 2026-07-08: Windows 기본 폰트(Segoe UI)가 Mac(San Francisco)보다 폭이
-   넓어 한 줄에 다 안 들어갈 수 있음 — flex-wrap으로 넘칠 때만 자동 줄바꿈
-   되게 해서 카드 밖으로 삐져나가지 않도록 함. 공간이 충분하면(Mac 등)
-   기존과 동일하게 한 줄로 표시됨. */
 .panel-kw-label {
   display: flex !important;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  row-gap: 6px;
   width: 100%;
 }
 .kw-label-left {

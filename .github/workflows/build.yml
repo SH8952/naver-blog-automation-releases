@@ -36,7 +36,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mac-build
-          path: dist/*.dmg
+          # latest-mac.yml + *.blockmap: electron-updater가 새 버전 여부를
+          # 판별하는 데 필요한 메타데이터 (2026-07-08 추가, 이게 없으면
+          # 자동 업데이트 확인이 항상 조용히 실패함)
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.yml
+            dist/*.blockmap
 
   # ── Windows 빌드 (.exe) ────────────────────────────────────────
   build-win:
@@ -64,7 +71,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: win-build
-          path: dist/*.exe
+          # latest.yml + *.blockmap: electron-updater 새 버전 판별용 메타데이터
+          # (2026-07-08 추가)
+          path: |
+            dist/*.exe
+            dist/latest.yml
+            dist/*.blockmap
 
   # ── Release 생성 (태그 push 시만) ────────────────────────────────
   release:
@@ -89,7 +101,12 @@ jobs:
         with:
           files: |
             artifacts/mac/*.dmg
+            artifacts/mac/*.zip
+            artifacts/mac/latest-mac.yml
+            artifacts/mac/*.blockmap
             artifacts/win/*.exe
+            artifacts/win/latest.yml
+            artifacts/win/*.blockmap
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
