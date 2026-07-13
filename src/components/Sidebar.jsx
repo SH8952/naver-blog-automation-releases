@@ -113,6 +113,31 @@ export default function Sidebar() {
     window.location.reload();
   };
 
+  // [개발용] 배포 시 삭제 — 등급 강제 전환 토글(2026-07-14 신규).
+  // 실제 라이선스 키를 매번 새로 발급/적용하지 않고도 스탠다드(ST)/
+  // 프리미엄(PR) 화면을 즉시 오갈 수 있게 하는 개발 편의 기능. "개발"은
+  // 오버라이드를 끄고 실제 라이선스 로직(키 없으면 스탠다드)으로 돌아간다.
+  // main.js가 배포판(app.isPackaged)에서는 isDev=false라 이 값을 절대
+  // 반영하지 않으므로, 실수로 켜진 채 배포돼도 아무 효과가 없다.
+  const [devTierOverride, setDevTierOverride] = useState(null);
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      window.electronAPI?.dev?.getTierOverride?.().then(res => {
+        if (res?.success) setDevTierOverride(res.override);
+      }).catch(() => {});
+    }
+  }, []);
+
+  const handleSetTierOverride = async (value) => {
+    const res = await window.electronAPI.dev.setTierOverride(value);
+    if (res?.success) {
+      // 이미 열려있는 모든 페이지의 tierLimits(useLicenseLimits 훅)를
+      // 한 번에 최신 상태로 반영하기 위해 전체 새로고침 — 기존 "초기화
+      // [DEV]" 버튼과 동일한 방식.
+      window.location.reload();
+    }
+  };
+
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -133,6 +158,22 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* [개발용] 배포판(패키징 빌드)에서는 숨김 — npm start 개발 모드에서만 표시.
+          2026-07-14 신규: 등급 강제 전환 3분할 토글, 초기화 버튼 바로 위에 배치. */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="sidebar-dev-tier-toggle" title="개발 전용 — 실제 라이선스와 무관하게 등급 강제 전환(배포판에는 없음)">
+          <button type="button"
+            className={`sidebar-dev-tier-btn${devTierOverride === 'standard' ? ' active' : ''}`}
+            onClick={() => handleSetTierOverride('standard')}>ST</button>
+          <button type="button"
+            className={`sidebar-dev-tier-btn${devTierOverride === 'premium' ? ' active' : ''}`}
+            onClick={() => handleSetTierOverride('premium')}>PR</button>
+          <button type="button"
+            className={`sidebar-dev-tier-btn${!devTierOverride ? ' active' : ''}`}
+            onClick={() => handleSetTierOverride(null)}>개발</button>
+        </div>
+      )}
 
       {/* [개발용] 배포판(패키징 빌드)에서는 숨김 — npm start 개발 모드에서만 표시 */}
       {process.env.NODE_ENV === 'development' && (

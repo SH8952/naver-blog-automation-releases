@@ -64,6 +64,32 @@
 .sidebar-nav-icon { display: flex; align-items: center; flex-shrink: 0; }
 .sidebar-nav-label { font-size: 13px; font-weight: 500; }
 
+/* [개발용] 배포 시 삭제 — 등급 강제 전환 3분할 토글(2026-07-14 신규).
+   초기화 버튼과 동일한 톤(경고색 계열이 아닌 중립색)으로, 3개 버튼이
+   균등 폭으로 나란히 붙어 하나의 세그먼트 컨트롤처럼 보이게 한다. */
+.sidebar-dev-tier-toggle {
+  display: flex;
+  margin: 0 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.sidebar-dev-tier-btn {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.sidebar-dev-tier-btn:last-child { border-right: none; }
+.sidebar-dev-tier-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sidebar-dev-tier-btn.active { background: var(--accent-light); color: var(--accent); }
+
 /* [개발용] 배포 시 삭제 — 전체 데이터 초기화 버튼.
    2026-07-05: 대시보드 헤더에 있던 걸 사이드바 최하단 구분선(.sidebar-footer
    의 border-top) 바로 위로 이동. */

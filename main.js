@@ -208,9 +208,35 @@ async function getTierLimits(forceRefresh = false) {
   if (!forceRefresh && _tierLimitsCache.value && (now - _tierLimitsCache.ts) < TIER_LIMITS_CACHE_TTL_MS) {
     return _tierLimitsCache.value;
   }
-  const license = await getLicenseStatus();
-  const isPremium = !!(license.valid && license.tier === 'premium');
   const store = getStore();
+
+  // 2026-07-14 신규 — 개발자 전용 등급 강제 오버라이드. 실제 라이선스 키를
+  // 매번 새로 발급/적용하지 않고도 스탠다드/프리미엄 화면을 즉시 오갈 수
+  // 있게 하기 위한 개발 편의 기능(사이드바의 ST/PR/개발 토글에서 설정).
+  // *** 배포판 유출 방지 이중 장치 ***
+  //   ① 이 값을 설정하는 dev:setTierOverride IPC 자체가 맨 위에서 isDev를
+  //      확인해 거부하므로, 패키징된 앱에서는 애초에 저장될 수 없다.
+  //   ② 설사 store에 값이 남아있어도(예: 개발 중 저장된 electron-store를
+  //      패키징 앱이 재사용하는 극단적 경우), 여기서 다시 한번 isDev를
+  //      확인하지 않으면 절대 읽지 않는다 — isDev가 false인 실제 배포판
+  //      에서는 이 줄 자체가 항상 null이 되어 아래 실제 라이선스 로직만 탄다.
+  const devOverride = isDev ? store.get('settings._devTierOverride', null) : null;
+
+  let isPremium;
+  if (isDev) {
+    // 2026-07-14 보강 — 사용자 명시적 요청: "개발" 모드(토글 미선택,
+    // devOverride=null 기본값)에서는 실제 라이선스 유무와 무관하게 항상
+    // 모든 기능이 열려 있어야 한다(테스트 키를 안 넣어도 자유롭게 개발
+    // 가능해야 함). 처음 구현은 "개발"을 눌렀을 때 실제 라이선스 로직으로
+    // 폴백시켰는데, 그러면 키가 없는 개발 PC에서는 여전히 스탠다드로
+    // 잠기는 버그였음(사용자가 스크린샷으로 확인). 그래서 개발 환경에서는
+    // "ST"를 명시적으로 선택했을 때만 스탠다드로 잠그고, 그 외(PR 선택 또는
+    // 미선택="개발" 기본값)는 전부 잠금 해제로 바꿈.
+    isPremium = devOverride !== 'standard';
+  } else {
+    const license = await getLicenseStatus();
+    isPremium = !!(license.valid && license.tier === 'premium');
+  }
   const limits = {
     tier: isPremium ? 'premium' : 'standard',
     isPremium,
@@ -220,6 +246,9 @@ async function getTierLimits(forceRefresh = false) {
     thumbnail: isPremium,
     keywordResearch: isPremium,
     maxDailyPosts: computeMaxDailyPosts(isPremium, store),
+    // 프론트(사이드바 토글)가 현재 어떤 버튼을 활성 표시할지 판단하는 용도.
+    // isDev가 아니면 항상 null(배포판에는 이 개념 자체가 없음).
+    devTierOverride: isDev ? devOverride : null,
     maxDailyPostsUnlimited: isPremium && store.get('settings.maxDailyPostsUnlimited', true) !== false,
   };
   _tierLimitsCache = { value: limits, ts: now };
@@ -1480,6 +1509,36 @@ ipcMain.handle('license:getLimits', async () => {
         keywordResearch: false, maxDailyPosts: 10, maxDailyPostsUnlimited: false,
       },
     };
+  }
+});
+
+// ── 개발자 전용 등급 강제 전환 (2026-07-14 신규) ────────────────
+// 사이드바의 ST/PR/개발 토글에서 사용. main.js가 패키징된 배포판으로
+// 실행될 때는 isDev가 항상 false이므로, 아래 두 핸들러는 무조건
+// success:false로 즉시 거부한다 — 배포판에서는 이 기능 자체가 존재하지
+// 않는 것과 동일하게 동작(프론트 UI도 process.env.NODE_ENV==='development'
+// 가드로 빌드 자체에서 빠지므로 애초에 이 IPC를 호출할 코드가 없음 —
+// 이건 그 위에 얹는 2차 방어선).
+ipcMain.handle('dev:getTierOverride', () => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    return { success: true, override: getStore().get('settings._devTierOverride', null) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('dev:setTierOverride', (event, value) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    const allowed = ['standard', 'premium', null];
+    const v = allowed.includes(value) ? value : null;
+    getStore().set('settings._devTierOverride', v);
+    invalidateTierLimitsCache();
+    writeLog('INFO', 'DEV', `등급 강제 오버라이드 변경: ${v === null ? '개발(실제 라이선스 로직)' : v}`);
+    return { success: true, override: v };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 

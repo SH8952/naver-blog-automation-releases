@@ -167,9 +167,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAccountStats: () => ipcRenderer.invoke('dashboard:getAccountStats'),
   },
 
-  // ── [개발용] 데이터 초기화 ────────────────────────────────
+  // ── [개발용] 데이터 초기화 / 등급 강제 전환 ────────────────
+  // 2026-07-14: getTierOverride/setTierOverride는 메인 프로세스에서
+  // isDev가 아니면 무조건 거부하므로, 배포판에서 호출해도 아무 효과 없음.
   dev: {
     reset: () => ipcRenderer.invoke('dev:reset'),
+    getTierOverride: () => ipcRenderer.invoke('dev:getTierOverride'),
+    setTierOverride: (value) => ipcRenderer.invoke('dev:setTierOverride', value),
   },
 
   // ── 글감 수집 ──────────────────────────────────────────────
