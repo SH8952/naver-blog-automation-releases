@@ -201,6 +201,11 @@ export default function Settings() {
   const [logVisible, setLogVisible]   = useState(false);
   const [logClearing, setLogClearing] = useState(false);
   const [logCopyToast, setLogCopyToast] = useState(false);
+  // 2026-07-13 신규: 배포 버전은 사이드바 개발자 전용 초기화 버튼이 숨겨져
+  // 있어 데이터를 초기화할 방법이 없다는 요청으로, 시스템 탭에 전체 초기화를
+  // 노출. 로그 초기화(handleClearLog)와는 별개 — 계정 제외 전체 데이터(발행
+  // 이력/예약/검수 대기 등, dev:reset과 동일 범위) 초기화.
+  const [fullResetting, setFullResetting] = useState(false);
 
   // 자동화 루프 전용 로그 (2026-07-05 신규)
   const [loopLogContent, setLoopLogContent]   = useState('');
@@ -427,6 +432,16 @@ export default function Settings() {
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
+  };
+
+  // 2026-07-13 신규: 계정을 제외한 전체 데이터 초기화 — Sidebar.jsx의
+  // 개발자 전용 handleDevReset과 동일한 IPC(dev:reset)를 사용. 배포
+  // 버전에서는 그 버튼이 숨겨져 있어 여기(시스템 탭)에서 노출.
+  const handleFullReset = async () => {
+    if (!window.confirm('계정을 제외한 모든 데이터(발행 이력, 예약 등)를 초기화합니다.\n계속하시겠습니까?')) return;
+    setFullResetting(true);
+    await window.electronAPI.dev.reset();
+    window.location.reload();
   };
 
   const handleShowLog = async () => {
@@ -1267,8 +1282,8 @@ export default function Settings() {
               2026-07-05 수정: 사용자 요청으로 "오류 로그 보기"와 "파일로 열기" 사이로 위치 이동. */}
           <button className="btn btn-ghost btn-sm" onClick={handleShowLoopLog}>🔁 자동화 루프 로그 보기</button>
           <button className="btn btn-ghost btn-sm" onClick={handleOpenLog}>↗ 파일로 열기</button>
-          <button className="btn btn-ghost btn-sm log-clear-btn" onClick={handleClearLog} disabled={logClearing}>
-            {logClearing ? '초기화 중…' : '🗑 초기화'}
+          <button className="btn btn-ghost btn-sm log-clear-btn" onClick={handleFullReset} disabled={fullResetting} title="계정을 제외한 발행 이력·예약 등 전체 데이터를 초기화합니다">
+            {fullResetting ? '초기화 중…' : '🗑 전체 초기화'}
           </button>
         </div>
         {logPath && <div className="log-path-hint">{logPath}</div>}

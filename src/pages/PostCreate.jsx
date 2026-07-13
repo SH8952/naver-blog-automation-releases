@@ -1116,7 +1116,7 @@ export default function PostCreate() {
                   disabled={!result || publishing || generating || previewLoading}
                   title="지금 바로 네이버 블로그에 발행"
                 >
-                  {previewLoading ? <><span className="spinner-sm" />준비중</> : publishing ? <><span className="spinner-sm" />발행 중…</> : '📤 즉시 발행'}
+                  {previewLoading ? <><span className="spinner-sm" />준비중…</> : publishing ? <><span className="spinner-sm" />발행 중…</> : '📤 즉시 발행'}
                 </button>
                 <button
                   className="btn btn-schedule"

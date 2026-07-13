@@ -4878,8 +4878,12 @@ ipcMain.handle('dashboard:getStats', () => {
     const todayPublished = db.prepare(
       "SELECT COUNT(*) as c FROM posts WHERE status='published' AND date(published_at)=date('now','localtime')"
     ).get()?.c || 0;
+    // 2026-07-13 수정: 기존엔 "최근 7일" 롤링 윈도우라 월요일이 지나도
+    // 지난주 화~일 발행분이 계속 섞여 보이던 문제 — 월요일 0시부터 시작하는
+    // 달력주(月~日) 기준으로 변경. 'weekday 0'는 다음 일요일로 이동하고
+    // (오늘이 일요일이면 그대로), '-6 days'로 그 주의 월요일로 되돌림.
     const weekPublished = db.prepare(
-      "SELECT COUNT(*) as c FROM posts WHERE status='published' AND published_at >= datetime('now','localtime','-7 days')"
+      "SELECT COUNT(*) as c FROM posts WHERE status='published' AND published_at >= date('now','localtime','weekday 0','-6 days')"
     ).get()?.c || 0;
     const totalPublished = db.prepare(
       "SELECT COUNT(*) as c FROM posts WHERE status='published'"
