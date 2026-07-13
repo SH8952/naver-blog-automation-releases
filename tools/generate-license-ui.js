@@ -66,6 +66,14 @@ function appendLedger(record) {
   fs.writeFileSync(LEDGER_PATH, JSON.stringify(list, null, 2), 'utf8');
 }
 
+// 2026-07-14 신규 — 발급 이력 전체 초기화(테스트로 발급한 라이선스 등
+// 불필요한 기록을 지우기 위함). 파일 자체를 지우지 않고 빈 배열로
+// 덮어써서, 파일이 아예 없어져 이후 읽기 로직에 영향 주는 일이 없게 함.
+function clearLedger() {
+  fs.mkdirSync(path.dirname(LEDGER_PATH), { recursive: true });
+  fs.writeFileSync(LEDGER_PATH, JSON.stringify([], null, 2), 'utf8');
+}
+
 function sendJson(res, statusCode, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(statusCode, {
@@ -207,6 +215,13 @@ const HTML_PAGE = `<!DOCTYPE html>
     margin-bottom: 20px; display: none;
   }
   .warn-banner.show { display: block; }
+  .reset-row { display: flex; justify-content: flex-end; margin-top: 24px; }
+  .reset-btn {
+    width: auto; margin-top: 0; padding: 6px 12px; font-size: 11px;
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    font-weight: 500;
+  }
+  .reset-btn:hover { border-color: var(--danger); color: var(--danger); background: transparent; opacity: 1; }
 </style>
 </head>
 <body>
@@ -265,6 +280,10 @@ const HTML_PAGE = `<!DOCTYPE html>
       <textarea id="v-key" rows="4" placeholder="발급된 키를 붙여넣으세요"></textarea>
       <button class="secondary" onclick="verify()">조회</button>
       <div id="verifyResult" class="result"></div>
+
+      <div class="reset-row">
+        <button class="reset-btn" onclick="resetLedger()">발급 이력 초기화</button>
+      </div>
     </div>
   </div>
 
@@ -346,6 +365,21 @@ const HTML_PAGE = `<!DOCTYPE html>
     ].join('<br/>');
   }
 
+  async function resetLedger() {
+    // 2026-07-14: 오클릭으로 인한 실수 삭제를 막기 위해 반드시 confirm()
+    // 경고 팝업을 먼저 띄우고, 사용자가 명시적으로 '확인'을 눌러야만
+    // 실제 삭제 요청을 보낸다.
+    const ok = confirm('발급 이력을 전부 삭제합니다. 테스트로 만든 라이선스 기록을 포함해 모두 지워지며, 되돌릴 수 없습니다. 계속하시겠습니까?');
+    if (!ok) return;
+    const res = await fetch('/api/history/clear', { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      loadHistory();
+    } else {
+      alert(data.error || '초기화에 실패했습니다.');
+    }
+  }
+
   async function loadHistory() {
     const res = await fetch('/api/history');
     const data = await res.json();
@@ -395,6 +429,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && req.url === '/api/history') {
       return sendJson(res, 200, { success: true, list: readLedger() });
+    }
+    if (req.method === 'POST' && req.url === '/api/history/clear') {
+      clearLedger();
+      return sendJson(res, 200, { success: true });
     }
     if (req.method === 'POST' && req.url === '/api/generate') {
       const raw = await readBody(req);

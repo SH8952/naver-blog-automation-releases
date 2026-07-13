@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import './Research.css';
+import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 const INTERVAL_OPTIONS = [
   { value: 24, label: '매일' },
@@ -106,6 +107,7 @@ function DateRangePicker({ dateFrom, dateTo, onChange, onClose }) {
 }
 
 export default function Research() {
+  const { limits: tierLimits } = useLicenseLimits();
   // ── 키워드 상태 ───────────────────────────────────────────
   const [keywords, setKeywords]       = useState([]);
   const [kwInput, setKwInput]         = useState('');
@@ -674,11 +676,15 @@ export default function Research() {
             )}
           </div>
           <button
-            className="btn btn-analyze"
+            className={`btn btn-analyze${!tierLimits.keywordResearch ? ' premium-lock-host' : ''}`}
             onClick={handleAnalyze}
-            disabled={!analyzeInput.trim() || analyzeLoading}
+            disabled={!analyzeInput.trim() || analyzeLoading || !tierLimits.keywordResearch}
+            title={!tierLimits.keywordResearch ? PREMIUM_ONLY_TOOLTIP : undefined}
           >
             {analyzeLoading ? <><span className="spinner-sm"/>조회 중…</> : '📊 분석'}
+            {!tierLimits.keywordResearch && (
+              <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
+            )}
           </button>
         </div>
 

@@ -166,6 +166,66 @@ async function getLicenseStatus() {
   };
 }
 
+// ── 등급별 사용 제한 (Phase 2, 2026-07-14 신규) ────────────────
+// getLicenseStatus()의 tier를 실제 기능 차단으로 연결하는 중앙 모듈.
+// 스탠다드/프리미엄 등급별 제한값을 한 곳에서 정의해, main.js 곳곳의
+// IPC 핸들러가 이 함수 하나만 호출하면 되도록 한다(값이 여러 곳에
+// 흩어져 있으면 나중에 등급 정책이 바뀔 때 일부만 고쳐지는 사고가
+// 나기 쉬움).
+//
+// 등급 판정 기준: 키가 없거나(hasKey:false) 유효하지 않으면(valid:false —
+// 만료/기기초과/시간조작 등) 무조건 'standard'로 취급한다. 프리미엄
+// 라이선스가 만료된 경우에도 프리미엄 기능이 계속 열려있으면 안 되기
+// 때문 — hasKey 여부와 무관하게 valid && tier==='premium'일 때만 프리미엄.
+//
+// 캐시: getLicenseStatus()는 유효한 키가 있을 때 온라인 시간조작 검사
+// (checkTimeIntegrity)를 포함해 최대 ~2초까지 걸릴 수 있다. 즉시발행처럼
+// 사용자가 클릭할 때마다 이 함수를 호출하는 지점에서 매번 2초씩 걸리면
+// 유료 사용자 경험이 나빠지므로, 짧은 TTL로 캐시해 반복 호출 비용을
+// 줄인다. 라이선스 키를 새로 적용/해제하는 시점(license:set)에는
+// invalidateTierLimitsCache()로 캐시를 즉시 무효화해 새 등급이 바로
+// 반영되게 한다.
+let _tierLimitsCache = { value: null, ts: 0 };
+const TIER_LIMITS_CACHE_TTL_MS = 5 * 60 * 1000; // 5분
+
+function invalidateTierLimitsCache() {
+  _tierLimitsCache = { value: null, ts: 0 };
+}
+
+// 하루 최대 발행 횟수 계산 — 스탠다드는 10회 고정(사용자 설정 무시),
+// 프리미엄은 기본 무제한이며 사용자가 settings.maxDailyPostsUnlimited를
+// false로 바꾸고 settings.maxDailyPosts에 숫자를 넣으면 그 값을 따른다.
+function computeMaxDailyPosts(isPremium, store) {
+  if (!isPremium) return 10;
+  const unlimited = store.get('settings.maxDailyPostsUnlimited', true);
+  if (unlimited) return Infinity;
+  const n = Number(store.get('settings.maxDailyPosts', 3));
+  return Number.isFinite(n) && n > 0 ? n : Infinity;
+}
+
+async function getTierLimits(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && _tierLimitsCache.value && (now - _tierLimitsCache.ts) < TIER_LIMITS_CACHE_TTL_MS) {
+    return _tierLimitsCache.value;
+  }
+  const license = await getLicenseStatus();
+  const isPremium = !!(license.valid && license.tier === 'premium');
+  const store = getStore();
+  const limits = {
+    tier: isPremium ? 'premium' : 'standard',
+    isPremium,
+    maxAccounts: isPremium ? Infinity : 1,
+    automationLoop: isPremium,
+    reservation: isPremium,
+    thumbnail: isPremium,
+    keywordResearch: isPremium,
+    maxDailyPosts: computeMaxDailyPosts(isPremium, store),
+    maxDailyPostsUnlimited: isPremium && store.get('settings.maxDailyPostsUnlimited', true) !== false,
+  };
+  _tierLimitsCache = { value: limits, ts: now };
+  return limits;
+}
+
 // ── 암호화 유틸 ─────────────────────────────────────────────
 // AES-256-CBC: 쿠키 암호화 / 복호화
 const CIPHER_KEY = crypto.scryptSync('naver-blog-automation-v1', 'nblog-salt-2024', 32);
@@ -1158,6 +1218,20 @@ ipcMain.handle('account:add', async () => {
       ).run(cookiesEncrypted, lastLogin, naverId);
       writeLog('INFO', 'ACCOUNT', `기존 계정 업데이트: ${naverId}`);
     } else {
+      // 2026-07-14: 등급별 계정 수 제한 — 이미 등록된 계정(existing)의
+      // 재로그인은 여기 도달하지 않고 위 UPDATE 분기로 빠지므로 영향 없음.
+      // 여기 도달하는 건 "새로운" naver_id일 때뿐이라, 정말 계정을 추가로
+      // 등록하려는 시도에만 제한이 걸린다. 로그인 자체는 이미 끝난 뒤라
+      // 아깝지만, 최종 등록 직전(가장 확실한 시점)에 막는다.
+      const tierLimits = await getTierLimits();
+      const currentCount = db.prepare('SELECT COUNT(*) as c FROM accounts').get().c;
+      if (currentCount >= tierLimits.maxAccounts) {
+        writeLog('WARN', 'ACCOUNT', '계정 등록 차단 — 등급별 최대 계정 수 초과', `${currentCount}/${tierLimits.maxAccounts}, tier=${tierLimits.tier}`);
+        return {
+          success: false,
+          error: `스탠다드 등급은 계정 ${tierLimits.maxAccounts}개까지 등록할 수 있습니다. 여러 계정을 등록하려면 프리미엄으로 업그레이드하세요.`,
+        };
+      }
       db.prepare(
         'INSERT INTO accounts (naver_id, nickname, memo, cookies_encrypted, last_login, status) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(naverId, naverId, '', cookiesEncrypted, lastLogin, 'active');
@@ -1316,6 +1390,11 @@ const SETTINGS_DEFAULTS = {
   groqModel: 'llama-3.3-70b-versatile',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
+  // 2026-07-14: 프리미엄 등급의 하루 최대 발행 — 기본은 무제한(true).
+  // 스탠다드는 등급 자체가 10회 고정이라 이 값을 아예 보지 않는다
+  // (computeMaxDailyPosts 참고). 사용자가 직접 숫자로 제한하고 싶을 때만
+  // false로 바꾸고 maxDailyPosts 값을 사용한다.
+  maxDailyPostsUnlimited: true,
 };
 
 ipcMain.handle('settings:get', () => {
@@ -1357,6 +1436,7 @@ ipcMain.handle('license:set', async (event, keyString) => {
     const store = getStore();
     if (!trimmed) {
       store.set('settings.licenseKey', '');
+      invalidateTierLimitsCache();
       return { success: true, status: await getLicenseStatus() };
     }
     const result = verifyLicenseKey(trimmed);
@@ -1365,6 +1445,7 @@ ipcMain.handle('license:set', async (event, keyString) => {
       return { success: false, error: result.reason || '유효하지 않은 라이선스 키입니다.' };
     }
     store.set('settings.licenseKey', trimmed);
+    invalidateTierLimitsCache();
     writeLog('INFO', 'LICENSE',
       `라이선스 키 적용 — 등급:${result.tier}, 최대기기:${result.maxDevices}대, 만료:${result.expiresAt || '없음'}${result.expired ? ' (이미 만료됨)' : ''}`);
     return { success: true, status: await getLicenseStatus() };
@@ -1380,6 +1461,25 @@ ipcMain.handle('license:getHwid', () => {
     return { success: true, hwid: getHardwareId() };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+// 2026-07-14 신규 — 등급별 사용 제한값 조회(렌더러가 버튼 비활성화 여부를
+// 판단하는 데 사용). 실제 차단은 각 IPC 핸들러 내부에서도 별도로 수행하므로
+// (백엔드가 최종 보안 경계), 이 IPC는 어디까지나 프론트 UI 표시용이다.
+ipcMain.handle('license:getLimits', async () => {
+  try {
+    return { success: true, limits: await getTierLimits() };
+  } catch (err) {
+    // 조회 실패 시에도 UI가 깨지지 않도록 가장 보수적인(스탠다드) 기본값 반환
+    return {
+      success: false, error: err.message,
+      limits: {
+        tier: 'standard', isPremium: false, maxAccounts: 1,
+        automationLoop: false, reservation: false, thumbnail: false,
+        keywordResearch: false, maxDailyPosts: 10, maxDailyPostsUnlimited: false,
+      },
+    };
   }
 });
 
@@ -5152,12 +5252,16 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
     const { getDB } = require('./src/db');
     const db = getDB();
 
-    // ── 일일 최대 발행 체크 (2026-07-03) ──────────────────────
+    // 2026-07-14: 등급별 제한 조회 — 하루 최대 발행(스탠다드 10회 고정/
+    // 프리미엄 기본 무제한)과 썸네일 사용 가능 여부에 함께 사용.
+    const tierLimits = await getTierLimits();
+
+    // ── 일일 최대 발행 체크 (2026-07-03, 2026-07-14 등급별 상한 적용) ──
     // 기존에는 예약 발행 스케줄러(startScheduler)에만 이 체크가 있어서
     // 즉시 발행 버튼은 하루 발행 횟수 제한 없이 계속 발행되던 버그가 있었음.
     // 스케줄러와 동일하게 전체 계정 합산(글로벌) 기준으로 카운트.
     const todayStr = new Date().toISOString().slice(0, 10);
-    const maxDailyPosts = getStore().get('settings.maxDailyPosts', 3);
+    const maxDailyPosts = tierLimits.maxDailyPosts;
     const todayCount = db.prepare(
       "SELECT COUNT(*) as cnt FROM posts WHERE status IN ('publishing','published') AND DATE(published_at) = ?"
     ).get(todayStr)?.cnt || 0;
@@ -5194,11 +5298,15 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       images: post.images || [],
       category: post.category || '',
       visibility: post.visibility || 'public',
-      autoThumbnail: post.autoThumbnail !== false,
+      // 2026-07-14: 썸네일 자동 생성은 프리미엄 전용 — 렌더러가 무엇을
+      // 보내든(post.autoThumbnail) 스탠다드면 항상 false로 강제한다.
+      // UI에서 이미 토글을 비활성화해두지만, IPC를 직접 호출해 우회하는
+      // 경우까지 막기 위한 최종 방어선.
+      autoThumbnail: tierLimits.thumbnail && post.autoThumbnail !== false,
       headless: post.headless !== false,
       // 2026-07-07: 발행 전 미리보기에서 이미 만든 썸네일/확정 색상이 있으면
       // 그대로 재사용(중복 생성 방지 + 미리보기와 실제 결과 일치 보장)
-      preGeneratedThumbPath: post.forcedThumbPath || null,
+      preGeneratedThumbPath: tierLimits.thumbnail ? (post.forcedThumbPath || null) : null,
       forcedStyleIndex: post.forcedStyleIndex != null ? post.forcedStyleIndex : null,
       // 2026-07-07: 미리보기 없이 바로 발행한 경우(previewEnabled=false)에도
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
@@ -5243,6 +5351,15 @@ ipcMain.handle('publish:getEarliestSlot', async (event, { accountId }) => {
 // ── IPC: 예약 발행 등록 ───────────────────────────────────────
 ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt }) => {
   try {
+    // 2026-07-14: 예약 발행은 프리미엄 전용 기능 — 앱/PC가 꺼져 있어도
+    // 네이버가 알아서 발행해주는 강력한 기능이라 등급 차별화 포인트로 확정.
+    // UI에서 버튼을 비활성화해두지만, IPC 직접 호출 우회까지 막기 위해
+    // 여기서도 최종적으로 막는다.
+    const tierLimits = await getTierLimits();
+    if (!tierLimits.reservation) {
+      return { success: false, error: '예약 발행은 프리미엄 전용 기능입니다. 프리미엄으로 업그레이드하면 이용할 수 있습니다.' };
+    }
+
     const { getDB } = require('./src/db');
     const db = getDB();
     const acc = db.prepare('SELECT naver_id FROM accounts WHERE id=?').get(accountId);
@@ -5299,12 +5416,16 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       images: post.images || [],
       category: post.category || '',
       visibility: post.visibility || 'public',
-      autoThumbnail: post.autoThumbnail !== false,
+      // 2026-07-14: 즉시발행과 동일하게 등급별 썸네일 제한 최종 적용
+      // (이 시점의 tierLimits는 이미 reservation:true를 통과한 프리미엄
+      // 사용자 것이므로 사실상 항상 tierLimits.thumbnail===true지만,
+      // 혹시 모를 상태 불일치에 대비해 그대로 조건을 걸어둔다).
+      autoThumbnail: tierLimits.thumbnail && post.autoThumbnail !== false,
       headless: post.headless !== false,
       reserveAt: scheduledAt,
       // 2026-07-07: 발행 전 미리보기에서 이미 만든 썸네일/확정 색상이 있으면
       // 그대로 재사용(중복 생성 방지 + 미리보기와 실제 결과 일치 보장)
-      preGeneratedThumbPath: post.forcedThumbPath || null,
+      preGeneratedThumbPath: tierLimits.thumbnail ? (post.forcedThumbPath || null) : null,
       forcedStyleIndex: post.forcedStyleIndex != null ? post.forcedStyleIndex : null,
       // 2026-07-07: 미리보기 없이 바로 발행한 경우(previewEnabled=false)에도
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
@@ -5639,6 +5760,16 @@ async function startAutomationLoop(mode) {
   if (loopState.running) return { success: false, error: '이미 자동화 루프가 실행 중입니다.' };
   if (mode !== 'auto' && mode !== 'semi') return { success: false, error: '알 수 없는 모드입니다.' };
 
+  // 2026-07-14: 자동화 루프는 프리미엄 전용 기능 — 시작 시점에 한 번만
+  // 등급을 확인한다(캐시 TTL 5분 이내에는 즉시 반환). 루프가 실행되는
+  // 동안에는 재확인하지 않는다 — processLoopStep은 짧은 간격으로 반복
+  // 호출되는데, 매번 등급을 확인하면 온라인 시간조작 검사(최대 ~2초)가
+  // 반복돼 불필요하게 무거워진다. 시작 시점 확인만으로 충분하다고 판단.
+  const tierLimits = await getTierLimits();
+  if (!tierLimits.automationLoop) {
+    return { success: false, error: '자동화 루프는 프리미엄 전용 기능입니다. 프리미엄으로 업그레이드하면 이용할 수 있습니다.' };
+  }
+
   const store = getStore();
   const settings = { ...DEFAULT_LOOP_SETTINGS, ...store.get('settings.automationLoop', {}) };
   const { getDB } = require('./src/db');
@@ -5840,7 +5971,12 @@ async function processLoopStep() {
   }
 
   // 일일 최대 발행 체크 (기존 예약 스케줄러와 동일한 전역 카운트를 공유)
-  const maxDailyPosts = store.get('settings.maxDailyPosts', 3);
+  // 2026-07-14: 자동화 루프는 시작 시점에 이미 프리미엄 확인을 마쳤으므로
+  // (startAutomationLoop 참고) 여기서는 온라인 시간조작 검사가 포함된
+  // getTierLimits()를 매 스텝 다시 호출하지 않고, computeMaxDailyPosts만
+  // 재사용해 매번 최신 설정값(사용자가 방금 저장한 무제한/숫자 설정)을
+  // 반영하면서도 비용은 store 읽기 수준으로 가볍게 유지한다.
+  const maxDailyPosts = computeMaxDailyPosts(true, store);
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayCount = db.prepare(
     "SELECT COUNT(*) as cnt FROM posts WHERE status IN ('publishing','published') AND DATE(published_at) = ?"
@@ -6587,6 +6723,12 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
 // ── IPC: keyword:analyze (네이버 검색광고 API) ───────────────
 ipcMain.handle('keyword:analyze', async (event, keywords) => {
   try {
+    // 2026-07-14: 키워드 검색량·수익성 조회는 프리미엄 전용 기능.
+    const tierLimits = await getTierLimits();
+    if (!tierLimits.keywordResearch) {
+      return { success: false, error: '키워드 검색량·수익성 조회는 프리미엄 전용 기능입니다. 프리미엄으로 업그레이드하면 이용할 수 있습니다.' };
+    }
+
     const store = getStore();
     const customerId = (store.get('settings.searchAdCustomerId', '') || '').trim();
     const apiKey     = (store.get('settings.searchAdApiKey', '') || '').trim();

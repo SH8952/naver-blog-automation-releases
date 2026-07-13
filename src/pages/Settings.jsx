@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import './Settings.css';
+import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 // ── 기본값 ────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -423,6 +424,7 @@ const EyeIcon = ({ open }) => open ? (
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function Settings() {
+  const { limits: tierLimits } = useLicenseLimits();
   const [activeTab, setActiveTab] = useState('api');
   const [form, setForm] = useState(DEFAULTS);
   const [showGemini, setShowGemini]         = useState(false);
@@ -1086,13 +1088,21 @@ export default function Settings() {
       {/* ── 글 설정 탭 ────────────────────────────────────────── */}
       {activeTab === 'post' && <div className="settings-tab-content post-tab-scroll">
 
-      {/* ── 썸네일 설정 ─────────────────────────────────────────── */}
+      {/* ── 썸네일 설정 (2026-07-14 프리미엄 전용화) ───────────────── */}
       <div className="card settings-section">
-        <h2 className="settings-section-title">썸네일 자동 생성</h2>
+        <h2 className="settings-section-title">
+          썸네일 자동 생성
+          {!tierLimits.thumbnail && <span className="premium-locked-badge premium-locked-badge-inline">🔒 프리미엄</span>}
+        </h2>
         <div className="settings-grid">
           <div className="form-group" style={{ gridColumn:'1/-1' }}>
-            <label style={{ display:'flex', alignItems:'center', gap:'10px', cursor:'pointer' }}>
-              <input type="checkbox" checked={form.customThumbnail !== false}
+            <label
+              className={!tierLimits.thumbnail ? 'premium-locked' : undefined}
+              style={{ display:'flex', alignItems:'center', gap:'10px', cursor: tierLimits.thumbnail ? 'pointer' : 'not-allowed' }}
+              title={!tierLimits.thumbnail ? PREMIUM_ONLY_TOOLTIP : undefined}
+            >
+              <input type="checkbox" checked={form.customThumbnail !== false && tierLimits.thumbnail}
+                disabled={!tierLimits.thumbnail}
                 onChange={e => set('customThumbnail', e.target.checked)}
                 style={{ width:'16px', height:'16px', accentColor:'var(--accent)' }} />
               <span>발행 시 커스텀 썸네일 자동 생성</span>
@@ -1101,7 +1111,7 @@ export default function Settings() {
               </span>
             </label>
           </div>
-          {form.customThumbnail !== false && (
+          {tierLimits.thumbnail && form.customThumbnail !== false && (
             <div className="form-group" style={{ gridColumn:'1/-1' }}>
               <label>썸네일 디자인 선택</label>
               <p style={{ fontSize:'11px', color:'var(--text-secondary)', margin:'6px 0 10px', lineHeight:1.6 }}>
@@ -1110,7 +1120,7 @@ export default function Settings() {
               <ThumbDesignPicker value={form.thumbnailDesign ?? 'default'} onChange={v => set('thumbnailDesign', v)} />
             </div>
           )}
-          {form.customThumbnail !== false && (
+          {tierLimits.thumbnail && form.customThumbnail !== false && (
             <div className="form-group" style={{ gridColumn:'1/-1' }}>
               <label>썸네일 스타일</label>
               <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginTop:'8px' }}>
@@ -1254,6 +1264,17 @@ export default function Settings() {
           선택 섹션이 길어져도(예: 카테고리 드롭다운 확장) 하단의 "키워드
           소진 시 동작" 등이 잘리지 않고 스크롤로 보이도록 함 */}
       {activeTab === 'loop' && <div className="settings-tab-content loop-tab-scroll">
+
+      <div className="loop-tab-body">
+      {!tierLimits.automationLoop && (
+        <div className="premium-lock-panel-overlay">
+          <div className="premium-lock-panel-message">
+            <span className="premium-locked-badge">🔒 프리미엄 전용</span>
+            <span className="premium-lock-panel-desc">자동화 루프는 프리미엄 등급에서 설정하고 실행할 수 있습니다.</span>
+          </div>
+        </div>
+      )}
+      <div className={tierLimits.automationLoop ? undefined : 'premium-lock-panel-dimmed'}>
 
       <div className="card settings-section">
         <div className="settings-section-title-row">
@@ -1499,6 +1520,9 @@ export default function Settings() {
             60초 카운트다운 후 종료되며, 대시보드에서 카운트다운 중 언제든 취소할 수 있습니다.
           </p>
         </div>
+      </div>
+
+      </div>
       </div>
 
       </div>}

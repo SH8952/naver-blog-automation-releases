@@ -170,3 +170,103 @@ body {
   text-decoration: underline;
 }
 .license-gate-retry:hover { color: var(--text-secondary); }
+
+
+/* ── 프리미엄 전용 기능 비활성화 표시 (2026-07-14 신규 / 같은 날 배지
+   배치 방식 개정) ───────────────────────────────────────────────
+   스탠다드 등급 사용자에게 프리미엄 전용 버튼/입력을 "숨기지 않고
+   비활성화 상태로 보여주는" 패턴 — 어떤 기능이 있는지는 알 수 있게 해
+   업그레이드 동기를 준다(사용자 확정 방향).
+   처음엔 배지를 버튼 텍스트 뒤에 그냥 이어붙였는데, 그러면 버튼 폭이
+   늘어나면서 옆에 나란히 있던 다른 버튼들 위치가 밀리는 문제가 있었음
+   (사용자 스크린샷 제보로 확인). 그래서 배지는 반투명 스크림 레이어와
+   함께 절대위치(position:absolute)로 버튼 위에 "얹는" 방식으로 변경 —
+   버튼 자신의 실제 크기는 원래 텍스트/아이콘만으로 그대로 유지되고,
+   오버레이는 레이아웃 계산에서 완전히 빠지므로 옆 요소가 전혀 밀리지
+   않는다. */
+.premium-locked {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  filter: grayscale(0.3);
+}
+.premium-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #f0b429;
+  background: rgba(240, 180, 41, 0.14);
+  border: 1px solid rgba(240, 180, 41, 0.4);
+  border-radius: 5px;
+  padding: 1px 7px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* 레이아웃이 흔들릴 걱정이 적은 곳(섹션 제목 등 자기 줄을 온전히 차지하는
+   블록 요소)에서만 텍스트 뒤에 그냥 이어붙일 때 쓰는 여백 보정 */
+.premium-locked-badge-inline {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* 버튼/토글처럼 옆에 다른 요소와 나란히 있어 폭이 늘어나면 레이아웃이
+   밀리는 곳 전용 — 이 클래스를 버튼/라벨 자체에 붙이면(position:relative
+   기준점이 됨) 그 안에 .premium-lock-overlay를 자식으로 넣어 위에 겹친다.
+   오버레이는 pointer-events:none이라 클릭은 버튼의 disabled 속성이
+   그대로 처리한다(오버레이가 클릭을 가로채지 않음). */
+.premium-lock-host {
+  position: relative;
+  cursor: not-allowed;
+}
+.premium-lock-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 17, 23, 0.82);
+  border-radius: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* 환경설정 "자동화 루프" 탭처럼 버튼 하나가 아니라 카드 여러 개로 이뤄진
+   설정 패널 전체를 통째로 잠글 때 쓰는 패턴(2026-07-14 추가). 개별 입력을
+   하나하나 disabled 처리하는 대신, 패널 전체를 흐리게(opacity+grayscale)
+   하고 pointer-events:none으로 클릭을 막은 뒤, 그 위에 중앙 안내 메시지를
+   절대위치로 얹는다. */
+.loop-tab-body { position: relative; }
+.premium-lock-panel-dimmed {
+  opacity: 0.35;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+.premium-lock-panel-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  pointer-events: none;
+}
+.premium-lock-panel-message {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid rgba(240, 180, 41, 0.4);
+  border-radius: 10px;
+  padding: 18px 28px;
+  box-shadow: var(--shadow-md);
+  max-width: 320px;
+  text-align: center;
+}
+.premium-lock-panel-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}

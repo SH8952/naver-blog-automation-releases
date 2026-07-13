@@ -75,6 +75,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     /** 이 기기의 고유 식별값(HWID) 조회 — 문의 대응 시 참고용 */
     getHwid: () => ipcRenderer.invoke('license:getHwid'),
+
+    /** 등급별 사용 제한값 조회 (2026-07-14 신규) — 계정수/자동화루프/예약발행/
+     *  썸네일/키워드리서치 가능 여부 + 하루 최대 발행. 프론트엔드에서 버튼
+     *  비활성화 여부 판단용. 실제 차단은 각 IPC 핸들러 내부에서 별도 수행. */
+    getLimits: () => ipcRenderer.invoke('license:getLimits'),
   },
 
   // ── 글 생성 ────────────────────────────────────────────────

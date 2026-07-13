@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './PublishScheduler.css';
+import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 // ── 유틸 ─────────────────────────────────────────────────────
 function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
@@ -28,6 +29,9 @@ const SAFE_DEFAULTS = {
   intervalMin: 30,
   intervalMax: 120,
   similarityThreshold: 70,
+  // 2026-07-14 신규: 프리미엄 등급의 하루 최대 발행 "무제한" 여부.
+  // 스탠다드는 등급 자체가 10회 고정이라 이 값을 아예 보지 않는다.
+  maxDailyPostsUnlimited: true,
 };
 
 // ── 저품질 위험 권장값 (2026-07-05 신규) ──────────────────────
@@ -41,6 +45,7 @@ const SAFE_RECOMMENDED = {
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function PublishScheduler() {
+  const { limits: tierLimits } = useLicenseLimits();
   const today = new Date();
   const [year,  setYear]  = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-based
@@ -95,7 +100,10 @@ export default function PublishScheduler() {
 
   // 저품질 우려 소프트 경고 (2026-07-05 신규) — 하드 블록 아님, 저장은 그대로 허용
   const safetyWarnings = [];
-  if (Number(safeForm.maxDailyPosts) > SAFE_RECOMMENDED.maxDailyPostsMax) {
+  // 2026-07-14: 프리미엄 "무제한" 선택 시에는 사용자가 의도적으로 상한을
+  // 없앤 것이므로 이 소프트 경고를 띄우지 않는다(스탠다드는 애초에 10회
+  // 고정이라 이 입력 자체를 건드릴 수 없어 경고가 뜰 일이 없다).
+  if (!safeForm.maxDailyPostsUnlimited && Number(safeForm.maxDailyPosts) > SAFE_RECOMMENDED.maxDailyPostsMax) {
     safetyWarnings.push(`하루 최대 발행 횟수가 많습니다 — 저품질 우려로 ${SAFE_RECOMMENDED.maxDailyPostsMax}회 이하를 권장합니다.`);
   }
   if (Number(safeForm.intervalMin) < SAFE_RECOMMENDED.intervalMinMin) {
@@ -255,12 +263,24 @@ export default function PublishScheduler() {
                 {/* 상단 2열: 일일 최대 발행 | 중복 경고 기준 */}
                 <div className="safe-row-2col">
                   <div className="safe-field-item">
-                    <span className="sf-label">일일 최대 발행</span>
+                    <span className="sf-label">
+                      일일 최대 발행
+                      {!tierLimits.isPremium && <span className="premium-locked-badge premium-locked-badge-inline">🔒 프리미엄 10회 고정</span>}
+                    </span>
                     <div className="safe-input-grp">
-                      <input className="sf-input" type="number" min={1} max={20}
-                        value={safeForm.maxDailyPosts}
+                      <input className={`sf-input${!tierLimits.isPremium ? ' premium-locked' : ''}`} type="number" min={1} max={20}
+                        value={tierLimits.isPremium ? safeForm.maxDailyPosts : 10}
+                        disabled={!tierLimits.isPremium || safeForm.maxDailyPostsUnlimited}
+                        title={!tierLimits.isPremium ? '스탠다드 등급은 하루 최대 10회로 고정되며 직접 변경할 수 없습니다. 프리미엄으로 업그레이드하면 무제한 또는 직접 설정할 수 있습니다.' : undefined}
                         onChange={e => setSafe('maxDailyPosts', Number(e.target.value))} />
                       <span className="sf-unit">회</span>
+                      {tierLimits.isPremium && (
+                        <label className="sf-unlimited-toggle" style={{ display:'flex', alignItems:'center', gap:'4px', marginLeft:'8px', fontSize:'11px', cursor:'pointer' }}>
+                          <input type="checkbox" checked={!!safeForm.maxDailyPostsUnlimited}
+                            onChange={e => setSafe('maxDailyPostsUnlimited', e.target.checked)} />
+                          무제한
+                        </label>
+                      )}
                     </div>
                   </div>
                   <div className="safe-field-item">

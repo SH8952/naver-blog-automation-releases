@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import './Accounts.css';
+import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 // ── 날짜 포맷 ─────────────────────────────────────────────────
 function formatDate(iso) {
@@ -43,6 +44,7 @@ const RefreshIcon = () => (
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function Accounts() {
+  const { limits } = useLicenseLimits();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -148,12 +150,16 @@ export default function Accounts() {
       {/* 툴바 */}
       <div className="accounts-toolbar">
         <button
-          className="btn btn-primary"
+          className={`btn btn-primary${!limits.isPremium && accounts.length >= limits.maxAccounts ? ' premium-lock-host' : ''}`}
           onClick={handleAddAccount}
-          disabled={adding}
+          disabled={adding || (!limits.isPremium && accounts.length >= limits.maxAccounts)}
+          title={!limits.isPremium && accounts.length >= limits.maxAccounts ? PREMIUM_ONLY_TOOLTIP : undefined}
         >
           <PlusIcon />
           계정 추가
+          {!limits.isPremium && accounts.length >= limits.maxAccounts && (
+            <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
+          )}
         </button>
 
         {/* 진행 표시 */}

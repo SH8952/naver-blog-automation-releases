@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import './PostCreate.css';
+import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 // ── 기본값 ────────────────────────────────────────────────────
 const TONE_OPTIONS = [
@@ -111,6 +112,7 @@ function calcDensity(text, keywords) {
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function PostCreate() {
+  const { limits: tierLimits } = useLicenseLimits();
   const { pathname, state } = useLocation();
   // 2026-07-07: 파일 내 기존 코드(요금 한도 오류 카드)에서 navigate('/settings')를
   // 이미 참조하고 있었으나 useNavigate가 import/선언돼 있지 않아 클릭 시
@@ -984,13 +986,20 @@ export default function PostCreate() {
                     />
                     <span className="toggle-text">🖥️ 브라우저 표시</span>
                   </label>
-                  <label className="toggle-label" title="발행 시 글 제목이 들어간 디자인 썸네일을 자동 생성합니다">
+                  <label
+                    className={`toggle-label${!tierLimits.thumbnail ? ' premium-lock-host' : ''}`}
+                    title={!tierLimits.thumbnail ? PREMIUM_ONLY_TOOLTIP : '발행 시 글 제목이 들어간 디자인 썸네일을 자동 생성합니다'}
+                  >
                     <input
                       type="checkbox"
-                      checked={autoThumbnail}
+                      checked={autoThumbnail && tierLimits.thumbnail}
+                      disabled={!tierLimits.thumbnail}
                       onChange={e => setAutoThumbnail(e.target.checked)}
                     />
                     <span className="toggle-text">🖼️ 썸네일 자동 생성</span>
+                    {!tierLimits.thumbnail && (
+                      <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
+                    )}
                   </label>
                 </div>
               </div>
@@ -1119,12 +1128,15 @@ export default function PostCreate() {
                   {previewLoading ? <><span className="spinner-sm" />준비중…</> : publishing ? <><span className="spinner-sm" />발행 중…</> : '📤 즉시 발행'}
                 </button>
                 <button
-                  className="btn btn-schedule"
+                  className={`btn btn-schedule${!tierLimits.reservation ? ' premium-lock-host' : ''}`}
                   onClick={() => { setShowScheduleModal(true); const today = new Date().toISOString().slice(0,10); setScheduleDate(today); }}
-                  disabled={!result || generating}
-                  title="날짜와 시간을 지정해 예약 발행"
+                  disabled={!result || generating || !tierLimits.reservation}
+                  title={!tierLimits.reservation ? PREMIUM_ONLY_TOOLTIP : '날짜와 시간을 지정해 예약 발행'}
                 >
                   🕐 예약 발행
+                  {!tierLimits.reservation && (
+                    <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
+                  )}
                 </button>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Dashboard.css';
+import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 // ── 7일 바차트 컴포넌트 ──────────────────────────────────────
 function TrendChart({ data }) {
@@ -124,6 +125,7 @@ const LOOP_STEP_LABEL = {
 // ── 메인 대시보드 ─────────────────────────────────────────────
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { limits: tierLimits } = useLicenseLimits();
   const [stats,    setStats]    = useState(null);
   const [recent,   setRecent]   = useState([]);
   const [trend,    setTrend]    = useState([]);
@@ -231,22 +233,27 @@ export default function Dashboard() {
             {loading ? '…' : '↻ 새로고침'}
           </button>
 
-          {/* 자동화 루프: 모드 선택 + 시작/중지 (2026-07-05 신규) */}
+          {/* 자동화 루프: 모드 선택 + 시작/중지 (2026-07-05 신규 / 2026-07-14 프리미엄 전용화) */}
           <div className="loop-controls">
             <button
-              className={`loop-mode-btn loop-mode-${loopMode}`}
+              className={`loop-mode-btn loop-mode-${loopMode}${!tierLimits.automationLoop ? ' premium-lock-host' : ''}`}
               onClick={cycleLoopMode}
-              disabled={loopStatus?.running}
-              title="클릭할 때마다 수동 → 완전자동 → 반자동 순으로 전환됩니다"
+              disabled={loopStatus?.running || !tierLimits.automationLoop}
+              title={!tierLimits.automationLoop ? PREMIUM_ONLY_TOOLTIP : '클릭할 때마다 수동 → 완전자동 → 반자동 순으로 전환됩니다'}
             >
               {LOOP_MODE_LABEL[loopMode]}
+              {!tierLimits.automationLoop && (
+                <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
+              )}
             </button>
             <button
-              className={`loop-startstop-btn${loopStatus?.running ? ' running' : ''}`}
+              className={`loop-startstop-btn${loopStatus?.running ? ' running' : ''}${!tierLimits.automationLoop ? ' premium-lock-host' : ''}`}
               onClick={handleLoopStartStop}
-              disabled={loopBusy || (!loopStatus?.running && loopMode === 'manual')}
+              disabled={loopBusy || (!loopStatus?.running && loopMode === 'manual') || !tierLimits.automationLoop}
+              title={!tierLimits.automationLoop ? PREMIUM_ONLY_TOOLTIP : undefined}
             >
               {loopBusy ? '…' : loopStatus?.running ? '■ 중지' : '▶ 시작'}
+              {!tierLimits.automationLoop && <span className="premium-lock-overlay" />}
             </button>
           </div>
         </div>
