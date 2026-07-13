@@ -376,6 +376,19 @@ export default function PostCreate() {
     }
   };
 
+  // 2026-07-13 신규: 주제 전환 시 이전에 생성된 글이 남아있어 새 글을
+  // 준비하기 불편하다는 요청으로 추가 — 생성된 글/주제/키워드/해시태그를
+  // 한 번에 초기화. 되돌릴 수 없는 동작이라 확인창을 거친다.
+  const handleReset = () => {
+    if (!window.confirm('생성된 글과 주제·키워드·해시태그를 모두 초기화할까요?\n이 작업은 되돌릴 수 없습니다.')) return;
+    setResult(null);
+    setTopic('');
+    setKeywords('');
+    setHashtagInput('');
+    setErrorMsg('');
+    setPublishMsg('');
+  };
+
   // ── 글 생성 ──────────────────────────────────────────────
   const handleGenerate = async () => {
     if (!topic.trim()) return;
@@ -683,6 +696,9 @@ export default function PostCreate() {
           <h1>글 생성</h1>
           <p>주제와 키워드를 입력하면 AI가 SEO 최적화 글을 자동으로 생성합니다.</p>
         </div>
+        <button className="btn btn-ghost" onClick={handleReset} title="생성된 글과 주제·키워드·해시태그를 초기화합니다">
+          초기화
+        </button>
       </div>
 
       <div className="post-create-layout">
@@ -1100,7 +1116,7 @@ export default function PostCreate() {
                   disabled={!result || publishing || generating || previewLoading}
                   title="지금 바로 네이버 블로그에 발행"
                 >
-                  {previewLoading ? <><span className="spinner-sm" />미리보기 준비 중…</> : publishing ? <><span className="spinner-sm" />발행 중…</> : '📤 즉시 발행'}
+                  {previewLoading ? <><span className="spinner-sm" />준비중</> : publishing ? <><span className="spinner-sm" />발행 중…</> : '📤 즉시 발행'}
                 </button>
                 <button
                   className="btn btn-schedule"
