@@ -65,13 +65,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testSearchAd:  (customerId, apiKey, secretKey) => ipcRenderer.invoke('settings:testSearchAd', customerId, apiKey, secretKey),
   },
 
-  // ── 라이선스 (오프라인 서명 키, 2026-07-04 신규) ──────────────
+  // ── 라이선스 (오프라인 서명 키, 2026-07-04 신규 / 2026-07-13 HWID 조회 추가) ──
   license: {
-    /** 현재 라이선스 상태 조회 (등급/최대기기수/만료일 등) */
+    /** 현재 라이선스 상태 조회 (등급/최대기기수/만료일/기기고정/시간조작 여부 등) */
     get: () => ipcRenderer.invoke('license:get'),
 
     /** 라이선스 키 적용 (빈 문자열 전달 시 라이선스 해제 → 스탠다드로 복귀) */
     set: (key) => ipcRenderer.invoke('license:set', key),
+
+    /** 이 기기의 고유 식별값(HWID) 조회 — 문의 대응 시 참고용 */
+    getHwid: () => ipcRenderer.invoke('license:getHwid'),
   },
 
   // ── 글 생성 ────────────────────────────────────────────────

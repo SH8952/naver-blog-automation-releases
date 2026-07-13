@@ -462,10 +462,12 @@ export default function Settings() {
   const [loopLogClearing, setLoopLogClearing] = useState(false);
   const [loopLogCopyToast, setLoopLogCopyToast] = useState(false);
 
-  // 라이선스 (2026-07-04 신규)
-  const [licenseStatus, setLicenseStatus] = useState(null); // { hasKey, valid, expired, tier, maxDevices, expiresAt, daysRemaining, licenseId }
+  // 라이선스 (2026-07-04 신규 / 2026-07-13 HWID·시간조작·이메일 필드 추가)
+  const [licenseStatus, setLicenseStatus] = useState(null); // { hasKey, valid, expired, tier, maxDevices, expiresAt, daysRemaining, licenseId, userEmail, hwidMismatch, timeTampered }
   const [licenseSaving, setLicenseSaving] = useState(false);
   const [licenseMsg, setLicenseMsg]       = useState(null); // { type: 'ok'|'error', text }
+  const [licenseHwid, setLicenseHwid]     = useState('');
+  const [hwidLoading, setHwidLoading]     = useState(false);
 
   // 자동화 루프 (2026-07-05 신규)
   const [loopForm, setLoopForm]     = useState(LOOP_DEFAULTS);
@@ -730,6 +732,13 @@ export default function Settings() {
       setLicenseStatus(res.status);
       if (!form.licenseKey.trim()) {
         setLicenseMsg({ type: 'ok', text: '라이선스가 해제되어 스탠다드로 동작합니다.' });
+      } else if (res.status.hwidMismatch) {
+        // 2026-07-13 신규(다중기기 지원 수정 포함): maxDevices 정원이 다 찬 상태에서
+        // 등록되지 않은 새 기기로 적용을 시도한 경우
+        setLicenseMsg({ type: 'error', text: `등록 가능한 기기 대수(최대 ${res.status.maxDevices || 1}대)를 초과했습니다. 다른 기기에서 해제하거나 새 라이선스가 필요합니다.` });
+      } else if (res.status.timeTampered) {
+        // 2026-07-13 신규: 시스템 시계 역행이 감지된 경우
+        setLicenseMsg({ type: 'error', text: '시스템 시간이 비정상적으로 감지되어 적용할 수 없습니다. 시간을 정상으로 맞춘 뒤 다시 시도해주세요.' });
       } else if (res.status.expired) {
         setLicenseMsg({ type: 'error', text: '라이선스 기간이 만료되었습니다. 갱신이 필요합니다.' });
       } else {
@@ -737,6 +746,25 @@ export default function Settings() {
       }
     } else {
       setLicenseMsg({ type: 'error', text: res.error || '라이선스 적용에 실패했습니다.' });
+    }
+  };
+
+  // 2026-07-13 신규 — 문의 대응용으로 내 기기 식별값(HWID)을 확인하고
+  // 클립보드에 복사한다.
+  const handleShowHwid = async () => {
+    setHwidLoading(true);
+    const res = await window.electronAPI.license.getHwid();
+    setHwidLoading(false);
+    if (res.success) {
+      setLicenseHwid(res.hwid);
+      try {
+        await navigator.clipboard.writeText(res.hwid);
+        setLicenseMsg({ type: 'ok', text: '기기 식별값을 복사했습니다. 문의 시 함께 전달해주세요.' });
+      } catch (e) {
+        // 클립보드 접근 실패해도 화면에 표시는 되므로 무시
+      }
+    } else {
+      setLicenseMsg({ type: 'error', text: res.error || '기기 식별값을 조회하지 못했습니다.' });
     }
   };
 
@@ -1526,7 +1554,42 @@ export default function Settings() {
                 <span>{licenseStatus.licenseId}</span>
               </div>
             )}
+            {/* 2026-07-13 신규 — 구매자 이메일(기록용) */}
+            {licenseStatus.userEmail && (
+              <div className="license-status-row">
+                <span className="license-status-label">등록 이메일</span>
+                <span>{licenseStatus.userEmail}</span>
+              </div>
+            )}
+            {/* 2026-07-13 신규 — 기기 등록 상태 */}
+            <div className="license-status-row">
+              <span className="license-status-label">기기 등록</span>
+              <span>
+                {licenseStatus.hwidMismatch
+                  ? <span className="license-expired">등록 가능 기기 대수 초과</span>
+                  : '이 기기에 등록됨'}
+              </span>
+            </div>
+            {/* 2026-07-13 신규 — 시간조작 감지 경고 */}
+            {licenseStatus.timeTampered && (
+              <div className="license-status-row">
+                <span className="license-status-label">시간 확인</span>
+                <span className="license-expired">시스템 시간 조작이 감지되었습니다</span>
+              </div>
+            )}
           </>)}
+        </div>
+
+        {/* 2026-07-13 신규 — 문의 대응용 기기 식별값 확인 */}
+        <div className="form-group" style={{ marginTop: '10px' }}>
+          <button className="btn btn-ghost btn-sm" onClick={handleShowHwid} disabled={hwidLoading}>
+            {hwidLoading ? '확인 중…' : '내 기기 식별값 확인'}
+          </button>
+          {licenseHwid && (
+            <div className="license-hwid-value" style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px', wordBreak: 'break-all' }}>
+              {licenseHwid} <span style={{ opacity: 0.7 }}>(클립보드에 복사됨 — 문의 시 함께 전달)</span>
+            </div>
+          )}
         </div>
       </div>}
 

@@ -65,12 +65,20 @@ function getStore() {
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
-// ── 라이선스 (오프라인 서명 키, 2026-07-04 신규) ────────────────
+// ── 라이선스 (오프라인 서명 키, 2026-07-04 신규 / 2026-07-13 HWID+시간방어 추가) ─
 // license/licenseCore.js: 공개키 내장 검증 모듈 (개인키는 포함되어 있지 않음,
 // 발급은 tools/generate-license.js로 개발자가 직접 수행)
-const { verifyLicenseKey } = require('./license/licenseCore');
+const { verifyLicenseKey, getHardwareId } = require('./license/licenseCore');
+const { checkTimeIntegrity } = require('./license/timeGuard');
 
-function getLicenseStatus() {
+// 2026-07-13: 키가 있는데 문제(서명무효/만료/기기불일치/시간조작)가 있을
+// 때만 실행을 차단하기로 함(키가 아예 없으면 지금처럼 스탠다드로 계속
+// 동작 — 이 분기는 그대로 유지). HWID는 "첫 실행 자동 등록" 방식 —
+// 발급 시점에 미리 박아넣지 않고, 이 키가 이 기기에서 처음 적용되는
+// 순간의 HWID를 electron-store에 저장해두고 이후 대조한다. isDev(개발
+// 모드)에서는 실수로 개발자 본인이 막히는 것을 막기 위해 devBypass를
+// 함께 반환해 렌더러가 차단 화면을 건너뛸 수 있게 한다.
+async function getLicenseStatus() {
   const store = getStore();
   const key = store.get('settings.licenseKey', '');
   if (!key) {
@@ -78,11 +86,84 @@ function getLicenseStatus() {
       hasKey: false, valid: true, expired: false,
       tier: 'standard', maxDevices: 1,
       expiresAt: null, issuedAt: null, licenseId: null,
-      daysRemaining: null, reason: null,
+      userEmail: null, daysRemaining: null, reason: null,
+      hwidMismatch: false, timeTampered: false, devBypass: isDev,
     };
   }
+
   const result = verifyLicenseKey(key);
-  return { hasKey: true, ...result, tier: result.tier || 'standard' };
+  if (!result.valid) {
+    // 서명 자체가 무효거나(위조/손상) 순수 날짜 비교로 이미 만료된 경우 —
+    // HWID/시간조작 검사를 더 할 필요 없이 바로 반환.
+    return {
+      hasKey: true, ...result, tier: result.tier || 'standard',
+      hwidMismatch: false, timeTampered: false, devBypass: isDev,
+    };
+  }
+
+  // 서명은 유효 — HWID 대조(첫 등록 시 자동 저장, maxDevices까지 다중 기기
+  // 허용 — 2026-07-13 수정: 원래 기기 1대만 저장하던 것을 배열로 바꿔
+  // maxDevices 값만큼 여러 대에서 같은 키를 쓸 수 있게 함) + 시간조작
+  // 검사를 추가로 수행.
+  let hwidMismatch = false;
+  try {
+    const myHwid = getHardwareId();
+    const activation = store.get('settings._licenseActivation', null);
+    const maxDevices = Number.isFinite(result.maxDevices) ? result.maxDevices : 1;
+    if (result.licenseId) {
+      if (!activation || activation.licenseId !== result.licenseId) {
+        // 이 licenseId를 이 기기에서 처음 보는 경우 — 첫 번째 자리로 자동 등록
+        store.set('settings._licenseActivation', { licenseId: result.licenseId, hwids: [myHwid] });
+      } else {
+        const hwids = Array.isArray(activation.hwids) ? activation.hwids : (activation.hwid ? [activation.hwid] : []);
+        if (!hwids.includes(myHwid)) {
+          if (hwids.length < maxDevices) {
+            // 아직 정원이 남아있으면 이 기기를 새 자리로 등록
+            store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid] });
+          } else {
+            // 이미 maxDevices만큼 다 등록된 상태에서 등록 안 된 새 기기 — 차단
+            hwidMismatch = true;
+          }
+        }
+        // hwids.includes(myHwid)면 이미 등록된 기기 — 통과
+      }
+    }
+  } catch (e) {
+    writeLog('WARN', 'LICENSE', 'HWID 대조 중 오류 — 이번 실행은 통과 처리', e.message);
+  }
+
+  let timeTampered = false;
+  let finalExpired = result.expired;
+  try {
+    const timeCheck = await checkTimeIntegrity(store, result.expiresAt);
+    timeTampered = timeCheck.tampered;
+    finalExpired = result.expired || timeCheck.effectiveExpired;
+  } catch (e) {
+    writeLog('WARN', 'LICENSE', '시간조작 검사 중 오류 — 이번 실행은 통과 처리', e.message);
+  }
+
+  const valid = !finalExpired && !hwidMismatch && !timeTampered;
+  let reason = null;
+  if (hwidMismatch) reason = '등록 가능한 기기 대수를 초과했습니다';
+  else if (timeTampered) reason = '시스템 시간 조작이 감지되었습니다';
+  else if (finalExpired) reason = '라이선스 기간 만료';
+
+  return {
+    hasKey: true,
+    valid,
+    expired: finalExpired,
+    tier: result.tier || 'standard',
+    maxDevices: result.maxDevices,
+    expiresAt: result.expiresAt,
+    issuedAt: result.issuedAt,
+    licenseId: result.licenseId,
+    userEmail: result.userEmail || null,
+    daysRemaining: result.daysRemaining,
+    hwidMismatch,
+    timeTampered,
+    devBypass: isDev,
+    reason,
+  };
 }
 
 // ── 암호화 유틸 ─────────────────────────────────────────────
@@ -1257,24 +1338,26 @@ ipcMain.handle('settings:set', (event, settings) => {
   }
 });
 
-// ── IPC: 라이선스 조회/적용 (2026-07-04 신규) ─────────────────
+// ── IPC: 라이선스 조회/적용 (2026-07-04 신규 / 2026-07-13 비동기화) ──
 // settings 객체 안의 licenseKey 필드로 저장하되, dot-path set을 써서
 // settings:set(전체 저장)이 별도로 호출돼도 서로 값을 지우지 않게 한다.
-ipcMain.handle('license:get', () => {
+// getLicenseStatus()가 시간조작 검사(온라인 시각 조회 포함)를 위해
+// 2026-07-13부터 async가 되어, 두 핸들러 모두 await로 바꿨다.
+ipcMain.handle('license:get', async () => {
   try {
-    return { success: true, status: getLicenseStatus() };
+    return { success: true, status: await getLicenseStatus() };
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
-ipcMain.handle('license:set', (event, keyString) => {
+ipcMain.handle('license:set', async (event, keyString) => {
   try {
     const trimmed = String(keyString || '').trim();
     const store = getStore();
     if (!trimmed) {
       store.set('settings.licenseKey', '');
-      return { success: true, status: getLicenseStatus() };
+      return { success: true, status: await getLicenseStatus() };
     }
     const result = verifyLicenseKey(trimmed);
     if (!result.valid && !result.expired) {
@@ -1284,7 +1367,17 @@ ipcMain.handle('license:set', (event, keyString) => {
     store.set('settings.licenseKey', trimmed);
     writeLog('INFO', 'LICENSE',
       `라이선스 키 적용 — 등급:${result.tier}, 최대기기:${result.maxDevices}대, 만료:${result.expiresAt || '없음'}${result.expired ? ' (이미 만료됨)' : ''}`);
-    return { success: true, status: getLicenseStatus() };
+    return { success: true, status: await getLicenseStatus() };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 2026-07-13 신규 — 사용자가 문의할 때 알려줄 "내 기기 식별값" 조회용.
+// 이 값 자체로는 아무 것도 바뀌지 않는 읽기 전용 IPC.
+ipcMain.handle('license:getHwid', () => {
+  try {
+    return { success: true, hwid: getHardwareId() };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -3659,6 +3752,30 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
 // 이미 확정한 색상 프리셋 인덱스(0~4)가 있으면 그대로 재사용해, 미리보기 때
 // 본 색상과 실제 발행 색상이 달라지는 문제(랜덤 프리셋이 두 번 다르게 뽑히는
 // 경우)를 방지한다. null/미지정이면 기존처럼 설정값 기준으로 새로 뽑는다.
+// ── 2026-07-13 신규: 발행 DOM 자동화 견고화 ──────────────────────
+// 문제: 발행 흐름의 여러 지점(본문 포커스/폰트 버튼/태그 input/발행 버튼/
+// 카테고리/최종 발행 버튼 등)이 executeJavaScript로 요소를 "딱 한 번만"
+// 조회하고 실패하면 바로 포기하는 구조였음. 개발용 PC에서는 항상 성공했지만,
+// 다른(더 느리거나 사양이 다른) PC에서 렌더링이 조금만 늦어도 요소가 아직
+// 안 그려진 시점에 조회해 실패하는 사례가 실제로 확인됨(2026-07-13, 지인
+// 테스트 PC). 이 프로젝트의 다른 부분(공개설정/태그패널/예약캘린더)은 이미
+// 이런 재시도 방식으로 잘 동작하고 있어, 그 패턴을 공용 헬퍼로 뽑아 발행
+// 흐름 전체에 일관되게 적용한다.
+// queryFn: 매 시도마다 실행할 조회 함수(기존 executeJavaScript 호출을 그대로
+// 감싸기만 함 — 조회 로직 자체는 절대 변경하지 않음). isFound: 그 결과가
+// "성공"인지 판정하는 함수. 성공하면 즉시 반환(첫 시도에 성공하면 기존과
+// 100% 동일한 속도/동작), 실패하면 attempts 횟수까지 intervalMs 간격으로
+// 재시도 후 마지막 결과를 반환한다.
+async function retryUntilFound(queryFn, isFound, attempts = 6, intervalMs = 350) {
+  let result = null;
+  for (let i = 0; i < attempts; i++) {
+    result = await queryFn();
+    if (isFound(result)) return result;
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return result;
+}
+
 async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, thumbBgUrl = null }) {
   // reserveAt: 'YYYY-MM-DDTHH:MM' 형식이 오면, 즉시발행과 동일하게 전체 자동화를
   // 수행하되 최종 발행 직전 네이버 자체 "예약" 기능으로 등록한다(2026-07-03).
@@ -3960,7 +4077,11 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
   // 헬퍼: 본문 contenteditable 포커스 (JS 직접 — 헤드리스 창 대응)
   const focusBodyEditor = async () => {
-    return publishWin.webContents.executeJavaScript(`
+    // 2026-07-13: 다른 PC에서 SE3 렌더링이 늦어 요소가 아직 없을 때를
+    // 대비해 재시도(최대 6회, 350ms 간격) — 첫 시도에 찾으면 지금까지와
+    // 완전히 동일하게 즉시 반환됨.
+    return retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
       (function() {
         // SE3 본문 영역: title 제외한 contenteditable 중 가장 큰 것
         var candidates = Array.from(document.querySelectorAll('[contenteditable]'));
@@ -3991,7 +4112,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
         }
         return 'se3_body_not_found';
       })()
-    `).catch(() => 'focus_err');
+    `).catch(() => 'focus_err'),
+      (v) => typeof v === 'string' && v.startsWith('se3_focused:')
+    );
   };
 
   // 헬퍼: HTML 주입 — SE3 표준 클립보드 붙여넣기
@@ -4058,7 +4181,11 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           //   있을 수 있고, 그 상태에서 좌표를 클릭하면 아무 반응이 없음.
           // 이 시점엔 썸네일이 첫/유일한 이미지이므로 se-is-selected 여부와
           // 무관하게 .se-section-image 첫 번째 요소를 기준으로 스크롤한다.
-          const scrollResult = await publishWin.webContents.executeJavaScript(`
+          // 2026-07-13: 재시도 추가(3회, 300ms) — 이미지 삽입 직후 DOM 반영이
+          // 아직 안 끝났을 수 있음. 실패해도 이후 로직이 완전히 막히지는 않는
+          // 낮은 우선순위 지점이라 재시도 횟수는 짧게 유지.
+          const scrollResult = await retryUntilFound(
+            () => publishWin.webContents.executeJavaScript(`
             (function() {
               var img = document.querySelector('.se-section-image');
               if (img && img.scrollIntoView) {
@@ -4067,13 +4194,18 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
               }
               return 'img_not_found';
             })()
-          `).catch((e) => 'scroll_err:' + e.message);
+          `).catch((e) => 'scroll_err:' + e.message),
+            (v) => v === 'scrolled',
+            3, 300
+          );
           writeLog('INFO', 'PUBLISH', '썸네일 스크롤', String(scrollResult));
           await sleep(500); // 스크롤 + 리렌더링 안정화 대기
 
           // 스크롤 후 이미지가 실제로 선택 상태인지 보장하기 위해 이미지를 한 번 클릭
           // (paste 직후 선택 상태가 유지되지 않는 경우를 대비한 안전장치)
-          const imgClickPos = await publishWin.webContents.executeJavaScript(`
+          // 2026-07-13: 재시도 추가(3회, 300ms)
+          const imgClickPos = await retryUntilFound(
+            () => publishWin.webContents.executeJavaScript(`
             (function() {
               var img = document.querySelector('.se-section-image');
               if (!img) return null;
@@ -4081,7 +4213,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
               if (r.width === 0 || r.height === 0) return null;
               return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(r.height / 2, 40)) };
             })()
-          `).catch(() => null);
+          `).catch(() => null),
+            (v) => !!v,
+            3, 300
+          );
           if (imgClickPos) {
             publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: imgClickPos.x, y: imgClickPos.y, button: 'left', clickCount: 1 });
             publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: imgClickPos.x, y: imgClickPos.y, button: 'left', clickCount: 1 });
@@ -4095,7 +4230,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           // 스크롤/클릭 이후 다시 조회해서 클릭 — 3개(좌/중앙/우) 버튼 중
           // 현재 화면에 보이는(폭·높이 > 0) 것이 지금 상태(좌측)를 나타내며,
           // 클릭하면 다음 상태(가운데)로 전환됨.
-          const alignBtnResult = await publishWin.webContents.executeJavaScript(`
+          // 2026-07-13: 재시도 추가(3회, 300ms)
+          const alignBtnResult = await retryUntilFound(
+            () => publishWin.webContents.executeJavaScript(`
             (function() {
               var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
               if (!container) return { found:false, reason:'container_not_found' };
@@ -4108,7 +4245,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
               var r = btn.getBoundingClientRect();
               return { found:true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
             })()
-          `).catch((e) => ({ found:false, reason:'js_err:' + e.message }));
+          `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+            (v) => v && v.found,
+            3, 300
+          );
 
           writeLog('INFO', 'PUBLISH', '썸네일 정렬 버튼 조회', JSON.stringify(alignBtnResult));
 
@@ -4252,7 +4392,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     writeLog('INFO', 'PUBLISH', '폰트 적용 - 전체 선택(' + SELECT_ALL_MOD + '+A)');
     await sleep(300);
 
-    const fontBtnPos = await publishWin.webContents.executeJavaScript(`
+    // 2026-07-13: 재시도 추가(5회, 350ms)
+    const fontBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
       (function() {
         var btn = document.querySelector('button[data-name="font-family"][data-type="label-select"]');
         if (!btn) return null;
@@ -4260,7 +4402,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
         if (r.width === 0 || r.height === 0) return null;
         return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
       })()
-    `).catch(() => null);
+    `).catch(() => null),
+      (v) => !!v,
+      5, 350
+    );
     writeLog('INFO', 'PUBLISH', '폰트 버튼 조회', JSON.stringify(fontBtnPos));
 
     if (fontBtnPos) {
@@ -4268,7 +4413,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: fontBtnPos.x, y: fontBtnPos.y, button: 'left', clickCount: 1 });
       await sleep(400);
 
-      const fontOptResult = await publishWin.webContents.executeJavaScript(`
+      // 2026-07-13: 재시도 추가(5회, 350ms)
+      const fontOptResult = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
         (function() {
           var target = ${JSON.stringify(editorFont)};
           var opts = Array.from(document.querySelectorAll('button[data-name="font-family"][data-role="option"]'));
@@ -4287,7 +4434,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           var r = match.getBoundingClientRect();
           return { found: true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
         })()
-      `).catch((e) => ({ found: false, debug: 'js_err:' + e.message }));
+      `).catch((e) => ({ found: false, debug: 'js_err:' + e.message })),
+        (v) => v && v.found,
+        5, 350
+      );
 
       writeLog('INFO', 'PUBLISH', '폰트 옵션 조회', JSON.stringify(fontOptResult));
 
@@ -4315,7 +4465,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     await new Promise(r => setTimeout(r, 500));
 
     // 태그 input 탐색: placeholder 다국어 + 클래스명 fallback
-    const tagInfo = await publishWin.webContents.executeJavaScript(`
+    // 2026-07-13: 재시도 추가(6회, 400ms) — 다른 PC에서 렌더링이 늦어 이
+    // 시점에 아직 input이 없을 수 있음.
+    const tagInfo = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
       (function() {
         var inputs = Array.from(document.querySelectorAll('input, textarea'));
         var tagKw = ['태그', 'tag', 'Tag', '해시태그', 'hashtag'];
@@ -4345,7 +4498,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
         found.scrollIntoView({ block: 'center' });
         return { found: true, x: Math.round(r.left + 30), y: Math.round(r.top + r.height/2), ph: found.placeholder };
       })()
-    `).catch(() => null);
+    `).catch(() => null),
+      (v) => v && v.found,
+      6, 400
+    );
     writeLog('INFO', 'PUBLISH', '태그 input', tagInfo ? JSON.stringify(tagInfo) : 'null');
 
     if (tagInfo && tagInfo.found) {
@@ -4370,7 +4526,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   await sleep(800);
 
   // 에디터 상단 발행 버튼 클릭
-  const publishBtnPos = await publishWin.webContents.executeJavaScript(`
+  // 2026-07-13: 재시도 추가(6회, 400ms) — 매 발행마다 항상 거치는 지점이라
+  // 실패 시 파급력이 큼.
+  const publishBtnPos = await retryUntilFound(
+    () => publishWin.webContents.executeJavaScript(`
     (function() {
       var btns = Array.from(document.querySelectorAll('button, [role="button"]'));
       var found = btns.find(function(b) {
@@ -4381,7 +4540,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       var r = found.getBoundingClientRect();
       return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
     })()
-  `).catch(() => null);
+  `).catch(() => null),
+    (v) => !!v,
+    6, 400
+  );
 
   if (publishBtnPos) {
     publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: publishBtnPos.x, y: publishBtnPos.y, button: 'left', clickCount: 1 });
@@ -4397,7 +4559,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     // ── 카테고리 설정 (React fiber 직접 호출 방식) ─────────────
     if (category) {
       // ① <select> 직접 변경 시도
-      const catResult = await publishWin.webContents.executeJavaScript(`
+      // 2026-07-13: 재시도 추가(6회, 400ms) — 발행 패널이 카테고리 목록까지
+      // 완전히 그려지기 전에 조회되면 못 찾을 수 있음.
+      const catResult = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
         (function() {
           var cat = ${JSON.stringify(category)};
 
@@ -4462,7 +4627,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
           return 'CAT_NOT_FOUND';
         })()
-      `).catch(() => 'ERR');
+      `).catch(() => 'ERR'),
+        (v) => v && v !== 'ERR' && v !== 'CAT_NOT_FOUND',
+        6, 400
+      );
       writeLog('INFO', 'PUBLISH', '카테고리 설정', JSON.stringify(catResult).slice(0, 150));
 
       if (catResult && typeof catResult === 'object' && catResult.method === 'open_btn') {
@@ -4470,7 +4638,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
         publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: catResult.x, y: catResult.y, button: 'left', clickCount: 1 });
         publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: catResult.x, y: catResult.y, button: 'left', clickCount: 1 });
         await sleep(700);
-        const catOptResult = await publishWin.webContents.executeJavaScript(`
+        // 2026-07-13: 재시도 추가(5회, 400ms)
+        const catOptResult = await retryUntilFound(
+          () => publishWin.webContents.executeJavaScript(`
           (function() {
             var cat = ${JSON.stringify(category)};
             function reactClick(el) {
@@ -4495,7 +4665,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
             reactClick(target);
             return { ok: true, x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2), txt: target.textContent.trim() };
           })()
-        `).catch(() => ({ ok: false }));
+        `).catch(() => ({ ok: false })),
+          (v) => v && v.ok,
+          5, 400
+        );
         if (catOptResult && catOptResult.ok) {
           publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: catOptResult.x, y: catOptResult.y, button: 'left', clickCount: 1 });
           publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: catOptResult.x, y: catOptResult.y, button: 'left', clickCount: 1 });
@@ -4705,7 +4878,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       targetDate.setMinutes(Math.round(targetDate.getMinutes() / 10) * 10);
 
       // 1) "예약" 라디오 클릭
-      const reserveRadioPos = await publishWin.webContents.executeJavaScript(`
+      // 2026-07-13: 재시도 추가(5회, 350ms)
+      const reserveRadioPos = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
         (function() {
           var radio = document.querySelector('input#radio_time2[name="radio_time"][value="pre"]')
             || document.querySelector('input[data-testid="preTimeRadioBtn"]');
@@ -4716,7 +4891,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           var r = target.getBoundingClientRect();
           return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
         })()
-      `).catch(() => null);
+      `).catch(() => null),
+        (v) => !!v,
+        5, 350
+      );
       if (reserveRadioPos) {
         publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: reserveRadioPos.x, y: reserveRadioPos.y, button: 'left', clickCount: 1 });
         publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: reserveRadioPos.x, y: reserveRadioPos.y, button: 'left', clickCount: 1 });
@@ -4727,7 +4905,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       }
 
       // 2) 날짜 입력 클릭 → 달력 열기
-      const dateInputPos = await publishWin.webContents.executeJavaScript(`
+      // 2026-07-13: 재시도 추가(5회, 350ms)
+      const dateInputPos = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
         (function() {
           var inp = document.querySelector('input[class*="input_date"]');
           if (!inp) return null;
@@ -4735,7 +4915,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           var r = inp.getBoundingClientRect();
           return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
         })()
-      `).catch(() => null);
+      `).catch(() => null),
+        (v) => !!v,
+        5, 350
+      );
       if (dateInputPos) {
         publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: dateInputPos.x, y: dateInputPos.y, button: 'left', clickCount: 1 });
         publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: dateInputPos.x, y: dateInputPos.y, button: 'left', clickCount: 1 });
@@ -4892,7 +5075,11 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
     // ── 최종 발행 버튼 클릭 ──────────────────────────────────
     await sleep(700);
-    const finalPublishBtn = await publishWin.webContents.executeJavaScript(`
+    // 2026-07-13: 재시도 추가(8회, 400ms) — 이 발행 흐름에서 가장 중요한
+    // 지점. 실패하면 발행 자체가 조용히 누락되므로 재시도 횟수를 가장
+    // 넉넉하게 준다.
+    const finalPublishBtn = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
       (function() {
         var all = Array.from(document.querySelectorAll('button'));
         // 패널 내부 발행 버튼: 상단 툴바(y<200) 제외한 모든 발행 버튼
@@ -4917,7 +5104,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
         var r = btn.getBoundingClientRect();
         return { x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2), txt: btn.textContent.trim() };
       })()
-    `).catch(() => null);
+    `).catch(() => null),
+      (v) => !!v,
+      8, 400
+    );
 
     if (finalPublishBtn) {
       publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: finalPublishBtn.x, y: finalPublishBtn.y, button: 'left', clickCount: 1 });

@@ -12,6 +12,50 @@ echo " 네이버 블로그 자동화 - 원스톱 릴리스"
 echo "================================================"
 echo ""
 
+# 0. 잔여 git 잠금 파일(index.lock) 자가 진단 (2026-07-14 추가, 같은 날 2차 보강)
+#    이전 실행이 비정상 종료(터미널 강제종료/잠자기/다른 Git 프로그램과
+#    충돌 등)되면 .git/index.lock이 지워지지 않고 남아 다음 실행부터
+#    계속 "File exists" 오류로 막힐 수 있음.
+#    2026-07-14 2차 보강: 실사용 중 lsof가 "com.apple..."로 시작하는
+#    macOS 백그라운드 프로세스(Spotlight 색인 등으로 추정)를 FD 'r'
+#    (읽기 전용)로 잡아낸 사례를 확인함 — 이건 git이 실제로 쓰기 위해
+#    잠근 게 아니라 시스템이 방금 바뀐 파일을 잠깐 읽어본 흔적일 뿐이라
+#    배포를 막을 이유가 없음. 그래서 "git 프로세스 자신" 또는 "쓰기(w)
+#    /읽기쓰기(u) 접근"인 경우에만 진짜 충돌로 보고 중단하고, 그 외
+#    읽기 전용(r) 접근은 안전하게 무시하고 잔여 파일을 지운 뒤 진행한다.
+LOCK_FILE=".git/index.lock"
+if [ -f "$LOCK_FILE" ]; then
+  echo "⚠️  잔여 git 잠금 파일을 발견했습니다: $LOCK_FILE"
+  LSOF_OUTPUT=$(lsof "$LOCK_FILE" 2>/dev/null)
+  # FD 컬럼(4번째 필드)의 마지막 글자가 w(쓰기) 또는 u(읽기+쓰기)이거나,
+  # COMMAND(1번째 필드)가 git 자신인 경우만 "진짜 사용 중"으로 판단.
+  BLOCKING=$(echo "$LSOF_OUTPUT" | awk 'NR>1 { fd=$4; mode=substr(fd, length(fd), 1); if ($1 == "git" || mode == "w" || mode == "u") print }')
+  if [ -n "$BLOCKING" ]; then
+    echo "   이 파일을 아래 프로세스가 실제로(쓰기 모드로) 사용 중인 것으로 확인됩니다:"
+    echo ""
+    echo "$BLOCKING"
+    echo ""
+    echo "   위 프로그램을 종료한 뒤 다시 실행해주세요."
+    echo "   (위 프로세스가 이 배포 작업과 무관한 프로그램이 확실하다면,"
+    echo "    터미널에서 직접 다음 명령으로 지운 뒤 다시 실행할 수도 있습니다:)"
+    echo "    rm "$(pwd)/$LOCK_FILE""
+    read -p "엔터를 누르면 창이 닫힙니다..."
+    exit 1
+  else
+    if [ -n "$LSOF_OUTPUT" ]; then
+      echo "   아래 프로세스가 파일을 읽기 전용으로 잠깐 열어본 흔적이 있지만"
+      echo "   (Spotlight 색인 등 macOS 백그라운드 서비스로 추정), git이 실제로"
+      echo "   쓰기 위해 잠근 것은 아니므로 무시하고 계속 진행합니다:"
+      echo "$LSOF_OUTPUT"
+      echo ""
+    fi
+    echo "   이전 실행이 남긴 잔여 파일로 판단, 자동으로 제거합니다."
+    rm -f "$LOCK_FILE"
+    echo "   제거 완료 — 계속 진행합니다."
+  fi
+  echo ""
+fi
+
 # 1. 변경된 파일 확인
 echo "[1/6] 변경된 파일 확인 중..."
 echo ""

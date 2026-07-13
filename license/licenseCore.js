@@ -1,10 +1,13 @@
 // ────────────────────────────────────────────────────────────────────────
 // license/licenseCore.js
-// 오프라인 서명 기반 라이선스 키 — 생성/검증 공용 모듈 (2026-07-04 신규)
+// 오프라인 서명 기반 라이선스 키 — 생성/검증 공용 모듈 (2026-07-04 신규,
+// 2026-07-13 이메일/HWID 필드 추가)
 //
 // 키 형식: base64url(JSON payload) + "." + base64url(Ed25519 서명)
 // payload 필드: tier(등급) / maxDevices(PC 대수) / expiresAt(만료일) /
-//              issuedAt(발급일) / licenseId(라이선스 번호)
+//              issuedAt(발급일) / licenseId(라이선스 번호) /
+//              userEmail(구매자 이메일, 2026-07-13 추가 — 기록/표시용이며
+//              검증 로직에는 관여하지 않음)
 //
 // 서명은 Ed25519(Node.js crypto 내장, 별도 npm 설치 불필요)를 사용한다.
 // 개발자만 가진 개인키(keys/private.pem, 절대 앱에 포함되지 않음)로 서명하고,
@@ -16,9 +19,15 @@
 // 지금은 설정 화면에 참고 정보로 표시하는 용도로만 쓰이며, 실제 기기 수
 // 제한을 강제하려면 추후 최소한의 온라인 확인(체크인 서버) 컴포넌트가
 // 필요하다.
+//
+// 2026-07-13 추가: getHardwareId()는 이 기기의 고유 식별값을 계산한다.
+// 실제 "기기 고정"(첫 실행 자동 등록 + 이후 대조)은 main.js에서
+// electron-store에 활성화 기록을 저장/대조하는 방식으로 처리하며, 이
+// 파일은 순수하게 서명 검증과 HWID 계산만 담당한다(관심사 분리 유지).
 // ────────────────────────────────────────────────────────────────────────
 
 const crypto = require('crypto');
+const os = require('os');
 
 // 공개키 — 노출되어도 안전 (검증 전용, 위조 불가능)
 const LICENSE_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
@@ -98,11 +107,38 @@ function verifyLicenseKey(keyString) {
       expiresAt: payload.expiresAt || null,
       issuedAt: payload.issuedAt || null,
       licenseId: payload.licenseId || null,
+      userEmail: payload.userEmail || null,
       daysRemaining,
       reason: expired ? '라이선스 기간 만료' : null,
     };
   } catch (e) {
     return { valid: false, expired: false, reason: '라이선스 키를 읽을 수 없음: ' + e.message };
+  }
+}
+
+// 2026-07-13 신규 — 이 기기의 고유 식별값(HWID) 계산.
+// hostname + platform + arch + (내부용이 아닌 첫 네트워크 인터페이스의
+// MAC 주소)를 SHA-256으로 해시해 32자 hex 문자열로 만든다. 외부
+// 라이브러리 없이 Node 내장 os/crypto만 사용(이 프로젝트의 기존 방침과
+// 동일 — Ed25519 서명도 별도 설치 없이 Node 내장 crypto만 사용했음).
+// 실패 시(권한 문제 등) 'unknown-hwid'를 반환해 앱이 죽지 않게 한다.
+function getHardwareId() {
+  try {
+    const ifaces = os.networkInterfaces();
+    let mac = '';
+    outer:
+    for (const name of Object.keys(ifaces || {})) {
+      for (const iface of ifaces[name] || []) {
+        if (!iface.internal && iface.mac && iface.mac !== '00:00:00:00:00:00') {
+          mac = iface.mac;
+          break outer;
+        }
+      }
+    }
+    const raw = [os.hostname(), os.platform(), os.arch(), mac].join('|');
+    return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
+  } catch (e) {
+    return 'unknown-hwid';
   }
 }
 
@@ -113,4 +149,5 @@ module.exports = {
   decodePayload,
   signPayload,
   verifyLicenseKey,
+  getHardwareId,
 };
