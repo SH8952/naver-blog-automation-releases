@@ -445,12 +445,19 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved]   = useState(false);
 
-  // 오류 로그
+  // 로그 기록 (구 "오류 로그" — 실제로는 전체 로그였음, 2026-07-14 명칭 정리)
   const [logContent, setLogContent]   = useState('');
   const [logPath, setLogPath]         = useState('');
   const [logVisible, setLogVisible]   = useState(false);
   const [logClearing, setLogClearing] = useState(false);
   const [logCopyToast, setLogCopyToast] = useState(false);
+
+  // 오류 로그 (ERROR 레벨만, 2026-07-14 신규 — 위 "로그 기록"과는 별개)
+  const [errorLogContent, setErrorLogContent]   = useState('');
+  const [errorLogPath, setErrorLogPath]         = useState('');
+  const [errorLogVisible, setErrorLogVisible]   = useState(false);
+  const [errorLogClearing, setErrorLogClearing] = useState(false);
+  const [errorLogCopyToast, setErrorLogCopyToast] = useState(false);
   // 2026-07-13 신규: 배포 버전은 사이드바 개발자 전용 초기화 버튼이 숨겨져
   // 있어 데이터를 초기화할 방법이 없다는 요청으로, 시스템 탭에 전체 초기화를
   // 노출. 로그 초기화(handleClearLog)와는 별개 — 계정 제외 전체 데이터(발행
@@ -709,6 +716,21 @@ export default function Settings() {
     setLogClearing(false);
   };
   const handleOpenLog = () => window.electronAPI.app.openLog();
+
+  // 오류 로그 핸들러 (ERROR 레벨만, 2026-07-14 신규)
+  const handleShowErrorLog = async () => {
+    const res = await window.electronAPI.app.readErrorLog();
+    if (res.success) { setErrorLogContent(res.content || '(오류 없음)'); setErrorLogPath(res.path || ''); }
+    else             { setErrorLogContent(`로그 읽기 오류: ${res.error}`); }
+    setErrorLogVisible(true);
+  };
+  const handleClearErrorLog = async () => {
+    setErrorLogClearing(true);
+    await window.electronAPI.app.clearErrorLog();
+    setErrorLogContent('(로그가 초기화되었습니다)');
+    setErrorLogClearing(false);
+  };
+  const handleOpenErrorLog = () => window.electronAPI.app.openErrorLog();
 
   // 자동화 루프 전용 로그 핸들러 (2026-07-05 신규)
   const handleShowLoopLog = async () => {
@@ -1617,12 +1639,16 @@ export default function Settings() {
         </div>
       </div>}
 
-      {/* ── 시스템 탭 — 오류 로그 ─────────────────────────────── */}
+      {/* ── 시스템 탭 — 로그 기록 / 오류 로그 (2026-07-14 명칭 정리) ── */}
       {activeTab === 'system' && <div className="card settings-section">
         <h2 className="settings-section-title">시스템</h2>
         <div className="log-toolbar">
-          <button className="btn btn-ghost btn-sm" onClick={handleShowLog}>📋 오류 로그 보기</button>
-          {/* 자동화 루프 전용 로그 (2026-07-05 신규) — 오류 로그와 별도로 LOOP 컨텍스트만 모아서 기록됨.
+          {/* 구 "오류 로그 보기" — 실제로는 INFO/WARN/ERROR 전체가 담긴 로그라
+              이름을 "로그 기록"으로 정리함(2026-07-14). 내부 IPC/파일명은 유지. */}
+          <button className="btn btn-ghost btn-sm" onClick={handleShowLog}>📋 로그 기록 보기</button>
+          {/* 진짜 오류(ERROR 레벨)만 모은 별도 로그 (2026-07-14 신규) */}
+          <button className="btn btn-ghost btn-sm" onClick={handleShowErrorLog}>🚨 오류 로그 보기</button>
+          {/* 자동화 루프 전용 로그 (2026-07-05 신규) — 로그 기록과 별도로 LOOP 컨텍스트만 모아서 기록됨.
               2026-07-05 수정: 사용자 요청으로 "오류 로그 보기"와 "파일로 열기" 사이로 위치 이동. */}
           <button className="btn btn-ghost btn-sm" onClick={handleShowLoopLog}>🔁 자동화 루프 로그 보기</button>
           <button className="btn btn-ghost btn-sm" onClick={handleOpenLog}>↗ 파일로 열기</button>
@@ -1665,12 +1691,12 @@ export default function Settings() {
         </div>
       )}
 
-      {/* ── 오류 로그 팝업 모달 ────────────────────────────────── */}
+      {/* ── 로그 기록 팝업 모달 (구 "오류 로그", 2026-07-14 명칭 정리) ── */}
       {logVisible && (
         <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setLogVisible(false); }}>
           <div className="log-modal">
             <div className="log-modal-header">
-              <span className="log-modal-title">오류 로그</span>
+              <span className="log-modal-title">로그 기록</span>
               <div className="log-modal-actions">
                 <button className="btn btn-ghost btn-xs" onClick={handleOpenLog}>↗ 파일로 열기</button>
                 <button className="btn btn-ghost btn-xs log-clear-btn" onClick={handleClearLog} disabled={logClearing}>
@@ -1693,6 +1719,38 @@ export default function Settings() {
               }}
             >{logContent || '(로그 없음)'}</pre>
             {logCopyToast && <div className="log-copy-toast">✓ 복사됨</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ── 오류 로그 팝업 모달 (ERROR 레벨만, 2026-07-14 신규) ──── */}
+      {errorLogVisible && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setErrorLogVisible(false); }}>
+          <div className="log-modal">
+            <div className="log-modal-header">
+              <span className="log-modal-title">오류 로그</span>
+              <div className="log-modal-actions">
+                <button className="btn btn-ghost btn-xs" onClick={handleOpenErrorLog}>↗ 파일로 열기</button>
+                <button className="btn btn-ghost btn-xs log-clear-btn" onClick={handleClearErrorLog} disabled={errorLogClearing}>
+                  {errorLogClearing ? '초기화 중…' : '🗑 초기화'}
+                </button>
+                <button className="btn btn-ghost btn-xs" onClick={() => setErrorLogVisible(false)}>✕ 닫기</button>
+              </div>
+            </div>
+            {errorLogPath && <div className="log-modal-path">{errorLogPath}</div>}
+            <pre
+              className="log-modal-content"
+              onMouseUp={() => {
+                const selected = window.getSelection()?.toString();
+                if (selected && selected.length > 0) {
+                  navigator.clipboard.writeText(selected).then(() => {
+                    setErrorLogCopyToast(true);
+                    setTimeout(() => setErrorLogCopyToast(false), 1500);
+                  });
+                }
+              }}
+            >{errorLogContent || '(오류 없음)'}</pre>
+            {errorLogCopyToast && <div className="log-copy-toast">✓ 복사됨</div>}
           </div>
         </div>
       )}

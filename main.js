@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// ── 통합 에러 로깅 ───────────────────────────────────────────
-// 로그 파일: userData/error_log.txt
+// ── 통합 로그 기록 (2026-07-14 명칭 정리: 실제로는 INFO/WARN/ERROR 전부 기록됨) ──
+// 로그 파일: userData/error_log.txt (파일명·IPC 채널명은 기존 그대로 유지,
+// 사용자에게 보이는 UI 라벨만 "로그 기록"으로 정리함 — [[log-naming-cleanup]])
 let LOG_FILE = null;
 
 function getLogFile() {
@@ -27,6 +28,20 @@ function getLoopLogFile() {
   return LOOP_LOG_FILE;
 }
 
+// ── 오류 전용 로그 (2026-07-14 신규) ──────────────────────────
+// 기존 "오류 로그"라는 이름의 파일은 사실 INFO/WARN/ERROR가 전부 섞인
+// 전체 로그였음(사용자 지적으로 확인). 이름은 "로그 기록"으로 정리하고,
+// 진짜 ERROR 레벨만 모으는 파일을 이 아래에 새로 둔다 — LOOP 전용 로그와
+// 동일한 "조건부 이중 기록" 패턴을 재사용.
+let ERROR_ONLY_LOG_FILE = null;
+
+function getErrorOnlyLogFile() {
+  if (!ERROR_ONLY_LOG_FILE) {
+    ERROR_ONLY_LOG_FILE = path.join(app.getPath('userData'), 'error_only_log.txt');
+  }
+  return ERROR_ONLY_LOG_FILE;
+}
+
 function writeLog(level, context, message, detail = '') {
   try {
     // 로컬 시간 (한국 시간대 자동 반영)
@@ -46,6 +61,13 @@ function writeLog(level, context, message, detail = '') {
       const loopFile = getLoopLogFile();
       const loopExisting = fs.existsSync(loopFile) ? fs.readFileSync(loopFile, 'utf8') : '';
       fs.writeFileSync(loopFile, line + loopExisting, 'utf8');
+    }
+
+    // ERROR 레벨은 오류 전용 로그 파일에도 동일하게 기록 (2026-07-14 신규)
+    if (level === 'ERROR') {
+      const errFile = getErrorOnlyLogFile();
+      const errExisting = fs.existsSync(errFile) ? fs.readFileSync(errFile, 'utf8') : '';
+      fs.writeFileSync(errFile, line + errExisting, 'utf8');
     }
   } catch { /* 로그 쓰기 실패는 무시 */ }
 }
@@ -1184,6 +1206,34 @@ ipcMain.handle('app:clearLoopLog', () => {
 ipcMain.handle('app:readLoopLog', () => {
   try {
     const file = getLoopLogFile();
+    if (!fs.existsSync(file)) return { success: true, content: '' };
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    return { success: true, content: lines.slice(0, 200).join('\n'), path: file };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ── IPC: 오류 전용 로그 (2026-07-14 신규) ────────────────────
+ipcMain.handle('app:openErrorLog', async () => {
+  const file = getErrorOnlyLogFile();
+  if (!fs.existsSync(file)) fs.writeFileSync(file, '', 'utf8');
+  await shell.openPath(file);
+  return { success: true };
+});
+
+ipcMain.handle('app:clearErrorLog', () => {
+  try {
+    fs.writeFileSync(getErrorOnlyLogFile(), '', 'utf8');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('app:readErrorLog', () => {
+  try {
+    const file = getErrorOnlyLogFile();
     if (!fs.existsSync(file)) return { success: true, content: '' };
     const lines = fs.readFileSync(file, 'utf8').split('\n');
     return { success: true, content: lines.slice(0, 200).join('\n'), path: file };

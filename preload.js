@@ -204,16 +204,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── 앱 시스템 ──────────────────────────────────────────────
   app: {
-    /** 오류 로그 파일을 기본 에디터로 열기 */
+    /** 전체 로그 기록 파일을 기본 에디터로 열기 (구 "오류 로그", 명칭만 정리 2026-07-14) */
     openLog:   () => ipcRenderer.invoke('app:openLog'),
-    /** 오류 로그 내용 읽기 (마지막 200줄) */
+    /** 전체 로그 기록 내용 읽기 (마지막 200줄) */
     readLog:   () => ipcRenderer.invoke('app:readLog'),
-    /** 오류 로그 초기화 */
+    /** 전체 로그 기록 초기화 */
     clearLog:  () => ipcRenderer.invoke('app:clearLog'),
 
     /** 자동화 루프 전용 로그 (2026-07-05 신규) */
     openLoopLog:  () => ipcRenderer.invoke('app:openLoopLog'),
     readLoopLog:  () => ipcRenderer.invoke('app:readLoopLog'),
     clearLoopLog: () => ipcRenderer.invoke('app:clearLoopLog'),
+
+    /** 오류(ERROR 레벨) 전용 로그 (2026-07-14 신규) */
+    openErrorLog:  () => ipcRenderer.invoke('app:openErrorLog'),
+    readErrorLog:  () => ipcRenderer.invoke('app:readErrorLog'),
+    clearErrorLog: () => ipcRenderer.invoke('app:clearErrorLog'),
   },
 });
