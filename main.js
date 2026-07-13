@@ -192,14 +192,14 @@ function invalidateTierLimitsCache() {
   _tierLimitsCache = { value: null, ts: 0 };
 }
 
-// 하루 최대 발행 횟수 계산 — 스탠다드는 10회 고정(사용자 설정 무시),
-// 프리미엄은 기본 무제한이며 사용자가 settings.maxDailyPostsUnlimited를
-// false로 바꾸고 settings.maxDailyPosts에 숫자를 넣으면 그 값을 따른다.
+// 하루 최대 발행 횟수 계산 — 스탠다드는 10회 고정(사용자 설정 무시).
+// 프리미엄은 settings.maxDailyPosts에 저장된 숫자를 상한으로 쓰되, 값이
+// 0이거나(기본값) 비어있으면 무제한으로 취급한다(2026-07-14: 별도
+// "무제한" 체크박스를 없애고 값 자체로만 표현하도록 단순화 — 사용자 판단:
+// 프리미엄은 원래 기본이 무제한이라 토글이 불필요했음).
 function computeMaxDailyPosts(isPremium, store) {
   if (!isPremium) return 10;
-  const unlimited = store.get('settings.maxDailyPostsUnlimited', true);
-  if (unlimited) return Infinity;
-  const n = Number(store.get('settings.maxDailyPosts', 3));
+  const n = Number(store.get('settings.maxDailyPosts', 0));
   return Number.isFinite(n) && n > 0 ? n : Infinity;
 }
 
@@ -249,7 +249,6 @@ async function getTierLimits(forceRefresh = false) {
     // 프론트(사이드바 토글)가 현재 어떤 버튼을 활성 표시할지 판단하는 용도.
     // isDev가 아니면 항상 null(배포판에는 이 개념 자체가 없음).
     devTierOverride: isDev ? devOverride : null,
-    maxDailyPostsUnlimited: isPremium && store.get('settings.maxDailyPostsUnlimited', true) !== false,
   };
   _tierLimitsCache = { value: limits, ts: now };
   return limits;
@@ -1418,12 +1417,11 @@ const SETTINGS_DEFAULTS = {
   geminiModel: 'gemini-2.0-flash-lite',
   groqModel: 'llama-3.3-70b-versatile',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
-  maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
-  // 2026-07-14: 프리미엄 등급의 하루 최대 발행 — 기본은 무제한(true).
-  // 스탠다드는 등급 자체가 10회 고정이라 이 값을 아예 보지 않는다
-  // (computeMaxDailyPosts 참고). 사용자가 직접 숫자로 제한하고 싶을 때만
-  // false로 바꾸고 maxDailyPosts 값을 사용한다.
-  maxDailyPostsUnlimited: true,
+  // 2026-07-14: 프리미엄 등급의 하루 최대 발행 기본값 0 = 무제한
+  // (computeMaxDailyPosts 참고). 스탠다드는 등급 자체가 10회 고정이라
+  // 이 값을 아예 보지 않는다. 별도 "무제한" 체크박스는 없고 값 자체로만
+  // 표현한다(사용자 판단: 프리미엄은 원래 기본이 무제한이라 불필요).
+  maxDailyPosts: 0, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
 };
 
 ipcMain.handle('settings:get', () => {
@@ -1506,7 +1504,7 @@ ipcMain.handle('license:getLimits', async () => {
       limits: {
         tier: 'standard', isPremium: false, maxAccounts: 1,
         automationLoop: false, reservation: false, thumbnail: false,
-        keywordResearch: false, maxDailyPosts: 10, maxDailyPostsUnlimited: false,
+        keywordResearch: false, maxDailyPosts: 10,
       },
     };
   }

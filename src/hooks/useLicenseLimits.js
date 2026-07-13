@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 // license:getLimits IPC를 페이지마다 반복해서 useEffect+useState로 감싸지
 // 않도록 만든 공용 훅. main.js의 getTierLimits()와 동일한 필드 구조를
 // 그대로 노출한다: { tier, isPremium, maxAccounts, automationLoop,
-// reservation, thumbnail, keywordResearch, maxDailyPosts, maxDailyPostsUnlimited }.
+// reservation, thumbnail, keywordResearch, maxDailyPosts, devTierOverride }.
+// maxDailyPosts는 프리미엄일 때 0/미설정이면 무제한(Infinity)으로 계산되어
+// 내려온다 — 별도의 "무제한" 불리언 필드는 없음(2026-07-14 단순화).
 //
 // 주의: 이 훅의 값은 어디까지나 "버튼을 비활성화할지" 판단하는 UI 표시용
 // 이다. 실제 차단(보안 경계)은 main.js의 각 IPC 핸들러 내부에서 별도로
@@ -12,7 +14,7 @@ import { useState, useEffect, useCallback } from 'react';
 const FALLBACK_LIMITS = {
   tier: 'standard', isPremium: false, maxAccounts: 1,
   automationLoop: false, reservation: false, thumbnail: false,
-  keywordResearch: false, maxDailyPosts: 10, maxDailyPostsUnlimited: false,
+  keywordResearch: false, maxDailyPosts: 10,
 };
 
 export default function useLicenseLimits() {
