@@ -1645,12 +1645,12 @@ export default function Settings() {
         <div className="log-toolbar">
           {/* 구 "오류 로그 보기" — 실제로는 INFO/WARN/ERROR 전체가 담긴 로그라
               이름을 "로그 기록"으로 정리함(2026-07-14). 내부 IPC/파일명은 유지. */}
-          <button className="btn btn-ghost btn-sm" onClick={handleShowLog}>📋 로그 기록 보기</button>
+          <button className="btn btn-ghost btn-sm" onClick={handleShowLog}>📋 로그 기록</button>
           {/* 진짜 오류(ERROR 레벨)만 모은 별도 로그 (2026-07-14 신규) */}
-          <button className="btn btn-ghost btn-sm" onClick={handleShowErrorLog}>🚨 오류 로그 보기</button>
+          <button className="btn btn-ghost btn-sm" onClick={handleShowErrorLog}>🚨 오류 로그</button>
           {/* 자동화 루프 전용 로그 (2026-07-05 신규) — 로그 기록과 별도로 LOOP 컨텍스트만 모아서 기록됨.
               2026-07-05 수정: 사용자 요청으로 "오류 로그 보기"와 "파일로 열기" 사이로 위치 이동. */}
-          <button className="btn btn-ghost btn-sm" onClick={handleShowLoopLog}>🔁 자동화 루프 로그 보기</button>
+          <button className="btn btn-ghost btn-sm" onClick={handleShowLoopLog}>🔁 자동화 루프 로그</button>
           <button className="btn btn-ghost btn-sm" onClick={handleOpenLog}>↗ 파일로 열기</button>
           <button className="btn btn-ghost btn-sm log-clear-btn" onClick={handleFullReset} disabled={fullResetting} title="계정을 제외한 발행 이력·예약 등 전체 데이터를 초기화합니다">
             {fullResetting ? '초기화 중…' : '🗑 전체 초기화'}
