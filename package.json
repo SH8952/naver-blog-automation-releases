@@ -39,11 +39,13 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "public/icon.icns",
-      "target": ["dmg", "zip"]
+      "target": ["dmg", "zip"],
+      "artifactName": "${name}-${version}-${arch}.${ext}"
     },
     "win": {
       "icon": "public/icon.ico",
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "artifactName": "${name}-Setup-${version}.${ext}"
     },
     "nsis": {
       "deleteAppDataOnUninstall": true
