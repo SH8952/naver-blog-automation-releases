@@ -219,6 +219,13 @@ body {
   position: relative;
   cursor: not-allowed;
 }
+/* loop-controls처럼 잠금 배지를 자식 버튼 개별이 아니라 그 버튼들을 감싸는
+   부모 모듈 중앙에 하나로 표시할 때, 개별 버튼은 배지 없이 흐림만 준다
+   (2026-07-14 배지 위치 개정). */
+.premium-locked-dim {
+  opacity: 0.4;
+  filter: grayscale(0.3);
+}
 .premium-lock-overlay {
   position: absolute;
   inset: 0;

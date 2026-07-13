@@ -265,7 +265,7 @@ export default function PublishScheduler() {
                   <div className="safe-field-item">
                     <span className="sf-label">
                       일일 최대 발행
-                      {!tierLimits.isPremium && <span className="premium-locked-badge premium-locked-badge-inline">🔒 프리미엄 10회 고정</span>}
+                      {!tierLimits.isPremium && <span className="premium-locked-badge premium-locked-badge-inline">🔒 프리미엄</span>}
                     </span>
                     <div className="safe-input-grp">
                       <input className={`sf-input${!tierLimits.isPremium ? ' premium-locked' : ''}`} type="number" min={1} max={20}

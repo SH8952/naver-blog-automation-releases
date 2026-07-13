@@ -233,28 +233,32 @@ export default function Dashboard() {
             {loading ? '…' : '↻ 새로고침'}
           </button>
 
-          {/* 자동화 루프: 모드 선택 + 시작/중지 (2026-07-05 신규 / 2026-07-14 프리미엄 전용화) */}
-          <div className="loop-controls">
+          {/* 자동화 루프: 모드 선택 + 시작/중지 (2026-07-05 신규 / 2026-07-14 프리미엄 전용화,
+              같은 날 배지 위치 개정 — 개별 버튼(특히 좁은 모드 버튼)에 각각 배지를
+              얹으면 버튼 폭보다 배지가 넓어 옆으로 삐져나오는 문제가 있었음. 두 버튼을
+              감싸는 loop-controls 모듈 전체를 잠금 기준점으로 삼아, 배지 하나를 그
+              모듈 정중앙에 배치 — 모듈 자체는 두 버튼을 합친 만큼 넓어 배지가 밖으로
+              나가지 않는다. */}
+          <div className={`loop-controls${!tierLimits.automationLoop ? ' premium-lock-host' : ''}`}>
             <button
-              className={`loop-mode-btn loop-mode-${loopMode}${!tierLimits.automationLoop ? ' premium-lock-host' : ''}`}
+              className={`loop-mode-btn loop-mode-${loopMode}${!tierLimits.automationLoop ? ' premium-locked-dim' : ''}`}
               onClick={cycleLoopMode}
               disabled={loopStatus?.running || !tierLimits.automationLoop}
               title={!tierLimits.automationLoop ? PREMIUM_ONLY_TOOLTIP : '클릭할 때마다 수동 → 완전자동 → 반자동 순으로 전환됩니다'}
             >
               {LOOP_MODE_LABEL[loopMode]}
-              {!tierLimits.automationLoop && (
-                <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
-              )}
             </button>
             <button
-              className={`loop-startstop-btn${loopStatus?.running ? ' running' : ''}${!tierLimits.automationLoop ? ' premium-lock-host' : ''}`}
+              className={`loop-startstop-btn${loopStatus?.running ? ' running' : ''}${!tierLimits.automationLoop ? ' premium-locked-dim' : ''}`}
               onClick={handleLoopStartStop}
               disabled={loopBusy || (!loopStatus?.running && loopMode === 'manual') || !tierLimits.automationLoop}
               title={!tierLimits.automationLoop ? PREMIUM_ONLY_TOOLTIP : undefined}
             >
               {loopBusy ? '…' : loopStatus?.running ? '■ 중지' : '▶ 시작'}
-              {!tierLimits.automationLoop && <span className="premium-lock-overlay" />}
             </button>
+            {!tierLimits.automationLoop && (
+              <span className="premium-lock-overlay"><span className="premium-locked-badge">🔒 프리미엄</span></span>
+            )}
           </div>
         </div>
       </div>
