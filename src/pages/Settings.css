@@ -87,11 +87,11 @@
   overflow: visible;
 }
 /* 2026-07-13: 메뉴바 제거 후에도 API 탭에 아주 미세한 세로 스크롤이
-   남아있어 상하 내부 여백을 1px씩만 줄여 제거 시도(16px→15px). 다른
-   탭(글 설정/자동화 루프/시스템)은 이 스코프 밖이라 영향 없음. */
+   남아있어 상하 내부 여백을 1px씩 줄여가며 제거 시도(16px→15px→14px).
+   다른 탭(글 설정/자동화 루프/시스템)은 이 스코프 밖이라 영향 없음. */
 .settings.settings-api-active .settings-section {
-  padding-top: 15px;
-  padding-bottom: 15px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 /* 2026-07-06: "발행 계정 선택" 타이틀 + "실제 카테고리 불러오기" 버튼을
@@ -861,4 +861,86 @@
 @keyframes toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(6px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ── 썸네일 디자인 커스텀 드롭다운 (2026-07-13 3차 수정) ──────────
+   NaverCategoryPicker(.naver-cat-picker-*)와 동일한 버튼+포털 패널
+   패턴. 평소엔 닫혀 있다가 클릭 시에만 22개 미리보기가 펼쳐지도록
+   해서 카드가 항상 커 보이던 문제를 해결. */
+.thumb-design-picker { display: inline-block; }
+.thumb-design-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  max-width: 280px;
+  min-width: 180px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.thumb-design-picker-btn:hover { border-color: var(--accent); }
+.thumb-design-picker-preview {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.thumb-design-picker-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.thumb-design-panel {
+  position: fixed;
+  z-index: 3000;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  padding: 10px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.thumb-design-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 10px;
+}
+.thumb-design-panel-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 3px;
+  cursor: pointer;
+}
+.thumb-design-panel-item:hover { background: var(--bg-secondary); }
+.thumb-design-panel-item.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(3,199,90,0.4);
+}
+.thumb-design-panel-preview {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.thumb-design-panel-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.3;
+  text-align: center;
 }

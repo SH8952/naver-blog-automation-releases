@@ -8,7 +8,7 @@ const DEFAULTS = {
   naverApiId: '', naverApiSecret: '',
   searchAdCustomerId: '', searchAdApiKey: '', searchAdSecretKey: '',
   licenseKey: '',
-  customThumbnail: true, thumbnailStyle: -1,
+  customThumbnail: true, thumbnailStyle: -1, thumbnailDesign: 'default',
   postStyle: -1,
   editorFont: '바른히피',
   aiProvider: 'gemini',
@@ -19,6 +19,254 @@ const DEFAULTS = {
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
 };
+
+// ── 썸네일 디자인 22종 미리보기 옵션 (2026-07-13) ──────────────
+// main.js THUMB_DESIGNS와 id/kind/색상 파라미터를 1:1로 맞춰야 함(둘 다
+// 여기서 바꾸면 main.js도 함께 바꿀 것). 'default'는 기존 포토 프레임형.
+// kind/색상 필드는 아래 ThumbDesignPreview가 작은 미리보기 카드를 그리는 데 씀 —
+// 실제 발행 시 렌더링(main.js renderThumbDesignChrome)과 완전히 같은 코드는
+// 아니지만(React vs 순수 HTML 문자열이라 중복 구현), 같은 시각 언어로 축소 렌더링함.
+// 2026-07-13(3차 수정): 사용자 요청으로 그룹 구분 없이 평평한 목록으로 변경
+// (드롭다운으로 바뀌면서 그룹 헤더가 더 이상 필요 없어짐, [[thumb-design-22-variants]]).
+const THUMB_DESIGN_OPTIONS = [
+  { id:'lux-scroll', label:'블랙 골드 스크롤', kind:'ornate-corner', accent:'#d4af37' },
+  { id:'lux-line', label:'블랙 화이트 라인', kind:'thin-line-round', accent:'#f2f2f2', logoAccent:'#d4af37', logos:['tr','bl'] },
+  { id:'lux-bars-panel', label:'블랙 골드 바+패널', kind:'bars-panel', accent:'#d4af37', logos:['tl','tr','bl','br'] },
+  { id:'lux-zigzag', label:'블랙 골드 지그재그', kind:'zigzag', accent:'#d4af37', logos:['tl','br'] },
+  { id:'pastel-memphis', label:'멤피스 도형', kind:'memphis', accent:'#f3d250' },
+  { id:'pastel-sunburst', label:'선버스트 하늘', kind:'sunburst', accent:'#ffb347' },
+  { id:'pastel-fabric', label:'테라코타 텍스처', kind:'texture-fabric', accent:'#e8c9a0' },
+  { id:'pastel-mint-frame', label:'민트 화이트 프레임', kind:'frame-square', accent:'#ffffff', logos:['tl','bl'] },
+  { id:'pastel-doodle', label:'옐로우 별 도들', kind:'doodle-stars', accent:'#fffbe0' },
+  { id:'pastel-papercut', label:'올리브 페이퍼컷', kind:'paper-cut-wave', accent:'#e8dcb8' },
+  { id:'pastel-ivory-frame', label:'아이보리 로즈골드 프레임', kind:'frame-square', accent:'#c9a876' },
+  { id:'pastel-sunset-scallop', label:'선셋 스캘럽 프레임', kind:'scallop-frame', accent:'#ffffff' },
+  { id:'pastel-lavender-dots', label:'라벤더 스캘럽 도트', kind:'scalloped-edge-dots', accent:'#ffffff' },
+  { id:'color-navy-frame', label:'네이비 골드 더블프레임', kind:'frame-square', accent:'#d4af37', double:true, logos:['tl','br'] },
+  { id:'color-charcoal-frame', label:'차콜 골드 컷코너', kind:'frame-square', accent:'#d4af37', double:true, cutCorners:true, logos:['tl','br'] },
+  { id:'color-green-bars', label:'그린 골드 바', kind:'bars-only', accent:'#d4af37' },
+  { id:'color-gold-frame', label:'골드 그라데이션 프레임', kind:'frame-square', accent:'#f0dca0' },
+  { id:'color-white-frame', label:'화이트 골드 프레임', kind:'frame-square', accent:'#d4af37', logos:['tr'] },
+  { id:'color-gray-papercut', label:'그레이 골드 페이퍼컷', kind:'paper-cut-wave', accent:'#e9d38f' },
+  { id:'color-terracotta-diamond', label:'테라코타 골드 다이아프레임', kind:'frame-square', accent:'#d4af37', double:true, cutCorners:true, logos:['bl'] },
+  { id:'color-mint-frame', label:'민트 골드 프레임', kind:'frame-square', accent:'#d4af37', logos:['bl'] },
+  { id:'color-purple-dots', label:'퍼플 골드 도트클러스터', kind:'dot-cluster', accent:'#d4af37', logos:['tr'] },
+];
+
+// ── 썸네일 디자인 미니 미리보기 (2026-07-13 신규) ────────────────
+// 68x68 박스 안에 "사진 배경 위 테두리 장식"을 축소 렌더링. 실제 사진 대신
+// 회색조 그라데이션(사진 자리 표시자) + 어두운 오버레이를 깔아 실제 발행 결과와
+// 같은 느낌(사진+테두리)을 미리 보여준다.
+function ThumbDesignPreview({ design }) {
+  const PLACEHOLDER_PHOTO = 'linear-gradient(160deg,#6b7684,#3f4750)';
+  const OVERLAY = 'linear-gradient(180deg, rgba(0,0,0,0.28), rgba(0,0,0,0.55))';
+
+  if (!design) {
+    // 기본(포토 프레임형): 이중 테두리 + 코너 뱃지 느낌의 작은 사각 표시
+    return (
+      <div style={{ position:'relative', width:'100%', height:'100%', borderRadius:'6px', overflow:'hidden',
+        background: `${OVERLAY}, ${PLACEHOLDER_PHOTO}` }}>
+        <div style={{ position:'absolute', inset:'4px', border:'2px solid #8fd694', borderRadius:'6px' }} />
+        <div style={{ position:'absolute', top:'4px', left:'4px', width:'12px', height:'7px', background:'#8fd694', borderRadius:'2px' }} />
+      </div>
+    );
+  }
+
+  const acc = design.accent || '#d4af37';
+  const logoDots = (design.logos || []).map((p) => {
+    const pos = {
+      tl: { top:3, left:3 }, tr: { top:3, right:3 },
+      bl: { bottom:3, left:3 }, br: { bottom:3, right:3 },
+    }[p];
+    return <div key={p} style={{ position:'absolute', ...pos, fontSize:'7px', fontWeight:900,
+      fontStyle:'italic', color: design.logoAccent || acc, textShadow:'0 1px 1px rgba(0,0,0,.6)' }}>N</div>;
+  });
+
+  let chrome = null;
+  switch (design.kind) {
+    case 'ornate-corner':
+      chrome = <>
+        <div style={{ position:'absolute', inset:'4px', border:`1.5px solid ${acc}`, borderRadius:'2px' }} />
+        <div style={{ position:'absolute', inset:'7px', border:`1px solid ${acc}`, borderRadius:'1px' }} />
+      </>;
+      break;
+    case 'thin-line-round':
+      chrome = <div style={{ position:'absolute', inset:'5px', border:`2px solid ${acc}`, borderRadius:'10px' }} />;
+      break;
+    case 'bars-panel':
+      chrome = <>
+        <div style={{ position:'absolute', top:'5px', left:'5px', right:'5px', height:'6px', background:acc, borderRadius:'1px' }} />
+        <div style={{ position:'absolute', bottom:'5px', left:'5px', right:'5px', height:'6px', background:acc, borderRadius:'1px' }} />
+      </>;
+      break;
+    case 'zigzag':
+      chrome = <div style={{ position:'absolute', inset:'5px', border:`3px dashed ${acc}`, borderRadius:'1px', opacity:.9 }} />;
+      break;
+    case 'memphis':
+      chrome = <>
+        <div style={{ position:'absolute', top:'6px', left:'6px', width:0, height:0,
+          borderLeft:`9px solid #7fd1bd`, borderBottom:'9px solid transparent' }} />
+        <div style={{ position:'absolute', top:'8px', right:'8px', width:'7px', height:'7px', background:'#f3d250', transform:'rotate(18deg)', borderRadius:'1px' }} />
+        <div style={{ position:'absolute', bottom:0, left:0, width:'30px', height:'11px', background:'#fff',
+          borderRadius:'50% 50% 0 0 / 100% 100% 0 0', opacity:.9 }} />
+      </>;
+      break;
+    case 'sunburst':
+      chrome = <>
+        <div style={{ position:'absolute', top:'-16px', left:'-16px', width:'34px', height:'34px', borderRadius:'50%',
+          background:`repeating-conic-gradient(${acc} 0 8deg, transparent 8deg 22deg)`, opacity:.6 }} />
+        <div style={{ position:'absolute', bottom:'-16px', right:'-16px', width:'34px', height:'34px', borderRadius:'50%',
+          background:`repeating-conic-gradient(${acc} 0 8deg, transparent 8deg 22deg)`, opacity:.6 }} />
+      </>;
+      break;
+    case 'texture-fabric':
+      chrome = <div style={{ position:'absolute', inset:'5px', border:`4px solid ${acc}`, opacity:.75,
+        borderImage:`repeating-linear-gradient(45deg, ${acc} 0 3px, rgba(255,255,255,.4) 3px 6px) 4` }} />;
+      break;
+    case 'frame-square':
+      chrome = <>
+        <div style={{ position:'absolute', inset:'5px', border:`${design.double ? 1.5 : 2}px solid ${acc}`,
+          clipPath: design.cutCorners ? 'polygon(4px 0,calc(100% - 4px) 0,100% 4px,100% calc(100% - 4px),calc(100% - 4px) 100%,4px 100%,0 calc(100% - 4px),0 4px)' : 'none' }} />
+        {design.double && <div style={{ position:'absolute', inset:'8px', border:`1px solid ${acc}` }} />}
+      </>;
+      break;
+    case 'doodle-stars':
+      chrome = <>
+        <div style={{ position:'absolute', top:'4px', left:'4px', fontSize:'8px', color:acc }}>★</div>
+        <div style={{ position:'absolute', bottom:'4px', right:'4px', fontSize:'8px', color:acc }}>☘</div>
+        <div style={{ position:'absolute', top:'4px', right:'4px', fontSize:'8px', color:acc }}>☘</div>
+      </>;
+      break;
+    case 'paper-cut-wave':
+      chrome = <>
+        <div style={{ position:'absolute', top:'-10px', left:'-10px', width:'26px', height:'26px', background:acc,
+          borderRadius:'42% 58% 61% 39% / 42% 39% 61% 58%', opacity:.85 }} />
+        <div style={{ position:'absolute', bottom:'-10px', right:'-10px', width:'26px', height:'26px', background:acc,
+          borderRadius:'42% 58% 61% 39% / 42% 39% 61% 58%', opacity:.85 }} />
+      </>;
+      break;
+    case 'scallop-frame':
+      chrome = <div style={{ position:'absolute', inset:'5px', border:`2px solid ${acc}`,
+        clipPath:'polygon(6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px),0 6px)' }} />;
+      break;
+    case 'scalloped-edge-dots':
+      chrome = <>
+        <div style={{ position:'absolute', inset:'4px', border:`1.5px solid ${acc}`, borderRadius:'12px' }} />
+        <div style={{ position:'absolute', top:'8px', left:'8px', width:'4px', height:'4px', borderRadius:'50%', background:acc }} />
+        <div style={{ position:'absolute', bottom:'8px', right:'8px', width:'4px', height:'4px', borderRadius:'50%', background:acc }} />
+      </>;
+      break;
+    case 'bars-only':
+      chrome = <>
+        <div style={{ position:'absolute', top:'5px', left:'5px', right:'5px', height:'5px', background:acc, borderRadius:'1px' }} />
+        <div style={{ position:'absolute', bottom:'5px', left:'5px', right:'5px', height:'5px', background:acc, borderRadius:'1px' }} />
+      </>;
+      break;
+    case 'dot-cluster':
+      chrome = <>
+        <div style={{ position:'absolute', top:'6px', left:'6px', width:'5px', height:'5px', borderRadius:'50%', background:acc }} />
+        <div style={{ position:'absolute', top:'11px', left:'12px', width:'3px', height:'3px', borderRadius:'50%', background:acc }} />
+        <div style={{ position:'absolute', bottom:'6px', right:'6px', width:'5px', height:'5px', borderRadius:'50%', background:acc }} />
+        <div style={{ position:'absolute', bottom:'11px', right:'12px', width:'3px', height:'3px', borderRadius:'50%', background:acc }} />
+      </>;
+      break;
+    default:
+      chrome = null;
+  }
+
+  return (
+    <div style={{ position:'relative', width:'100%', height:'100%', borderRadius:'6px', overflow:'hidden',
+      background: `${OVERLAY}, ${PLACEHOLDER_PHOTO}` }}>
+      {chrome}
+      {logoDots}
+    </div>
+  );
+}
+
+// ── 썸네일 디자인 커스텀 드롭다운 (2026-07-13 3차 수정) ────────────
+// 처음엔 22개 카드를 항상 펼쳐서 보여줬는데, 사용자가 "카드가 너무 커지고
+// 지저분해 보인다"고 피드백 — 평소엔 닫혀 있다가 클릭했을 때만 미리보기가
+// 보이는 진짜 드롭다운으로 변경. NaverCategoryPicker(아래)와 동일한
+// 버튼+포털 패널 패턴을 재사용하되, 그룹 구분 없이 평평한 그리드로 표시.
+// (SIDEBAR_MIN_LEFT는 아래 NaverCategoryPicker 섹션에서 정의됨 — 이 컴포넌트가
+// 먼저 나오지만 함수 본문은 렌더링 시점에 평가되므로 호이스팅으로 문제 없음)
+const THUMB_DESIGN_PANEL_WIDTH = 420;
+function ThumbDesignPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: THUMB_DESIGN_PANEL_WIDTH });
+  const btnRef = useRef(null);
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const updateCoords = () => {
+      if (!btnRef.current) return;
+      const r = btnRef.current.getBoundingClientRect();
+      const cardEl = btnRef.current.closest('.card');
+      const rightBoundary = cardEl
+        ? cardEl.getBoundingClientRect().right - 8
+        : window.innerWidth - 8;
+      const maxAllowedWidth = Math.max(240, rightBoundary - SIDEBAR_MIN_LEFT);
+      const width = Math.min(THUMB_DESIGN_PANEL_WIDTH, maxAllowedWidth);
+      let left = r.left;
+      if (left + width > rightBoundary) left = rightBoundary - width;
+      if (left < SIDEBAR_MIN_LEFT) left = SIDEBAR_MIN_LEFT;
+      setCoords({ top: r.bottom + 4, left, width });
+    };
+    updateCoords();
+    const handleOutside = (e) => {
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      if (panelRef.current && panelRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('resize', updateCoords);
+    window.addEventListener('scroll', updateCoords, true);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('resize', updateCoords);
+      window.removeEventListener('scroll', updateCoords, true);
+    };
+  }, [open]);
+
+  const selectedDesign = value && value !== 'default'
+    ? THUMB_DESIGN_OPTIONS.find(d => d.id === value)
+    : null;
+  const displayLabel = selectedDesign ? selectedDesign.label : '기본 (포토 프레임)';
+
+  const panel = open ? createPortal(
+    <div className="thumb-design-panel" ref={panelRef} style={{ top: coords.top, left: coords.left, width: coords.width }}>
+      <div className="thumb-design-panel-grid">
+        <button type="button"
+          className={`thumb-design-panel-item${!selectedDesign ? ' selected' : ''}`}
+          onClick={() => { onChange('default'); setOpen(false); }}>
+          <div className="thumb-design-panel-preview"><ThumbDesignPreview design={null} /></div>
+          <span className="thumb-design-panel-label">기본</span>
+        </button>
+        {THUMB_DESIGN_OPTIONS.map((item) => (
+          <button key={item.id} type="button"
+            className={`thumb-design-panel-item${value === item.id ? ' selected' : ''}`}
+            onClick={() => { onChange(item.id); setOpen(false); }}>
+            <div className="thumb-design-panel-preview"><ThumbDesignPreview design={item} /></div>
+            <span className="thumb-design-panel-label">{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="thumb-design-picker">
+      <button type="button" ref={btnRef} className="thumb-design-picker-btn" onClick={() => setOpen(o => !o)}>
+        <span className="thumb-design-picker-preview"><ThumbDesignPreview design={selectedDesign} /></span>
+        <span className="thumb-design-picker-label">{displayLabel}</span>
+        <span className="naver-cat-picker-arrow">{open ? '\u25b2' : '\u25bc'}</span>
+      </button>
+      {panel}
+    </div>
+  );
+}
 
 // ── 자동화 루프 기본값 (2026-07-05 신규) ─────────────────────
 const LOOP_DEFAULTS = {
@@ -825,6 +1073,15 @@ export default function Settings() {
               </span>
             </label>
           </div>
+          {form.customThumbnail !== false && (
+            <div className="form-group" style={{ gridColumn:'1/-1' }}>
+              <label>썸네일 디자인 선택</label>
+              <p style={{ fontSize:'11px', color:'var(--text-secondary)', margin:'6px 0 10px', lineHeight:1.6 }}>
+                모든 디자인은 발행 주제에 맞는 사진이 배경으로 자동 삽입되고, 그 위에 테두리 장식만 다르게 적용됩니다. 테두리·글자 색상은 아래 "썸네일 스타일"에서 따로 고를 수 있습니다.
+              </p>
+              <ThumbDesignPicker value={form.thumbnailDesign ?? 'default'} onChange={v => set('thumbnailDesign', v)} />
+            </div>
+          )}
           {form.customThumbnail !== false && (
             <div className="form-group" style={{ gridColumn:'1/-1' }}>
               <label>썸네일 스타일</label>

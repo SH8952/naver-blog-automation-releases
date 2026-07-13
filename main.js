@@ -847,6 +847,14 @@ function createWindow() {
     },
   });
 
+  // 2026-07-13: Windows에서 간헐적으로 창은 보이지만 키보드 포커스를
+  // 못 받아 입력이 전혀 안 되는 증상 발견(재현 조건 불명, 발행과 무관하게
+  // 발생). Alt+Tab으로 전환했다 돌아오면 해결되는 것으로 보아 OS 포커스
+  // 전달 누락으로 추정 — 창이 화면에 표시될 준비가 됐을 때 포커스를
+  // 명시적으로 한 번 더 요청해 방어. 부작용 없는 조치(이미 포커스가
+  // 있으면 아무 효과 없음).
+  mainWindow.once('ready-to-show', () => mainWindow.focus());
+
   // 창 이동/크기 변경 시 저장 (debounce 500ms)
   let boundsTimer = null;
   const saveBounds = () => {
@@ -954,6 +962,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
 
 // ── IPC: 로그 파일 관련 ──────────────────────────────────────
 // (2026-07-03) app:getLogPath 제거 — 렌더러에서 호출하는 곳이 없었음.
@@ -3118,6 +3127,251 @@ const THUMB_ACCENTS = [
   '#D291FF', // 라벤더
 ];
 
+// ── 썸네일 디자인 22종 (2026-07-13 신규) ──────────────────────
+// 환경설정 → 글 설정 → 썸네일 자동 생성 → "썸네일 디자인 선택" 드롭다운에서
+// 고를 수 있는 고정 프레임 디자인 22개. 기존 "포토 프레임형"(Unsplash 배경 +
+// 이중 테두리)은 designId==='default'일 때 100% 그대로 유지되며, 이 22개는
+// 전부 사진 배경 없이 자체 색상/그라데이션 배경 + 장식 테두리로만 구성된다.
+// group: 환경설정 드롭다운 <optgroup> 라벨. kind: renderThumbDesignChrome()의
+// 렌더러 분기 키. logos: 'N' 로고 마크를 표시할 모서리('tl'/'tr'/'bl'/'br') 목록.
+const THUMB_DESIGNS = [
+  // ── 블랙 골드 럭셔리 (A1~A4) ──
+  { id:'lux-scroll', label:'블랙 골드 스크롤', group:'블랙 골드 럭셔리', kind:'ornate-corner',
+    bg:'#141414', accent:'#d4af37', logos:[] },
+  { id:'lux-line', label:'블랙 화이트 라인', group:'블랙 골드 럭셔리', kind:'thin-line-round',
+    bg:'#141414', accent:'#f2f2f2', logoAccent:'#d4af37', logos:['tr','bl'] },
+  { id:'lux-bars-panel', label:'블랙 골드 바+패널', group:'블랙 골드 럭셔리', kind:'bars-panel',
+    bg:'#141414', accent:'#d4af37', logos:['tl','tr','bl','br'] },
+  { id:'lux-zigzag', label:'블랙 골드 지그재그', group:'블랙 골드 럭셔리', kind:'zigzag',
+    bg:'#141414', accent:'#d4af37', logos:['tl','br'] },
+
+  // ── 파스텔 일러스트 (B1~B9) — 2026-07-13 재해석: 사진 배경 위 코너/테두리 장식으로 축소 ──
+  { id:'pastel-memphis', label:'멤피스 도형', group:'파스텔 일러스트', kind:'memphis',
+    bg:'#f6c9d6', accent:'#f3d250', accents:{ mint:'#7fd1bd', yellow:'#f3d250', cloud:'#ffffff' }, logos:[] },
+  { id:'pastel-sunburst', label:'선버스트 하늘', group:'파스텔 일러스트', kind:'sunburst',
+    bg:'#8fd3f4', accent:'#ffb347', flowerColor:'#ff8ba0', logos:[] },
+  { id:'pastel-fabric', label:'테라코타 텍스처', group:'파스텔 일러스트', kind:'texture-fabric',
+    bg:'#b5502e', accent:'#e8c9a0', logos:[] },
+  { id:'pastel-mint-frame', label:'민트 화이트 프레임', group:'파스텔 일러스트', kind:'frame-square',
+    bg:'#8fd9c4', accent:'#ffffff', borderWidth:2, double:false, cutCorners:false, logos:['tl','bl'] },
+  { id:'pastel-doodle', label:'옐로우 별 도들', group:'파스텔 일러스트', kind:'doodle-stars',
+    bg:'#eddc3f', accent:'#fffbe0', logos:[] },
+  { id:'pastel-papercut', label:'올리브 페이퍼컷', group:'파스텔 일러스트', kind:'paper-cut-wave',
+    bg:'#5f6b3f', accent:'#e8dcb8', layerColors:['#8a7b4f','#c9b98a','#e8dcb8'], logos:[] },
+  { id:'pastel-ivory-frame', label:'아이보리 로즈골드 프레임', group:'파스텔 일러스트', kind:'frame-square',
+    bg:'linear-gradient(135deg,#f5f0e4,#ece2cc)', accent:'#c9a876', borderWidth:1, double:false, cutCorners:false, logos:[] },
+  { id:'pastel-sunset-scallop', label:'선셋 스캘럽 프레임', group:'파스텔 일러스트', kind:'scallop-frame',
+    bg:'linear-gradient(160deg,#ff8c42,#ff5f6d)', accent:'#ffffff', logos:[] },
+  { id:'pastel-lavender-dots', label:'라벤더 스캘럽 도트', group:'파스텔 일러스트', kind:'scalloped-edge-dots',
+    bg:'#c9b8e8', accent:'#ffffff', dotColor:'#ffffff', dotColor2:'#c9b8e8', logos:[] },
+
+  // ── 컬러 + 골드 (C1~C9) ──
+  { id:'color-navy-frame', label:'네이비 골드 더블프레임', group:'컬러 + 골드', kind:'frame-square',
+    bg:'#0d2b4e', accent:'#d4af37', borderWidth:2, double:true, cutCorners:false, logos:['tl','br'] },
+  { id:'color-charcoal-frame', label:'차콜 골드 컷코너', group:'컬러 + 골드', kind:'frame-square',
+    bg:'#2b2b2b', accent:'#d4af37', borderWidth:2, double:true, cutCorners:true, logos:['tl','br'] },
+  { id:'color-green-bars', label:'그린 골드 바', group:'컬러 + 골드', kind:'bars-only',
+    bg:'#0b3d24', accent:'#d4af37', logos:[] },
+  { id:'color-gold-frame', label:'골드 그라데이션 프레임', group:'컬러 + 골드', kind:'frame-square',
+    bg:'linear-gradient(135deg,#d9b876,#b8935a)', accent:'#f0dca0', borderWidth:1, double:false, cutCorners:false, logos:[] },
+  { id:'color-white-frame', label:'화이트 골드 프레임', group:'컬러 + 골드', kind:'frame-square',
+    bg:'#ffffff', accent:'#d4af37', borderWidth:2, double:false, cutCorners:false, logos:['tr'] },
+  { id:'color-gray-papercut', label:'그레이 골드 페이퍼컷', group:'컬러 + 골드', kind:'paper-cut-wave',
+    bg:'#c9c9c9', accent:'#e9d38f', layerColors:['#a8863f','#d4af37','#e9d38f'], logos:[] },
+  { id:'color-terracotta-diamond', label:'테라코타 골드 다이아프레임', group:'컬러 + 골드', kind:'frame-square',
+    bg:'#a8471f', accent:'#d4af37', borderWidth:2, double:true, cutCorners:true, logos:['bl'] },
+  { id:'color-mint-frame', label:'민트 골드 프레임', group:'컬러 + 골드', kind:'frame-square',
+    bg:'#a8d5c5', accent:'#d4af37', borderWidth:2, double:false, cutCorners:false, logos:['bl'] },
+  { id:'color-purple-dots', label:'퍼플 골드 도트클러스터', group:'컬러 + 골드', kind:'dot-cluster',
+    bg:'#4a3060', accent:'#d4af37', dotColor:'#d4af37', logos:['tr'] },
+];
+
+// 선택된 코너들에 작은 'N' 로고 마크(이탤릭 세리프)를 배치하는 공용 헬퍼.
+// accent: 2026-07-13부터 design.accent가 아니라 사용자가 "썸네일 스타일"에서
+// 고른(또는 랜덤 뽑힌) 색을 그대로 전달받는다 — 로고도 테두리와 같은 색 계열로 통일.
+function thumbLogoMarks(design, positions, accent) {
+  const posCss = { tl:'top:20px;left:22px', tr:'top:20px;right:22px', bl:'bottom:20px;left:22px', br:'bottom:20px;right:22px' };
+  const color = design.logoAccent || accent || '#d4af37';
+  return (positions || []).map(p =>
+    '<div class="thumb-logo" style="position:absolute;' + posCss[p] + ';z-index:4;color:' + color +
+    ';font-size:22px;font-weight:900;font-style:italic;font-family:Georgia,\'Times New Roman\',serif;' +
+    'text-shadow:0 1px 3px rgba(0,0,0,.5)">N</div>'
+  ).join('');
+}
+
+// design.kind별 장식 테두리/모티프를 CSS+HTML로 렌더링. 2026-07-13부터는 모든 디자인이
+// 기존 포토 프레임형과 동일하게 Unsplash 사진 배경 + 어두운 오버레이 위에 이 장식만
+// 얹는 구조(사용자 요청: "사진 배경은 유지, 테두리 디자인만 변경"). 원래 참고 이미지에서
+// 배경 전체가 디자인이었던 6종(memphis/sunburst/texture-fabric/doodle-stars/
+// paper-cut-wave×2/scalloped-edge-dots)은 사진을 가리지 않도록 코너·모서리 장식으로
+// 축소 재해석했다(사용자 확인 완료, 2026-07-13).
+// accent: 2026-07-13(2차 수정) — design은 이제 "테두리 모양"만 결정하고 실제 색은
+// design.accent 대신 이 파라미터(사용자가 "썸네일 스타일"에서 고른/랜덤 뽑힌 색)를
+// 쓴다. design.accent는 Settings.jsx 미리보기 카드가 기본값을 보여줄 때만 쓰이고
+// 실제 생성(generateThumbnail)에는 관여하지 않는다.
+function renderThumbDesignChrome(design, accent) {
+  const acc = accent || design.accent || '#d4af37';
+  const logos = thumbLogoMarks(design, design.logos, accent);
+
+  if (design.kind === 'ornate-corner') {
+    const css = '.d-outer{position:absolute;inset:14px;border:2px solid ' + acc + ';border-radius:4px;z-index:2}' +
+      '.d-inner{position:absolute;inset:22px;border:1px solid ' + acc + ';border-radius:2px;z-index:2}' +
+      '.d-dot{position:absolute;width:9px;height:9px;background:' + acc + ';transform:rotate(45deg);z-index:2;box-shadow:0 0 8px ' + acc + '}';
+    const html = '<div class="d-outer"></div><div class="d-inner"></div>' +
+      '<div class="d-dot" style="top:9px;left:9px"></div>' +
+      '<div class="d-dot" style="top:9px;right:9px"></div>' +
+      '<div class="d-dot" style="bottom:9px;left:9px"></div>' +
+      '<div class="d-dot" style="bottom:9px;right:9px"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'thin-line-round') {
+    const css = '.d-round{position:absolute;inset:16px;border:2px solid ' + acc + ';border-radius:22px;z-index:2}';
+    const html = '<div class="d-round"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'bars-panel') {
+    const css = '.d-bar{position:absolute;left:16px;right:16px;height:24px;background:' + acc + ';z-index:2;border-radius:2px}' +
+      '.d-bar-top{top:16px} .d-bar-bottom{bottom:16px}';
+    const html = '<div class="d-bar d-bar-top"></div><div class="d-bar d-bar-bottom"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'zigzag') {
+    const css = '.d-zz{position:absolute;background:repeating-linear-gradient(45deg, ' + acc + ' 0 6px, transparent 6px 13px);z-index:2}' +
+      '.d-zz-t{top:16px;left:16px;right:16px;height:22px}' +
+      '.d-zz-b{bottom:16px;left:16px;right:16px;height:22px}' +
+      '.d-zz-l{top:38px;bottom:38px;left:16px;width:22px}' +
+      '.d-zz-r{top:38px;bottom:38px;right:16px;width:22px}';
+    const html = '<div class="d-zz d-zz-t"></div><div class="d-zz d-zz-b"></div><div class="d-zz d-zz-l"></div><div class="d-zz d-zz-r"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'memphis') {
+    const mint = (design.accents && design.accents.mint) || '#7fd1bd';
+    const yellow = (design.accents && design.accents.yellow) || '#f3d250';
+    const cloud = (design.accents && design.accents.cloud) || '#ffffff';
+    const css = '.d-tri{position:absolute;width:0;height:0;z-index:2;filter:drop-shadow(0 1px 3px rgba(0,0,0,.4))}' +
+      '.d-sq{position:absolute;z-index:2;box-shadow:0 1px 4px rgba(0,0,0,.4)}' +
+      '.d-cloud{position:absolute;bottom:0;left:0;width:130px;height:46px;z-index:2;background:' + cloud + ';' +
+      'border-radius:50% 50% 0 0 / 100% 100% 0 0;opacity:.92}' +
+      '.d-star{position:absolute;z-index:2;color:' + yellow + ';font-size:28px;text-shadow:0 1px 3px rgba(0,0,0,.5)}';
+    const html = '<div class="d-tri" style="top:22px;left:22px;border-left:38px solid ' + mint + ';border-bottom:38px solid transparent;"></div>' +
+      '<div class="d-sq" style="top:36px;right:36px;width:28px;height:28px;background:' + yellow + ';transform:rotate(18deg);border-radius:4px"></div>' +
+      '<div class="d-cloud"></div>' +
+      '<div class="d-star" style="top:22px;right:64px">\u2605</div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'sunburst') {
+    const flower = design.flowerColor || '#ff8ba0';
+    const css = '.d-ray{position:absolute;width:160px;height:160px;border-radius:50%;' +
+      'background:repeating-conic-gradient(' + acc + ' 0 6deg, transparent 6deg 18deg);z-index:2;opacity:.6}' +
+      '.d-flower{position:absolute;bottom:14px;z-index:2;font-size:18px;color:' + flower + ';text-shadow:0 1px 2px rgba(0,0,0,.5)}';
+    const html = '<div class="d-ray" style="top:-80px;left:-80px"></div>' +
+      '<div class="d-ray" style="bottom:-80px;right:-80px"></div>' +
+      '<div class="d-flower" style="left:36px">\u2740</div>' +
+      '<div class="d-flower" style="right:36px">\u2740</div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'texture-fabric') {
+    // 원래는 배경 전체를 채우던 직물 텍스처 — 사진을 가리지 않도록 테두리 밴드로 축소.
+    const css = '.d-fab{position:absolute;z-index:2;' +
+      'background:repeating-linear-gradient(45deg, ' + acc + ' 0 4px, transparent 4px 9px),' +
+      'repeating-linear-gradient(-45deg, rgba(255,255,255,.35) 0 4px, transparent 4px 9px),' +
+      'rgba(0,0,0,.25)}' +
+      '.d-fab-t{top:14px;left:14px;right:14px;height:20px}' +
+      '.d-fab-b{bottom:14px;left:14px;right:14px;height:20px}' +
+      '.d-fab-l{top:34px;bottom:34px;left:14px;width:20px}' +
+      '.d-fab-r{top:34px;bottom:34px;right:14px;width:20px}';
+    const html = '<div class="d-fab d-fab-t"></div><div class="d-fab d-fab-b"></div><div class="d-fab d-fab-l"></div><div class="d-fab d-fab-r"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'frame-square') {
+    const bw = design.borderWidth || 2;
+    const clip = design.cutCorners
+      ? 'clip-path:polygon(18px 0,calc(100% - 18px) 0,100% 18px,100% calc(100% - 18px),calc(100% - 18px) 100%,18px 100%,0 calc(100% - 18px),0 18px);'
+      : '';
+    const css = '.d-fq{position:absolute;inset:20px;border:' + bw + 'px solid ' + acc + ';z-index:2;' + clip + '}' +
+      '.d-fq-in{position:absolute;inset:27px;border:1px solid ' + acc + ';z-index:2;' + clip + '}';
+    const html = '<div class="d-fq"></div>' + (design.double ? '<div class="d-fq-in"></div>' : '') + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'doodle-stars') {
+    const css = '.d-ds{position:absolute;z-index:2;color:' + acc + ';font-size:20px;text-shadow:0 1px 3px rgba(0,0,0,.6)}';
+    const stars = [[26,26],[494,34],[34,486],[478,490],[260,22],[22,260],[506,260],[260,506]];
+    const html = stars.map(function(p, i) {
+      const glyph = (i % 2 === 0) ? '\u2605' : '\u2618';
+      return '<div class="d-ds" style="top:' + p[1] + 'px;left:' + p[0] + 'px">' + glyph + '</div>';
+    }).join('') + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'paper-cut-wave') {
+    // 원래는 캔버스 중앙을 채우던 3겹 블롭 — 사진을 가리지 않도록 대각선 코너 2곳의
+    // 작은 장식 클러스터로 축소.
+    const layers = design.layerColors || [acc, acc, acc];
+    const css = '.d-blob{position:absolute;z-index:2;border-radius:42% 58% 61% 39% / 42% 39% 61% 58%;opacity:.85}';
+    const corner = function(top, left, bottom, right) {
+      const pos0 = (top !== null ? 'top:' + top + 'px;' : 'bottom:' + bottom + 'px;') + (left !== null ? 'left:' + left + 'px;' : 'right:' + right + 'px;');
+      return '<div class="d-blob" style="' + pos0 + 'width:120px;height:120px;background:' + layers[0] + '"></div>' +
+        '<div class="d-blob" style="' + pos0.replace(/(-?\d+)px/g, function(m, n) { return (parseInt(n, 10) + 16) + 'px'; }) + 'width:88px;height:88px;background:' + layers[1] + '"></div>' +
+        '<div class="d-blob" style="' + pos0.replace(/(-?\d+)px/g, function(m, n) { return (parseInt(n, 10) + 32) + 'px'; }) + 'width:56px;height:56px;background:' + layers[2] + '"></div>';
+    };
+    const html = corner(-30, -30, null, null) + corner(null, null, -30, -30) + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'scallop-frame') {
+    const clip = 'clip-path:polygon(24px 0,calc(100% - 24px) 0,100% 24px,100% calc(100% - 24px),calc(100% - 24px) 100%,24px 100%,0 calc(100% - 24px),0 24px);';
+    const css = '.d-sf{position:absolute;inset:18px;border:2px solid ' + acc + ';z-index:2;' + clip + '}' +
+      '.d-sf-in{position:absolute;inset:26px;border:1px solid ' + acc + ';z-index:2;' + clip + '}' +
+      '.d-sun{position:absolute;top:24px;left:24px;width:16px;height:16px;border-radius:50%;background:' + acc + ';z-index:2;box-shadow:0 0 8px rgba(0,0,0,.4)}';
+    const html = '<div class="d-sf"></div><div class="d-sf-in"></div><div class="d-sun"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'scalloped-edge-dots') {
+    const dc = design.dotColor || '#ffffff';
+    const dc2 = design.dotColor2 || dc;
+    const css = 'body{border-radius:34px}' +
+      '.d-sed-border{position:absolute;inset:14px;border:2px solid ' + acc + ';border-radius:24px;z-index:2}' +
+      '.d-dot2{position:absolute;border-radius:50%;z-index:2;box-shadow:0 1px 3px rgba(0,0,0,.4)}';
+    const positions = [[40,40,7,dc],[70,80,5,dc2],[100,50,4,dc],[40,460,6,dc2],[90,490,5,dc],
+      [460,60,5,dc],[500,100,7,dc2],[440,470,6,dc],[490,500,5,dc2],[470,430,4,dc]];
+    const dots = positions.map(function(p) {
+      return '<div class="d-dot2" style="left:' + p[0] + 'px;top:' + p[1] + 'px;width:' + p[2] + 'px;height:' + p[2] + 'px;background:' + p[3] + '"></div>';
+    }).join('');
+    return { css, html: '<div class="d-sed-border"></div>' + dots + logos };
+  }
+
+  if (design.kind === 'bars-only') {
+    const css = '.d-bar2{position:absolute;left:16px;right:16px;height:22px;background:' + acc + ';z-index:2;border-radius:2px}';
+    const html = '<div class="d-bar2" style="top:16px"></div><div class="d-bar2" style="bottom:16px"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'dot-cluster') {
+    const dc = design.dotColor || acc;
+    const css = '.d-dc{position:absolute;border-radius:50%;background:' + dc + ';z-index:2;box-shadow:0 1px 3px rgba(0,0,0,.4)}';
+    const pts = [[0,0,8],[18,10,6],[6,24,5],[30,28,7],[14,42,4],[38,6,5],[44,20,6],[24,50,5]];
+    const cluster = function(ox, oy) {
+      return pts.map(function(p) {
+        return '<div class="d-dc" style="left:' + (ox + p[0]) + 'px;top:' + (oy + p[1]) + 'px;width:' + p[2] + 'px;height:' + p[2] + 'px"></div>';
+      }).join('');
+    };
+    const html = cluster(24, 24) + cluster(452, 452) + logos;
+    return { css, html };
+  }
+
+  // 알 수 없는 kind — 안전 폴백(테두리 없이 로고만)
+  return { css: '', html: logos };
+}
+
 // 2026-07-06 신규: 한국어 복합어(예: "강아지 운동장")는 언스플래시(주로 영어
 // 태그 기반) 검색과 궁합이 안 좋아 그대로는 매칭되는 사진이 0건인 경우가
 // 많음 — 검색어의 첫 단어(핵심 명사)만 남겨 더 넓은 범위로 재검색할 때 쓰는
@@ -3140,9 +3394,9 @@ async function translateKeywordToEnglish(koreanQuery) {
     const translated = (result.text || '')
       .trim()
       .split('\n')[0]
-      .replace(/["'.…]/g, '')
+      .replace(/["'.\u2026]/g, '')
       .trim();
-    if (!translated || translated.length > 60 || /[가-힣]/.test(translated)) return null;
+    if (!translated || translated.length > 60 || /[\uac00-\ud7a3]/.test(translated)) return null;
     return translated;
   } catch (e) {
     writeLog('WARN', 'IMAGE', 'AI 키워드 영어 번역 실패', e.message);
@@ -3215,9 +3469,6 @@ async function fetchThumbBackgroundPhoto(query) {
   }
 }
 
-// 2026-07-07: customBgUrl — 썸네일 배경으로 직접 선택(수동) 또는 랜덤 지정(반자동/
-// 완전자동)한 이미지 URL. 있으면 우선 사용하고, 다운로드 실패나 미지정 시에만
-// 기존 Unsplash 자동 검색으로 폴백한다(기존 동작과 100% 하위호환).
 async function generateThumbnail(title, hashtags, customBgUrl = null) {
   const os = require('os');
 
@@ -3230,14 +3481,26 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
     ? THUMB_STYLES[styleIdx].accent
     : THUMB_ACCENTS[Math.floor(Math.random() * THUMB_ACCENTS.length)];
 
+  // 환경설정 "썸네일 디자인 선택" 값(2026-07-13 신규): 'default'면 기존
+  // border-outer/inner+PICK 뱃지 테두리를 그대로 사용, 그 외 22종 중 하나를
+  // 고른 상태면 해당 design 객체를 찾아 아래에서 (동일한 사진 배경 위에)
+  // renderThumbDesignChrome()의 장식 테두리로 교체한다.
+  const designId = getStore().get('settings.thumbnailDesign', 'default');
+  const design = designId !== 'default' ? THUMB_DESIGNS.find(d => d.id === designId) : null;
+
   // 배경 사진 검색어: 첫 해시태그 우선, 없으면 제목
   const query = (Array.isArray(hashtags) && hashtags[0])
     ? String(hashtags[0]).replace(/^#+/, '').trim()
     : (title || '').trim();
+  // 2026-07-13: design(22종 중 하나)을 선택해도 Unsplash 사진 검색은 항상 그대로
+  // 수행한다 — 사용자가 "사진 배경은 유지하고 테두리 디자인만 바뀌길" 원한다고
+  // 명시적으로 확인했기 때문에, 22종은 전부 기존 포토 프레임형과 같은 사진 배경 위에
+  // 얹는 장식일 뿐 사진 검색 로직 자체는 default와 동일하게 유지한다.
   let bgPhoto = customBgUrl ? await fetchImageAsDataUrl(customBgUrl) : null;
   if (!bgPhoto) bgPhoto = await fetchThumbBackgroundPhoto(query);
 
-  // 사진을 못 가져온 경우에만 그라데이션 폴백 스타일 선택 (색상 고정 시 동일 인덱스 사용)
+  // 사진을 못 가져온 경우에만 그라데이션 폴백 스타일 선택 (색상 고정 시 동일 인덱스 사용).
+  // design이 선택된 경우엔 THUMB_STYLES 대신 design.bg를 폴백 색상으로 사용.
   const fallbackStyle = isFixedStyle
     ? THUMB_STYLES[styleIdx]
     : THUMB_STYLES[Math.floor(Math.random() * THUMB_STYLES.length)];
@@ -3294,12 +3557,36 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
     const { fontSize: titleFontSize, stroke: titleStroke } =
       TITLE_FONT_STEPS.find(s => titleLines.length <= s.maxLines);
 
-    const bodyBg = bgPhoto
-      ? `background:url('${bgPhoto}') center/cover no-repeat, ${fallbackStyle.bg}`
-      : `background:${fallbackStyle.bg}`;
+    // 2026-07-13(2차 수정): design 선택 여부와 무관하게 사진 배경 + 어두운
+    // 오버레이는 항상 동일하게 적용(기존 포토 프레임형과 100% 같은 사진/오버레이
+    // 로직). design은 테두리 "모양"만 결정하고, 실제 색(테두리·제목 글자·로고)은
+    // 항상 위에서 계산한 accent(환경설정 "썸네일 스타일" 고정 색 또는 랜덤) 하나로
+    // 통일 — design.accent는 더 이상 실제 생성에 쓰지 않는다(사용자 요청: 디자인
+    // 선택과 색상 선택을 완전히 분리).
+    const chrome = design ? renderThumbDesignChrome(design, accent) : null;
+    const titleTextColor = accent;
+    const borderAccent = accent;
 
-    // 포토 프레임형: 배경사진(또는 폴백 그라데이션) + 어둡게 오버레이 +
-    // 이중 테두리 + 코너 액센트 + 스트로크 제목 글자
+    const bgTint = design ? design.bg : fallbackStyle.bg;
+    const bodyBg = bgPhoto
+      ? `background:url('${bgPhoto}') center/cover no-repeat, ${bgTint}`
+      : `background:${bgTint}`;
+
+    const defaultChromeCss = `
+      .border-outer{position:absolute;inset:10px;border:3px solid ${borderAccent};border-radius:18px;z-index:2}
+      .border-inner{position:absolute;inset:18px;border:1px solid ${borderAccent};border-radius:12px;z-index:2}
+      .corner-badge{position:absolute;top:20px;left:20px;z-index:3;
+        display:flex;align-items:center;justify-content:center;
+        background:${borderAccent};color:#1a1a1a;font-size:18px;font-weight:800;
+        letter-spacing:1.5px;padding:10px 22px;border-radius:10px;line-height:1}`;
+    const defaultChromeHtml = `
+      <div class="border-outer"></div>
+      <div class="border-inner"></div>
+      <div class="corner-badge">PICK</div>`;
+
+    // 포토 프레임형(기본): 사진 배경 + 어둡게 오버레이 + 이중 테두리 + 코너 액센트.
+    // 디자인 선택형(22종): 동일한 사진 배경 + 오버레이 위에 renderThumbDesignChrome()
+    // 장식 테두리만 교체(사용자 요청 2026-07-13: "사진 배경은 유지, 테두리만 변경").
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
       *{margin:0;padding:0;box-sizing:border-box}
       body{width:540px;height:540px;position:relative;overflow:hidden;
@@ -3307,18 +3594,14 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
         font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif}
       .overlay{position:absolute;inset:0;
         background:linear-gradient(180deg, rgba(0,0,0,0.32), rgba(0,0,0,0.5) 55%, rgba(0,0,0,0.68))}
-      .border-outer{position:absolute;inset:10px;border:3px solid ${accent};border-radius:18px;z-index:2}
-      .border-inner{position:absolute;inset:18px;border:1px solid ${accent};border-radius:12px;z-index:2}
-      .corner-badge{position:absolute;top:20px;left:20px;z-index:3;
-        display:flex;align-items:center;justify-content:center;
-        background:${accent};color:#1a1a1a;font-size:18px;font-weight:800;
-        letter-spacing:1.5px;padding:10px 22px;border-radius:10px;line-height:1}
+      ${design ? '' : defaultChromeCss}
+      ${design ? chrome.css : ''}
       /* 제목을 기준점으로 삼아 캔버스 정중앙(상하좌우)에 절대 배치.
          부제는 로드 후 스크립트로 제목 실측 위치를 구해 "제목 위 20px"에
          재배치(폰트 렌더링 오차 없이 정확한 간격 보장), 하단 문구는 테두리와
          겹치지 않도록 충분히 위로 띄운 고정 위치에 별도 배치 */
       .title{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);
-        z-index:3;color:${accent};-webkit-text-stroke:${titleStroke}px #000;paint-order:stroke fill;
+        z-index:3;color:${titleTextColor};-webkit-text-stroke:${titleStroke}px #000;paint-order:stroke fill;
         font-size:${titleFontSize}px;font-weight:800;text-align:center;line-height:1.12;padding:0 46px}
       .subtitle{position:absolute;left:0;right:0;z-index:3;text-align:center;
         color:#eee;font-size:16px;letter-spacing:3px;font-weight:500}
@@ -3326,9 +3609,7 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
         color:rgba(255,255,255,0.7);font-size:13px;z-index:3}
     </style></head><body>
       <div class="overlay"></div>
-      <div class="border-outer"></div>
-      <div class="border-inner"></div>
-      <div class="corner-badge">PICK</div>
+      ${design ? chrome.html : defaultChromeHtml}
       <div class="subtitle">BLOG POST</div>
       <div class="title">${titleHtml}</div>
       <div class="footer">@ 네이버 블로그</div>
@@ -3356,7 +3637,7 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
         const tmpPath = path.join(os.tmpdir(), `naver_thumb_${Date.now()}.png`);
         fs.writeFileSync(tmpPath, buf);
         if (!thumbWin.isDestroyed()) thumbWin.destroy();
-        writeLog('INFO', 'THUMB', '썸네일 생성 성공', `${tmpPath} (bg=${bgPhoto ? 'unsplash' : 'gradient'}, accent=${accent})`);
+        writeLog('INFO', 'THUMB', '썸네일 생성 성공', `${tmpPath} (design=${design ? design.id : 'default'}, bg=${bgPhoto ? 'unsplash' : 'gradient'}, accent=${borderAccent})`);
         done(tmpPath);
       } catch (e) {
         writeLog('WARN', 'THUMB', '썸네일 캡처 실패', e.message);
