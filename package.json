@@ -39,7 +39,10 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "public/icon.icns",
-      "target": ["dmg", "zip"],
+      "target": [
+        { "target": "dmg", "arch": ["universal"] },
+        { "target": "zip", "arch": ["universal"] }
+      ],
       "artifactName": "${name}-${version}-${arch}.${ext}"
     },
     "win": {

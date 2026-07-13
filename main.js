@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, net, dialog, Notification, session: electronSession, clipboard } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, net, dialog, Notification, session: electronSession, clipboard, Menu } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -935,6 +935,13 @@ function checkForAppUpdates() {
 app.whenReady().then(() => {
   // 앱 시작 구분선 — writeLog를 통해 기록 (파일 경로 초기화 포함)
   writeLog('INFO', 'SYSTEM', '━━━━━━━━━━━━━━━━━━ 앱 시작 ━━━━━━━━━━━━━━━━━━');
+  // 2026-07-13(Windows 전용): Windows는 OS 전역 메뉴바가 없어 Electron 기본
+  // 메뉴(File/Edit/View/Window/Help)가 창 안에 그대로 렌더링되어 불필요한
+  // 세로 공간을 차지함. macOS는 이 메뉴가 화면 상단 OS 메뉴바에 표시되고
+  // 창 내부 공간을 전혀 차지하지 않으므로 그대로 유지(영향 없음).
+  if (process.platform === 'win32') {
+    Menu.setApplicationMenu(null);
+  }
   createWindow();
   startScheduler();
   // 앱 시작 화면이 먼저 뜨도록 약간 지연 후 업데이트 확인
