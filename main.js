@@ -148,6 +148,54 @@ function sanitizeFirebaseKey(str) {
   return String(str || '').replace(/[.#$\[\]/]/g, '_');
 }
 
+// 읽기 전용 GET — /blocked 확인용(2026-07-14 신규). 이 경로는 보안 규칙에서
+// 누구나 읽을 수 있게(.read:true) 열어둘 예정이라 인증 없이 조회 가능.
+// firebasePush와 마찬가지로 절대 throw하지 않고, 실패 시 null을 resolve —
+// 호출부에서 "확인 실패 = 차단 아님(통과)"으로 처리하기 위함.
+function firebaseGet(path) {
+  return new Promise((resolve) => {
+    try {
+      const req = net.request({ method: 'GET', url: `${FIREBASE_DB_URL}/${path}.json` });
+      let body = '';
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { body += chunk.toString(); });
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            try { resolve(JSON.parse(body)); } catch { resolve(null); }
+          } else {
+            resolve(null);
+          }
+        });
+      });
+      req.on('error', () => resolve(null));
+      req.end();
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+// 차단 여부 확인 — 5분 캐시(getTierLimits의 _tierLimitsCache와 동일한 이유:
+// 매 발행/체크마다 네트워크 왕복이 생기면 유료 사용자 경험이 나빠짐).
+// 네트워크 실패/오프라인이면 "차단 아님"으로 통과시킨다(fail-open) — 이
+// 세션 내내 유지해 온 원칙과 동일하게, 오프라인 때문에 정상 결제 고객이
+// 막히는 일은 없어야 한다는 판단. 대신 signature+HWID 검증(오프라인에서도
+// 항상 동작)이 여전히 1차 방어선이고, 이 차단 기능은 "온라인일 때 추가로
+// 걸러내는" 보조 장치로 취급한다.
+let _blockedCache = new Map(); // licenseId -> { value, ts }
+const BLOCKED_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function checkLicenseBlocked(licenseId) {
+  if (!licenseId) return false;
+  const now = Date.now();
+  const cached = _blockedCache.get(licenseId);
+  if (cached && (now - cached.ts) < BLOCKED_CACHE_TTL_MS) return cached.value;
+  const data = await firebaseGet(`blocked/${sanitizeFirebaseKey(licenseId)}`);
+  const blocked = !!(data && data['차단']);
+  _blockedCache.set(licenseId, { value: blocked, ts: now });
+  return blocked;
+}
+
 // 문의하기 — 사용자가 입력한 문의 내용 + 최근 오류 로그(최대 50줄)를 함께
 // /inquiries에 전송. 오류 로그는 파일 전체가 아니라 최근 항목만 잘라 보내
 // 전송량과 노출 범위를 최소화한다.
@@ -274,9 +322,19 @@ async function getLicenseStatus() {
     writeLog('WARN', 'LICENSE', '시간조작 검사 중 오류 — 이번 실행은 통과 처리', e.message);
   }
 
-  const valid = !finalExpired && !hwidMismatch && !timeTampered;
+  // 2026-07-14 신규 — 원격 차단(환불/부정사용 대응) 확인. 실패해도(오프라인
+  // 등) false로 통과 처리되므로 위 시간조작 검사와 동일한 성격의 "보조" 체크.
+  let blocked = false;
+  try {
+    blocked = await checkLicenseBlocked(result.licenseId);
+  } catch (e) {
+    writeLog('WARN', 'LICENSE', '원격 차단 확인 중 오류 — 이번 실행은 통과 처리', e.message);
+  }
+
+  const valid = !finalExpired && !hwidMismatch && !timeTampered && !blocked;
   let reason = null;
-  if (hwidMismatch) reason = '등록 가능한 기기 대수를 초과했습니다';
+  if (blocked) reason = '환불 처리되었거나 부정 사용으로 차단된 라이선스입니다';
+  else if (hwidMismatch) reason = '등록 가능한 기기 대수를 초과했습니다';
   else if (timeTampered) reason = '시스템 시간 조작이 감지되었습니다';
   else if (finalExpired) reason = '라이선스 기간 만료';
 
@@ -293,6 +351,7 @@ async function getLicenseStatus() {
     daysRemaining: result.daysRemaining,
     hwidMismatch,
     timeTampered,
+    blocked,
     devBypass: isDev,
     reason,
   };

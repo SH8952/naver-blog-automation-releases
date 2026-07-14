@@ -73,6 +73,110 @@ function firebasePush(pathSeg, data) {
   });
 }
 
+function sanitizeFirebaseKey(str) {
+  return String(str || '').replace(/[.#$[\]/]/g, '_');
+}
+
+// ── 원격 차단(2026-07-14 신규) — 관리자 인증 ─────────────────────
+// /blocked 쓰기는 파이어베이스 보안 규칙에서 "로그인한 관리자 계정만" 되도록
+// 걸어둘 예정(레거시 database secret은 구글이 지원 중단해서 안 씀). 이 파일이
+// Firebase Authentication(이메일/비밀번호)으로 직접 로그인해 idToken을 받고,
+// 그 토큰을 REST 요청의 ?auth= 파라미터로 실어 보낸다. 자격증명은
+// keys/firebase-admin.json에 저장(keys/ 전체가 .gitignore 대상이라 커밋 안 됨,
+// keys/private.pem과 동일한 보호 수준).
+const FIREBASE_API_KEY = 'AIzaSyAYzBZbRmmHuV8y-k6qXG-KZTiD3_-khvU';
+const ADMIN_CRED_PATH = path.join(ROOT, 'keys', 'firebase-admin.json');
+
+function identityToolkitRequest(endpoint, body) {
+  return new Promise((resolve) => {
+    try {
+      const payload = JSON.stringify({ ...body, returnSecureToken: true });
+      const url = new URL(`https://identitytoolkit.googleapis.com/v1/accounts:${endpoint}?key=${FIREBASE_API_KEY}`);
+      const req = https.request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      }, (res) => {
+        let respBody = '';
+        res.on('data', (chunk) => { respBody += chunk.toString(); });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(respBody);
+            if (res.statusCode >= 200 && res.statusCode < 300) resolve({ success: true, ...parsed });
+            else resolve({ success: false, error: parsed?.error?.message || `HTTP ${res.statusCode}` });
+          } catch {
+            resolve({ success: false, error: '응답 파싱 실패' });
+          }
+        });
+      });
+      req.on('error', (err) => resolve({ success: false, error: err.message }));
+      req.write(payload);
+      req.end();
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+function readAdminCred() {
+  try {
+    if (!fs.existsSync(ADMIN_CRED_PATH)) return null;
+    return JSON.parse(fs.readFileSync(ADMIN_CRED_PATH, 'utf8'));
+  } catch { return null; }
+}
+
+async function setupAdmin(email, password) {
+  const res = await identityToolkitRequest('signUp', { email, password });
+  if (!res.success) return res;
+  fs.mkdirSync(path.dirname(ADMIN_CRED_PATH), { recursive: true });
+  fs.writeFileSync(ADMIN_CRED_PATH, JSON.stringify({ email, password }, null, 2), 'utf8');
+  return { success: true, uid: res.localId };
+}
+
+// 매번 새로 로그인(짧은 세션 도구라 리프레시 토큰 관리는 생략, 관리자 액션
+// 빈도가 낮아 매번 로그인해도 비용이 크지 않음).
+async function getAdminIdToken() {
+  const cred = readAdminCred();
+  if (!cred) return { success: false, error: '관리자 계정이 설정되지 않았습니다.' };
+  const res = await identityToolkitRequest('signInWithPassword', { email: cred.email, password: cred.password });
+  if (!res.success) return res;
+  return { success: true, idToken: res.idToken };
+}
+
+// /blocked 쓰기 — 관리자 idToken 필요.
+function firebasePutAuthed(pathSeg, data, idToken) {
+  return new Promise((resolve) => {
+    try {
+      const body = JSON.stringify(data);
+      const url = new URL(`${FIREBASE_DB_URL}/${pathSeg}.json?auth=${idToken}`);
+      const req = https.request(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        let respBody = '';
+        res.on('data', (chunk) => { respBody += chunk.toString(); });
+        res.on('end', () => {
+          resolve({ success: res.statusCode >= 200 && res.statusCode < 300, error: res.statusCode >= 300 ? respBody.slice(0, 200) : undefined });
+        });
+      });
+      req.on('error', (err) => resolve({ success: false, error: err.message }));
+      req.write(body);
+      req.end();
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+async function setLicenseBlocked(licenseId, blockedFlag, reasonText) {
+  const auth = await getAdminIdToken();
+  if (!auth.success) return auth;
+  return firebasePutAuthed(`blocked/${sanitizeFirebaseKey(licenseId)}`, {
+    '차단': !!blockedFlag,
+    '사유': reasonText ? String(reasonText).slice(0, 500) : null,
+    '처리시각': formatKoreanTimestamp(),
+  }, auth.idToken);
+}
+
 function todayStr() {
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
@@ -362,6 +466,28 @@ const HTML_PAGE = `<!DOCTYPE html>
     </div>
   </div>
 
+  <div class="card history-card" id="adminCard">
+    <h2>관리자 계정 (원격 차단용, 2026-07-14 신규)</h2>
+    <div id="adminSetupBox">
+      <p class="sub" style="margin-bottom:12px">특정 라이선스를 원격으로 차단(환불/부정사용 대응)하려면, 이 계정으로 파이어베이스에 로그인해서 처리합니다. 최초 1회만 설정하면 됩니다.</p>
+      <div class="row">
+        <div>
+          <label>관리자 이메일</label>
+          <input type="email" id="admin-email" placeholder="본인 이메일" />
+        </div>
+        <div>
+          <label>비밀번호 (6자 이상)</label>
+          <input type="password" id="admin-password" placeholder="새로 정할 비밀번호" />
+        </div>
+      </div>
+      <button class="secondary" style="width:auto;padding:9px 16px" onclick="setupAdmin()">관리자 계정 만들기</button>
+      <div id="adminSetupResult" class="result"></div>
+    </div>
+    <div id="adminReadyBox" style="display:none">
+      <p class="sub">관리자 계정: <b id="adminEmailLabel"></b> — 설정 완료. 아래 발급 이력에서 "차단" 버튼으로 특정 라이선스를 즉시 막을 수 있습니다.</p>
+    </div>
+  </div>
+
   <div class="card history-card">
     <h2>발급 이력 (로컬 기록, keys/license-ledger.json)</h2>
     <div id="historyBox"><div class="empty">불러오는 중…</div></div>
@@ -398,7 +524,7 @@ const HTML_PAGE = `<!DOCTYPE html>
         ' · 최대 ' + data.payload.maxDevices + '대 · 만료: ' + (data.payload.expiresAt || '무제한') +
         ' · 번호: ' + data.payload.licenseId +
         '<div class="key-value">' + data.key + '</div>' +
-        '<button class="copy-btn" onclick="copyKey(this, \\'' + data.key + '\\')">키 복사</button>';
+        '<button class="copy-btn" onclick="copyKey(this, \'' + data.key + '\')">키 복사</button>';
       loadHistory();
     } else {
       box.classList.add('error');
@@ -457,6 +583,12 @@ const HTML_PAGE = `<!DOCTYPE html>
     }
   }
 
+  const FIREBASE_DB_URL_JS = 'https://naver-blog-automation-4d9d6-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+  function sanitizeFirebaseKeyJs(str) {
+    return String(str || '').replace(/[.#$\[\]/]/g, '_');
+  }
+
   async function loadHistory() {
     const res = await fetch('/api/history');
     const data = await res.json();
@@ -465,8 +597,20 @@ const HTML_PAGE = `<!DOCTYPE html>
       box.innerHTML = '<div class="empty">아직 발급 이력이 없습니다.</div>';
       return;
     }
-    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th></tr></thead><tbody>';
+    // /blocked는 보안 규칙에서 공개 읽기(.read:true)로 열어둘 경로라 브라우저에서
+    // 인증 없이 바로 조회 가능 — 규칙을 아직 안 넣었다면 이 fetch는 조용히
+    // 실패하고 전부 "정상"으로만 표시됨(차단 기능을 아직 못 쓴다는 뜻).
+    let blockedMap = {};
+    try {
+      const bres = await fetch(FIREBASE_DB_URL_JS + '/blocked.json');
+      const bdata = await bres.json();
+      blockedMap = bdata || {};
+    } catch {}
+
+    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th></tr></thead><tbody>';
     for (const rec of data.list) {
+      const key = sanitizeFirebaseKeyJs(rec.licenseId);
+      const isBlocked = !!(blockedMap[key] && blockedMap[key]['차단']);
       html += '<tr>' +
         '<td>' + rec.issuedAt + '</td>' +
         '<td><span class="badge badge-' + rec.tier + '">' + (rec.tier === 'premium' ? '프리미엄' : '스탠다드') + '</span></td>' +
@@ -477,10 +621,32 @@ const HTML_PAGE = `<!DOCTYPE html>
         '<td>' + (rec.channel || '-') + '</td>' +
         '<td>' + (rec.orderId || '-') + '</td>' +
         '<td>' + (rec.note || '-') + '</td>' +
+        '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
+        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\'' + rec.licenseId.replace(/'/g, "\\'") + '\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
         '</tr>';
     }
     html += '</tbody></table>';
     box.innerHTML = html;
+  }
+
+  async function toggleBlock(licenseId, newBlockedValue) {
+    let reason = null;
+    if (newBlockedValue) {
+      reason = prompt('차단 사유를 입력하세요 (선택, 그냥 확인만 눌러도 됩니다):', '');
+      if (reason === null) return; // 취소
+    } else {
+      if (!confirm(licenseId + ' 라이선스의 차단을 해제할까요?')) return;
+    }
+    const res = await fetch('/api/block', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ licenseId, blocked: newBlockedValue, reason }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      loadHistory();
+    } else {
+      alert(data.error || '처리에 실패했습니다. 관리자 계정이 설정되어 있는지, 파이어베이스 보안 규칙에 blocked 쓰기 권한이 반영됐는지 확인하세요.');
+    }
   }
 
   async function checkPrivKey() {
@@ -489,7 +655,43 @@ const HTML_PAGE = `<!DOCTYPE html>
     document.getElementById('privKeyWarn').classList.toggle('show', !data.hasPrivateKey);
   }
 
+  async function checkAdminStatus() {
+    const res = await fetch('/api/admin/status');
+    const data = await res.json();
+    document.getElementById('adminSetupBox').style.display = data.hasAdmin ? 'none' : 'block';
+    document.getElementById('adminReadyBox').style.display = data.hasAdmin ? 'block' : 'none';
+    if (data.hasAdmin) document.getElementById('adminEmailLabel').textContent = data.email;
+  }
+
+  async function setupAdmin() {
+    const email = document.getElementById('admin-email').value;
+    const password = document.getElementById('admin-password').value;
+    const box = document.getElementById('adminSetupResult');
+    box.classList.add('show');
+    if (!email || !password) {
+      box.classList.add('error');
+      box.textContent = '이메일과 비밀번호를 입력하세요.';
+      return;
+    }
+    const res = await fetch('/api/admin/setup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      box.classList.remove('error');
+      box.innerHTML = '계정이 생성되었습니다. 아래 UID를 파이어베이스 콘솔 "규칙" 탭의 blocked 쓰기 조건에 붙여넣으세요:' +
+        '<div class="key-value">' + data.uid + '</div>' +
+        '<button class="copy-btn" onclick="copyKey(this, \'' + data.uid + '\')">UID 복사</button>';
+      checkAdminStatus();
+    } else {
+      box.classList.add('error');
+      box.textContent = data.error || '계정 생성에 실패했습니다.';
+    }
+  }
+
   checkPrivKey();
+  checkAdminStatus();
   loadHistory();
 </script>
 </body>
@@ -522,6 +724,25 @@ const server = http.createServer(async (req, res) => {
       const raw = await readBody(req);
       const body = JSON.parse(raw || '{}');
       return sendJson(res, 200, handleVerify(body));
+    }
+    // ── 원격 차단 관련 (2026-07-14 신규) ──────────────────────────
+    if (req.method === 'GET' && req.url === '/api/admin/status') {
+      const cred = readAdminCred();
+      return sendJson(res, 200, { hasAdmin: !!cred, email: cred ? cred.email : null });
+    }
+    if (req.method === 'POST' && req.url === '/api/admin/setup') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.email || !body.password) return sendJson(res, 400, { success: false, error: '이메일/비밀번호를 입력하세요.' });
+      const result = await setupAdmin(body.email, body.password);
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/block') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.licenseId) return sendJson(res, 400, { success: false, error: '라이선스ID가 필요합니다.' });
+      const result = await setLicenseBlocked(body.licenseId, body.blocked, body.reason);
+      return sendJson(res, result.success ? 200 : 400, result);
     }
     res.writeHead(404);
     res.end('Not found');
