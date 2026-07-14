@@ -25,6 +25,7 @@
 // ────────────────────────────────────────────────────────────────────────
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -34,6 +35,43 @@ const PORT = 47100;
 const ROOT = path.join(__dirname, '..');
 const PRIV_PATH = path.join(ROOT, 'keys', 'private.pem');
 const LEDGER_PATH = path.join(ROOT, 'keys', 'license-ledger.json');
+
+// ── Firebase 원격 발급 이력 (2026-07-14 신규) ────────────────────
+// main.js의 firebasePush()와 동일한 목적(Realtime Database REST API에
+// 직접 POST)이지만, 이 파일은 의도적으로 main.js를 import하지 않고 완전히
+// 독립적으로 둔다 — 개인키(keys/private.pem)를 다루는 발급 도구는 고객에게
+// 나가는 앱 코드와 절대 같은 파일/모듈 그래프를 공유하지 않는다는 원칙
+// (2026-07-14 보안 설계 논의로 확정). Node 내장 https 모듈만 사용.
+const FIREBASE_DB_URL = 'https://naver-blog-automation-4d9d6-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+function formatKoreanTimestamp(date = new Date()) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+         `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+// 실패해도(오프라인 등) 발급 자체는 계속 진행돼야 하므로 절대 throw하지
+// 않고, 호출부에서도 await하지 않는다(fire-and-forget).
+function firebasePush(pathSeg, data) {
+  return new Promise((resolve) => {
+    try {
+      const body = JSON.stringify(data);
+      const url = new URL(`${FIREBASE_DB_URL}/${pathSeg}.json`);
+      const req = https.request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        res.on('data', () => {});
+        res.on('end', () => resolve({ success: res.statusCode >= 200 && res.statusCode < 300 }));
+      });
+      req.on('error', () => resolve({ success: false }));
+      req.write(body);
+      req.end();
+    } catch {
+      resolve({ success: false });
+    }
+  });
+}
 
 function todayStr() {
   const d = new Date();
@@ -104,6 +142,10 @@ function handleGenerate(body) {
   const issuedAt = todayStr();
   const userEmail = body.email ? String(body.email).trim() : null;
   const note = body.note ? String(body.note).trim() : null;
+  // 2026-07-14 신규 — 메모 자유텍스트에서 분리한 구조화 필드(콘솔에서
+  // 채널/주문번호로 필터링하기 쉽게).
+  const channel = body.channel ? String(body.channel).trim() : null;
+  const orderId = body.orderId ? String(body.orderId).trim() : null;
 
   let expiresAt = null;
   if (body.expiryMode === 'days' && body.days) {
@@ -121,8 +163,24 @@ function handleGenerate(body) {
   const key = signPayload(payload, privateKeyPem);
 
   appendLedger({
-    licenseId, tier, maxDevices, issuedAt, expiresAt, userEmail, note,
+    licenseId, tier, maxDevices, issuedAt, expiresAt, userEmail, note, channel, orderId,
     createdAt: new Date().toISOString(),
+  });
+
+  // 2026-07-14 신규 — 발급 즉시 파이어베이스에도 자동 전송(fire-and-forget).
+  // 테스트로 만든 키도 그대로 전송되므로, 테스트 발급분은 콘솔에서 직접
+  // 지워야 함(자동 구분 로직 없음 — 의도적으로 단순하게 유지).
+  firebasePush('licenses', {
+    '시각': formatKoreanTimestamp(),
+    '라이선스ID': licenseId,
+    '등급': tier,
+    '기기수': maxDevices,
+    '발급일': issuedAt,
+    '만료일': expiresAt || '무제한',
+    '이메일': userEmail,
+    '판매채널': channel,
+    '주문번호': orderId,
+    '메모': note,
   });
 
   return { success: true, key, payload };
@@ -267,8 +325,24 @@ const HTML_PAGE = `<!DOCTYPE html>
       <label>구매자 이메일 (선택)</label>
       <input type="email" id="f-email" placeholder="buyer@example.com" />
 
+      <div class="row">
+        <div>
+          <label>판매채널 (선택)</label>
+          <select id="f-channel">
+            <option value="">(미지정)</option>
+            <option value="크몽">크몽</option>
+            <option value="직접판매">직접판매</option>
+            <option value="기타">기타</option>
+          </select>
+        </div>
+        <div>
+          <label>주문번호 (선택)</label>
+          <input type="text" id="f-orderId" placeholder="예: 12345" />
+        </div>
+      </div>
+
       <label>메모 (선택, 발급 이력에만 표시)</label>
-      <input type="text" id="f-note" placeholder="예: 크몽 주문번호 12345" />
+      <input type="text" id="f-note" placeholder="추가로 남길 내용" />
 
       <button onclick="generate()">라이선스 키 생성</button>
       <div id="genResult" class="result"></div>
@@ -309,6 +383,8 @@ const HTML_PAGE = `<!DOCTYPE html>
       days: document.getElementById('f-days').value,
       expires: document.getElementById('f-expires').value,
       email: document.getElementById('f-email').value,
+      channel: document.getElementById('f-channel').value,
+      orderId: document.getElementById('f-orderId').value,
       note: document.getElementById('f-note').value,
     };
     const res = await fetch('/api/generate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -388,7 +464,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       box.innerHTML = '<div class="empty">아직 발급 이력이 없습니다.</div>';
       return;
     }
-    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>메모</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th></tr></thead><tbody>';
     for (const rec of data.list) {
       html += '<tr>' +
         '<td>' + rec.issuedAt + '</td>' +
@@ -397,6 +473,8 @@ const HTML_PAGE = `<!DOCTYPE html>
         '<td>' + (rec.expiresAt || '무제한') + '</td>' +
         '<td>' + (rec.userEmail || '-') + '</td>' +
         '<td>' + rec.licenseId + '</td>' +
+        '<td>' + (rec.channel || '-') + '</td>' +
+        '<td>' + (rec.orderId || '-') + '</td>' +
         '<td>' + (rec.note || '-') + '</td>' +
         '</tr>';
     }
