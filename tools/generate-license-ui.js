@@ -622,7 +622,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       blockedMap = bdata || {};
     } catch {}
 
-    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th><th></th></tr></thead><tbody>';
     for (const rec of data.list) {
       const key = sanitizeFirebaseKeyJs(rec.licenseId);
       const isBlocked = !!(blockedMap[key] && blockedMap[key]['차단']);
@@ -637,8 +637,8 @@ const HTML_PAGE = `<!DOCTYPE html>
         '<td>' + (rec.orderId || '-') + '</td>' +
         '<td>' + (rec.note || '-') + '</td>' +
         '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
-        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button>' +
-        '<button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>' +
+        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
+        '<td style="text-align:right"><button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>' +
         '</tr>';
     }
     html += '</tbody></table>';
