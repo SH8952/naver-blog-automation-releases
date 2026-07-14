@@ -3861,9 +3861,15 @@ async function translateKeywordToEnglish(koreanQuery) {
   const q = (koreanQuery || '').trim();
   if (!q) return null;
   try {
-    const prompt = `Translate the following Korean keyword or short phrase into a simple, common English word or short phrase suitable for a stock photo search (like Unsplash). Respond with ONLY the translated English word or phrase — no explanation, no quotes, no punctuation, no Korean.\n\nKorean: ${q}`;
-    const result = await callAI(prompt, 30);
-    const translated = (result.text || '')
+    // 2026-07-14 수정 — callAI()는 모든 응답을 parseAIText()로 JSON 파싱하는데
+    // (제목/본문 생성 등 다른 모든 호출부가 JSON 응답을 전제로 함), 이 함수만
+    // "단어만 답해줘"로 순수 텍스트를 요청하고 있어서 AI가 정확히 번역해도
+    // 매번 JSON 파싱 실패로 버려지고 있었음(로그: [AI] JSON 파싱 실패, 실제로는
+    // 번역 자체는 성공한 값이었음). callAI 공통 로직은 건드리지 않고, 이
+    // 프롬프트만 다른 호출부와 동일하게 JSON 형식으로 응답받도록 맞춰서 해결.
+    const prompt = `Translate the following Korean keyword or short phrase into a simple, common English word or short phrase suitable for a stock photo search (like Unsplash).\nRespond ONLY in this JSON format: {"translated": "the english word or phrase here"}\nNo explanation, no Korean, no additional text outside the JSON.\n\nKorean: ${q}`;
+    const result = await callAI(prompt, 60);
+    const translated = String(result.translated || '')
       .trim()
       .split('\n')[0]
       .replace(/["'.\u2026]/g, '')
