@@ -524,7 +524,7 @@ const HTML_PAGE = `<!DOCTYPE html>
         ' · 최대 ' + data.payload.maxDevices + '대 · 만료: ' + (data.payload.expiresAt || '무제한') +
         ' · 번호: ' + data.payload.licenseId +
         '<div class="key-value">' + data.key + '</div>' +
-        '<button class="copy-btn" onclick="copyKey(this, \'' + data.key + '\')">키 복사</button>';
+        '<button class="copy-btn" onclick="copyKey(this, \\'' + data.key + '\\')">키 복사</button>';
       loadHistory();
     } else {
       box.classList.add('error');
@@ -586,7 +586,7 @@ const HTML_PAGE = `<!DOCTYPE html>
   const FIREBASE_DB_URL_JS = 'https://naver-blog-automation-4d9d6-default-rtdb.asia-southeast1.firebasedatabase.app';
 
   function sanitizeFirebaseKeyJs(str) {
-    return String(str || '').replace(/[.#$\[\]/]/g, '_');
+    return String(str || '').replace(/[.#$[\\]/]/g, '_');
   }
 
   async function loadHistory() {
@@ -622,7 +622,7 @@ const HTML_PAGE = `<!DOCTYPE html>
         '<td>' + (rec.orderId || '-') + '</td>' +
         '<td>' + (rec.note || '-') + '</td>' +
         '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
-        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\'' + rec.licenseId.replace(/'/g, "\\'") + '\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
+        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
         '</tr>';
     }
     html += '</tbody></table>';
@@ -682,7 +682,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       box.classList.remove('error');
       box.innerHTML = '계정이 생성되었습니다. 아래 UID를 파이어베이스 콘솔 "규칙" 탭의 blocked 쓰기 조건에 붙여넣으세요:' +
         '<div class="key-value">' + data.uid + '</div>' +
-        '<button class="copy-btn" onclick="copyKey(this, \'' + data.uid + '\')">UID 복사</button>';
+        '<button class="copy-btn" onclick="copyKey(this, \\'' + data.uid + '\\')">UID 복사</button>';
       checkAdminStatus();
     } else {
       box.classList.add('error');
