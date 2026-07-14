@@ -95,6 +95,16 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 // (쓰기 전용, 읽기는 콘솔 로그인 상태에서만 규칙과 무관하게 항상 가능).
 const FIREBASE_DB_URL = 'https://naver-blog-automation-4d9d6-default-rtdb.asia-southeast1.firebasedatabase.app';
 
+// 콘솔에서 읽기 쉬운 "YYYY-MM-DD HH:mm:ss" 형태로 변환 (writeLog()의 로컬
+// 시간 포맷과 동일한 방식) — 파이어베이스에는 유닉스 타임스탬프(ms) 대신
+// 이 문자열을 저장해 콘솔에서 바로 읽을 수 있게 한다. 정렬 순서는 파이어베이스
+// push 키 자체가 이미 시간순으로 생성되므로 원본 숫자값 없이도 유지된다.
+function formatKoreanTimestamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ` +
+         `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 // 실패해도 앱 동작에 영향이 없어야 하므로 절대 throw하지 않고 항상
 // { success, error? }를 resolve한다 — 호출부에서 await는 하되 실패를
 // 신경 쓸 필요 없게(오프라인이어도 라이선스 검증/앱 실행 자체는 계속됨).
@@ -140,14 +150,14 @@ async function sendInquiry(message) {
       : '';
     const license = await getLicenseStatus();
     const payload = {
-      timestamp: Date.now(),
-      message: String(message || '').slice(0, 5000),
-      errorLog: errorLogTail.slice(0, 20000),
-      licenseId: license.licenseId || null,
-      userEmail: license.userEmail || null,
-      tier: license.tier || 'standard',
-      appVersion: app.getVersion(),
-      platform: process.platform,
+      '시각': formatKoreanTimestamp(),
+      '문의내용': String(message || '').slice(0, 5000),
+      '오류로그': errorLogTail.slice(0, 20000),
+      '라이선스ID': license.licenseId || null,
+      '이메일': license.userEmail || null,
+      '등급': license.tier || 'standard',
+      '앱버전': app.getVersion(),
+      '플랫폼': process.platform,
     };
     const result = await firebasePush('inquiries', payload);
     if (result.success) writeLog('INFO', 'INQUIRY', '문의 전송 완료');
@@ -210,9 +220,9 @@ async function getLicenseStatus() {
         // 2026-07-14 신규: 활성화 이벤트를 파이어베이스에도 기록(실패해도 무시,
         // await 안 함 — 오프라인이어도 라이선스 검증 자체는 계속 진행돼야 함)
         firebasePush('activations', {
-          timestamp: Date.now(), licenseId: result.licenseId, userEmail: result.userEmail || null,
-          hwid: myHwid, tier: result.tier, appVersion: app.getVersion(), platform: process.platform,
-          event: 'first_activation',
+          '시각': formatKoreanTimestamp(), '라이선스ID': result.licenseId, '이메일': result.userEmail || null,
+          '기기ID': myHwid, '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
+          '이벤트': '최초활성화',
         });
       } else {
         const hwids = Array.isArray(activation.hwids) ? activation.hwids : (activation.hwid ? [activation.hwid] : []);
@@ -221,9 +231,9 @@ async function getLicenseStatus() {
             // 아직 정원이 남아있으면 이 기기를 새 자리로 등록
             store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid] });
             firebasePush('activations', {
-              timestamp: Date.now(), licenseId: activation.licenseId, userEmail: result.userEmail || null,
-              hwid: myHwid, tier: result.tier, appVersion: app.getVersion(), platform: process.platform,
-              event: 'new_device_registered',
+              '시각': formatKoreanTimestamp(), '라이선스ID': activation.licenseId, '이메일': result.userEmail || null,
+              '기기ID': myHwid, '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
+              '이벤트': '신규기기등록',
             });
           } else {
             // 이미 maxDevices만큼 다 등록된 상태에서 등록 안 된 새 기기 — 차단
