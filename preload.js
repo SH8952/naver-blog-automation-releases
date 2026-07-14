@@ -220,5 +220,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openErrorLog:  () => ipcRenderer.invoke('app:openErrorLog'),
     readErrorLog:  () => ipcRenderer.invoke('app:readErrorLog'),
     clearErrorLog: () => ipcRenderer.invoke('app:clearErrorLog'),
+
+    /** 문의하기 — 오류 로그 자동 첨부해 파이어베이스로 전송 (2026-07-14 신규) */
+    sendInquiry: (message) => ipcRenderer.invoke('app:sendInquiry', message),
   },
 });

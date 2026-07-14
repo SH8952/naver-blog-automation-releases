@@ -842,6 +842,58 @@
   color: var(--text-primary);
 }
 
+/* ── 문의하기 모달 (2026-07-14 신규) ──────────────────────────── */
+.inquiry-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  overflow-y: auto;
+}
+.inquiry-textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+.inquiry-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.inquiry-log-preview-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.inquiry-log-preview {
+  max-height: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.inquiry-result {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+}
+.inquiry-result-ok {
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.12);
+}
+.inquiry-result-fail {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+}
+.inquiry-send-btn {
+  align-self: flex-end;
+}
+
 /* 복사 완료 토스트 */
 .log-copy-toast {
   position: absolute;

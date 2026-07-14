@@ -87,6 +87,77 @@ function getStore() {
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+// ── Firebase 원격 로그 (문의하기 + 라이선스 활성화 기록, 2026-07-14 신규) ──
+// Realtime Database REST API에 직접 PUT/POST하는 방식 — firebase npm 패키지를
+// 추가하지 않아 크로스 플랫폼 빌드에 영향 없음(기존 AI 호출과 동일하게
+// Electron net 모듈만 재사용). apiKey는 클라이언트 공개 식별자일 뿐이라
+// 비밀값이 아니며, 실제 접근 제어는 Realtime Database 보안 규칙에서 처리한다
+// (쓰기 전용, 읽기는 콘솔 로그인 상태에서만 규칙과 무관하게 항상 가능).
+const FIREBASE_DB_URL = 'https://naver-blog-automation-4d9d6-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+// 실패해도 앱 동작에 영향이 없어야 하므로 절대 throw하지 않고 항상
+// { success, error? }를 resolve한다 — 호출부에서 await는 하되 실패를
+// 신경 쓸 필요 없게(오프라인이어도 라이선스 검증/앱 실행 자체는 계속됨).
+function firebasePush(path, data) {
+  return new Promise((resolve) => {
+    try {
+      const body = JSON.stringify(data);
+      const req = net.request({ method: 'POST', url: `${FIREBASE_DB_URL}/${path}.json` });
+      req.setHeader('Content-Type', 'application/json');
+      let respBody = '';
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { respBody += chunk.toString(); });
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ success: true });
+          } else {
+            writeLog('WARN', 'FIREBASE', `${path} 전송 실패 HTTP ${res.statusCode}`, respBody.slice(0, 200));
+            resolve({ success: false, error: `HTTP ${res.statusCode}` });
+          }
+        });
+      });
+      req.on('error', (err) => {
+        writeLog('WARN', 'FIREBASE', `${path} 전송 네트워크 오류`, err.message);
+        resolve({ success: false, error: err.message });
+      });
+      req.write(body);
+      req.end();
+    } catch (err) {
+      writeLog('WARN', 'FIREBASE', `${path} 전송 예외`, err.message);
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+// 문의하기 — 사용자가 입력한 문의 내용 + 최근 오류 로그(최대 50줄)를 함께
+// /inquiries에 전송. 오류 로그는 파일 전체가 아니라 최근 항목만 잘라 보내
+// 전송량과 노출 범위를 최소화한다.
+async function sendInquiry(message) {
+  try {
+    const errFile = getErrorOnlyLogFile();
+    const errorLogTail = fs.existsSync(errFile)
+      ? fs.readFileSync(errFile, 'utf8').split('\n').slice(0, 50).join('\n')
+      : '';
+    const license = await getLicenseStatus();
+    const payload = {
+      timestamp: Date.now(),
+      message: String(message || '').slice(0, 5000),
+      errorLog: errorLogTail.slice(0, 20000),
+      licenseId: license.licenseId || null,
+      userEmail: license.userEmail || null,
+      tier: license.tier || 'standard',
+      appVersion: app.getVersion(),
+      platform: process.platform,
+    };
+    const result = await firebasePush('inquiries', payload);
+    if (result.success) writeLog('INFO', 'INQUIRY', '문의 전송 완료');
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'INQUIRY', '문의 전송 처리 중 오류', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // ── 라이선스 (오프라인 서명 키, 2026-07-04 신규 / 2026-07-13 HWID+시간방어 추가) ─
 // license/licenseCore.js: 공개키 내장 검증 모듈 (개인키는 포함되어 있지 않음,
 // 발급은 tools/generate-license.js로 개발자가 직접 수행)
@@ -136,12 +207,24 @@ async function getLicenseStatus() {
       if (!activation || activation.licenseId !== result.licenseId) {
         // 이 licenseId를 이 기기에서 처음 보는 경우 — 첫 번째 자리로 자동 등록
         store.set('settings._licenseActivation', { licenseId: result.licenseId, hwids: [myHwid] });
+        // 2026-07-14 신규: 활성화 이벤트를 파이어베이스에도 기록(실패해도 무시,
+        // await 안 함 — 오프라인이어도 라이선스 검증 자체는 계속 진행돼야 함)
+        firebasePush('activations', {
+          timestamp: Date.now(), licenseId: result.licenseId, userEmail: result.userEmail || null,
+          hwid: myHwid, tier: result.tier, appVersion: app.getVersion(), platform: process.platform,
+          event: 'first_activation',
+        });
       } else {
         const hwids = Array.isArray(activation.hwids) ? activation.hwids : (activation.hwid ? [activation.hwid] : []);
         if (!hwids.includes(myHwid)) {
           if (hwids.length < maxDevices) {
             // 아직 정원이 남아있으면 이 기기를 새 자리로 등록
             store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid] });
+            firebasePush('activations', {
+              timestamp: Date.now(), licenseId: activation.licenseId, userEmail: result.userEmail || null,
+              hwid: myHwid, tier: result.tier, appVersion: app.getVersion(), platform: process.platform,
+              event: 'new_device_registered',
+            });
           } else {
             // 이미 maxDevices만큼 다 등록된 상태에서 등록 안 된 새 기기 — 차단
             hwidMismatch = true;
@@ -1241,6 +1324,9 @@ ipcMain.handle('app:readErrorLog', () => {
     return { success: false, error: err.message };
   }
 });
+
+// ── IPC: 문의하기 (2026-07-14 신규) ───────────────────────────
+ipcMain.handle('app:sendInquiry', (event, message) => sendInquiry(message));
 
 // ── IPC: 공통 ────────────────────────────────────────────────
 ipcMain.handle('get-app-version', () => app.getVersion());

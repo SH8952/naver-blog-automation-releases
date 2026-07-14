@@ -458,6 +458,13 @@ export default function Settings() {
   const [errorLogVisible, setErrorLogVisible]   = useState(false);
   const [errorLogClearing, setErrorLogClearing] = useState(false);
   const [errorLogCopyToast, setErrorLogCopyToast] = useState(false);
+
+  // 문의하기 (오류 로그 자동 첨부, 2026-07-14 신규)
+  const [inquiryVisible, setInquiryVisible]         = useState(false);
+  const [inquiryMessage, setInquiryMessage]         = useState('');
+  const [inquirySending, setInquirySending]         = useState(false);
+  const [inquiryResult, setInquiryResult]           = useState(null); // { success, error? } | null
+  const [inquiryLogPreview, setInquiryLogPreview]   = useState('');
   // 2026-07-13 신규: 배포 버전은 사이드바 개발자 전용 초기화 버튼이 숨겨져
   // 있어 데이터를 초기화할 방법이 없다는 요청으로, 시스템 탭에 전체 초기화를
   // 노출. 로그 초기화(handleClearLog)와는 별개 — 계정 제외 전체 데이터(발행
@@ -731,6 +738,23 @@ export default function Settings() {
     setErrorLogClearing(false);
   };
   const handleOpenErrorLog = () => window.electronAPI.app.openErrorLog();
+
+  // 문의하기 핸들러 (2026-07-14 신규) — 열 때마다 최신 오류 로그를 미리보기로
+  // 다시 불러와, 전송 시점 기준 최신 내용이 첨부됨을 사용자가 확인할 수 있게 함.
+  const handleOpenInquiry = async () => {
+    setInquiryResult(null);
+    setInquiryMessage('');
+    const res = await window.electronAPI.app.readErrorLog();
+    setInquiryLogPreview(res.success ? (res.content || '(오류 없음)') : '');
+    setInquiryVisible(true);
+  };
+  const handleSendInquiry = async () => {
+    setInquirySending(true);
+    const res = await window.electronAPI.app.sendInquiry(inquiryMessage);
+    setInquirySending(false);
+    setInquiryResult(res);
+    if (res.success) setInquiryMessage('');
+  };
 
   // 자동화 루프 전용 로그 핸들러 (2026-07-05 신규)
   const handleShowLoopLog = async () => {
@@ -1655,6 +1679,8 @@ export default function Settings() {
           <button className="btn btn-ghost btn-sm log-clear-btn" onClick={handleFullReset} disabled={fullResetting} title="계정을 제외한 발행 이력·예약 등 전체 데이터를 초기화합니다">
             {fullResetting ? '초기화 중…' : '🗑 전체 초기화'}
           </button>
+          {/* 문의하기 — 오류 로그 자동 첨부 (2026-07-14 신규) */}
+          <button className="btn btn-ghost btn-sm" onClick={handleOpenInquiry}>📮 문의하기</button>
         </div>
         {logPath && <div className="log-path-hint">{logPath}</div>}
       </div>}
@@ -1751,6 +1777,43 @@ export default function Settings() {
               }}
             >{errorLogContent || '(오류 없음)'}</pre>
             {errorLogCopyToast && <div className="log-copy-toast">✓ 복사됨</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ── 문의하기 팝업 모달 (2026-07-14 신규) ──────────────────── */}
+      {inquiryVisible && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setInquiryVisible(false); }}>
+          <div className="log-modal">
+            <div className="log-modal-header">
+              <span className="log-modal-title">문의하기</span>
+              <div className="log-modal-actions">
+                <button className="btn btn-ghost btn-xs" onClick={() => setInquiryVisible(false)}>✕ 닫기</button>
+              </div>
+            </div>
+            <div className="inquiry-body">
+              <textarea
+                className="inquiry-textarea"
+                placeholder="문의 내용을 입력해 주세요. 최근 오류 로그가 자동으로 함께 전송됩니다."
+                value={inquiryMessage}
+                onChange={e => setInquiryMessage(e.target.value)}
+                rows={5}
+              />
+              <div className="inquiry-log-preview-label">첨부될 오류 로그 미리보기</div>
+              <pre className="log-modal-content inquiry-log-preview">{inquiryLogPreview || '(오류 없음)'}</pre>
+              {inquiryResult && (
+                inquiryResult.success
+                  ? <div className="inquiry-result inquiry-result-ok">✓ 문의가 전송되었습니다.</div>
+                  : <div className="inquiry-result inquiry-result-fail">전송 실패: {inquiryResult.error || '알 수 없는 오류'}</div>
+              )}
+              <button
+                className="btn btn-primary btn-sm inquiry-send-btn"
+                onClick={handleSendInquiry}
+                disabled={inquirySending || !inquiryMessage.trim()}
+              >
+                {inquirySending ? '전송 중…' : '전송'}
+              </button>
+            </div>
           </div>
         </div>
       )}
