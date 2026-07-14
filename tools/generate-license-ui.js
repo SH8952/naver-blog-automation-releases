@@ -216,6 +216,19 @@ function clearLedger() {
   fs.writeFileSync(LEDGER_PATH, JSON.stringify([], null, 2), 'utf8');
 }
 
+// 2026-07-14 신규 — 로컬 발급 이력에서 항목 1개만 삭제. 파이어베이스 /licenses
+// 기록과 서명된 라이선스 키 자체(구매자가 이미 받은 키)는 건드리지 않음 —
+// 키를 실제로 무효화하려면 "차단" 버튼을 별도로 눌러야 함(사용자 확정 사항,
+// 2026-07-14). licenseId가 우연히 중복돼 있으면(자유 텍스트 입력이라 가능)
+// 전부 지움 — 로컬 이력 정리용이라 문제 없음.
+function deleteLedgerEntry(licenseId) {
+  const list = readLedger();
+  const filtered = list.filter(rec => rec.licenseId !== licenseId);
+  fs.mkdirSync(path.dirname(LEDGER_PATH), { recursive: true });
+  fs.writeFileSync(LEDGER_PATH, JSON.stringify(filtered, null, 2), 'utf8');
+  return { removed: list.length - filtered.length };
+}
+
 function sendJson(res, statusCode, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(statusCode, {
@@ -364,6 +377,8 @@ const HTML_PAGE = `<!DOCTYPE html>
   .result .key-value { color: var(--success); font-family: monospace; margin-top: 6px; }
   .result.error .key-value { color: var(--danger); }
   .copy-btn { margin-top: 8px; width: auto; padding: 6px 12px; font-size: 11px; }
+  .delete-btn { background: transparent; border: 1px solid var(--border); color: var(--text-muted); margin-left: 4px; }
+  .delete-btn:hover { border-color: var(--danger); color: var(--danger); background: transparent; opacity: 1; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
   th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--border); }
   th { color: var(--text-muted); font-weight: 500; }
@@ -622,7 +637,8 @@ const HTML_PAGE = `<!DOCTYPE html>
         '<td>' + (rec.orderId || '-') + '</td>' +
         '<td>' + (rec.note || '-') + '</td>' +
         '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
-        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
+        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button>' +
+        '<button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>' +
         '</tr>';
     }
     html += '</tbody></table>';
@@ -646,6 +662,24 @@ const HTML_PAGE = `<!DOCTYPE html>
       loadHistory();
     } else {
       alert(data.error || '처리에 실패했습니다. 관리자 계정이 설정되어 있는지, 파이어베이스 보안 규칙에 blocked 쓰기 권한이 반영됐는지 확인하세요.');
+    }
+  }
+
+  // 2026-07-14 신규 — 로컬 발급 이력 한 줄만 삭제(전체 초기화 resetLedger()와
+  // 달리 개별 항목용). 파이어베이스 기록/키 자체는 그대로 남는다는 점을
+  // confirm() 문구에 명시해 사용자가 "차단"과 혼동하지 않게 함.
+  async function deleteHistoryEntry(licenseId) {
+    const ok = confirm(licenseId + ' 항목을 로컬 발급 이력에서 삭제할까요?\\n(파이어베이스에 이미 전송된 기록과 라이선스 키 자체는 그대로 유지됩니다 — 키를 무효화하려면 "차단" 버튼을 사용하세요.)');
+    if (!ok) return;
+    const res = await fetch('/api/history/delete', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ licenseId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      loadHistory();
+    } else {
+      alert(data.error || '삭제에 실패했습니다.');
     }
   }
 
@@ -714,6 +748,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/history/clear') {
       clearLedger();
       return sendJson(res, 200, { success: true });
+    }
+    if (req.method === 'POST' && req.url === '/api/history/delete') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.licenseId) return sendJson(res, 400, { success: false, error: '라이선스ID가 필요합니다.' });
+      const result = deleteLedgerEntry(body.licenseId);
+      return sendJson(res, 200, { success: true, removed: result.removed });
     }
     if (req.method === 'POST' && req.url === '/api/generate') {
       const raw = await readBody(req);
