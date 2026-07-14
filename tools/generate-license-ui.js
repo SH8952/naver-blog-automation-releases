@@ -173,6 +173,7 @@ function handleGenerate(body) {
   firebasePush('licenses', {
     '시각': formatKoreanTimestamp(),
     '라이선스ID': licenseId,
+    '라이선스키': key,
     '등급': tier,
     '기기수': maxDevices,
     '발급일': issuedAt,

@@ -108,11 +108,14 @@ function formatKoreanTimestamp(date = new Date()) {
 // 실패해도 앱 동작에 영향이 없어야 하므로 절대 throw하지 않고 항상
 // { success, error? }를 resolve한다 — 호출부에서 await는 하되 실패를
 // 신경 쓸 필요 없게(오프라인이어도 라이선스 검증/앱 실행 자체는 계속됨).
-function firebasePush(path, data) {
+// method: 'POST'(push, 자동 생성 키로 계속 추가) 또는 'PUT'(지정한 경로에
+// 그대로 저장/덮어쓰기 — 2026-07-14 신규, activations를 라이선스ID/기기ID로
+// 묶어서 보여주기 위해 추가).
+function firebasePush(path, data, method = 'POST') {
   return new Promise((resolve) => {
     try {
       const body = JSON.stringify(data);
-      const req = net.request({ method: 'POST', url: `${FIREBASE_DB_URL}/${path}.json` });
+      const req = net.request({ method, url: `${FIREBASE_DB_URL}/${path}.json` });
       req.setHeader('Content-Type', 'application/json');
       let respBody = '';
       req.on('response', (res) => {
@@ -137,6 +140,12 @@ function firebasePush(path, data) {
       resolve({ success: false, error: err.message });
     }
   });
+}
+
+// Realtime Database 키에 못 쓰는 문자(. # $ [ ] /)를 방어적으로 치환 —
+// licenseId는 발급 도구에서 사용자가 자유 텍스트로 입력할 수도 있어 필요.
+function sanitizeFirebaseKey(str) {
+  return String(str || '').replace(/[.#$\[\]/]/g, '_');
 }
 
 // 문의하기 — 사용자가 입력한 문의 내용 + 최근 오류 로그(최대 50줄)를 함께
@@ -219,22 +228,30 @@ async function getLicenseStatus() {
         store.set('settings._licenseActivation', { licenseId: result.licenseId, hwids: [myHwid] });
         // 2026-07-14 신규: 활성화 이벤트를 파이어베이스에도 기록(실패해도 무시,
         // await 안 함 — 오프라인이어도 라이선스 검증 자체는 계속 진행돼야 함)
-        firebasePush('activations', {
-          '시각': formatKoreanTimestamp(), '라이선스ID': result.licenseId, '이메일': result.userEmail || null,
-          '기기ID': myHwid, '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
-          '이벤트': '최초활성화',
-        });
+        firebasePush(
+          `activations/${sanitizeFirebaseKey(result.licenseId)}/${sanitizeFirebaseKey(myHwid)}`,
+          {
+            '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
+            '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
+            '이벤트': '최초활성화',
+          },
+          'PUT'
+        );
       } else {
         const hwids = Array.isArray(activation.hwids) ? activation.hwids : (activation.hwid ? [activation.hwid] : []);
         if (!hwids.includes(myHwid)) {
           if (hwids.length < maxDevices) {
             // 아직 정원이 남아있으면 이 기기를 새 자리로 등록
             store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid] });
-            firebasePush('activations', {
-              '시각': formatKoreanTimestamp(), '라이선스ID': activation.licenseId, '이메일': result.userEmail || null,
-              '기기ID': myHwid, '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
-              '이벤트': '신규기기등록',
-            });
+            firebasePush(
+              `activations/${sanitizeFirebaseKey(activation.licenseId)}/${sanitizeFirebaseKey(myHwid)}`,
+              {
+                '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
+                '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
+                '이벤트': '신규기기등록',
+              },
+              'PUT'
+            );
           } else {
             // 이미 maxDevices만큼 다 등록된 상태에서 등록 안 된 새 기기 — 차단
             hwidMismatch = true;
