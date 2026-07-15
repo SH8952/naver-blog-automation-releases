@@ -11,7 +11,8 @@
     "build": "npm run react-build && electron-builder",
     "build:mac": "npm run react-build && electron-builder --mac --publish never",
     "build:win": "npm run react-build && electron-builder --win --publish never",
-    "electron": "electron ."
+    "electron": "electron .",
+    "obfuscate": "node scripts/obfuscate.js"
   },
   "keywords": [],
   "author": "",
@@ -30,7 +31,8 @@
     "concurrently": "^8.2.2",
     "electron": "^33.4.11",
     "electron-builder": "^24.9.1",
-    "wait-on": "^7.2.0"
+    "wait-on": "^7.2.0",
+    "javascript-obfuscator": "^4.1.1"
   },
   "build": {
     "extends": null,
@@ -40,14 +42,26 @@
       "category": "public.app-category.productivity",
       "icon": "public/icon.icns",
       "target": [
-        { "target": "dmg", "arch": ["universal"] },
-        { "target": "zip", "arch": ["universal"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
       ],
       "artifactName": "${name}-${version}-${arch}.${ext}"
     },
     "win": {
       "icon": "public/icon.ico",
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "artifactName": "${name}-Setup-${version}.${ext}"
     },
     "nsis": {
@@ -55,17 +69,21 @@
     },
     "files": [
       "build/**/*",
-      "main.js",
-      "preload.js",
-      "src/db.js",
-      "license/**/*",
+      {
+        "from": "build-obfuscated",
+        "to": ".",
+        "filter": [
+          "**/*"
+        ]
+      },
       "node_modules/**/*"
     ],
     "publish": {
       "provider": "github",
       "owner": "SH8952",
       "repo": "naver-blog-automation-releases"
-    }
+    },
+    "beforePack": "scripts/beforePack.js"
   },
   "browserslist": {
     "production": [

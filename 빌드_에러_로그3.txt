@@ -1,0 +1,66 @@
+
+> naver-blog-app@1.1.6 build:mac
+> npm run react-build && electron-builder --mac --publish never
+
+
+> naver-blog-app@1.1.6 react-build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  94.15 kB  build/static/js/main.d5a39afb.js
+  12.5 kB   build/static/css/main.f1b2269a.css
+
+The project was built assuming it is hosted at ./.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+  • electron-builder  version=24.13.3 os=25.5.0
+  • loaded configuration  file=package.json ("build" field)
+  • @electron/rebuild not required if you use electron-builder, please consider to remove excess dependency from devDependencies
+
+To ensure your native dependencies are always matched electron version, simply add script `"postinstall": "electron-builder install-app-deps" to your `package.json`
+[beforePack] 난독화 빌드 단계 시작 (darwin)
+[obfuscate] 시작 — 대상 파일: 5개
+[obfuscate] main.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] preload.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] src/db.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] license/licenseCore.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] license/timeGuard.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] 완료 -> build-obfuscated
+[obfuscate] 소스맵(비공개, 배포 미포함) -> build-obfuscated-maps
+[beforePack] 난독화 빌드 단계 완료
+  • rebuilding native dependencies  dependencies=better-sqlite3@12.11.1 platform=darwin arch=x64
+  • install prebuilt binary  name=better-sqlite3 version=12.11.1 platform=darwin arch=x64 napi=
+  • packaging       platform=darwin arch=x64 electron=33.4.11 appOutDir=dist/mac-universal-x64-temp
+[beforePack] 난독화 빌드 단계 시작 (darwin)
+[obfuscate] 시작 — 대상 파일: 5개
+[obfuscate] main.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] preload.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] src/db.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] license/licenseCore.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] license/timeGuard.js: 이미 최신 상태 — 재사용(재생성 건너뜀)
+[obfuscate] 완료 -> build-obfuscated
+[obfuscate] 소스맵(비공개, 배포 미포함) -> build-obfuscated-maps
+[beforePack] 난독화 빌드 단계 완료
+  • rebuilding native dependencies  dependencies=better-sqlite3@12.11.1 platform=darwin arch=arm64
+  • install prebuilt binary  name=better-sqlite3 version=12.11.1 platform=darwin arch=arm64 napi=
+  • packaging       platform=darwin arch=arm64 electron=33.4.11 appOutDir=dist/mac-universal-arm64-temp
+  • packaging       platform=darwin arch=universal electron=33.4.11 appOutDir=dist/mac-universal
+  • skipped macOS application code signing  reason=cannot find valid "Developer ID Application" identity or custom non-Apple code signing certificate, it could cause some undefined behaviour, e.g. macOS localized description not visible, see https://electron.build/code-signing allIdentities=     0 identities found
+                                                Valid identities only
+     0 valid identities found
+  • building        target=DMG arch=universal file=dist/naver-blog-app-1.1.6-universal.dmg
+  • building        target=macOS zip arch=universal file=dist/naver-blog-app-1.1.6-universal.zip
+  • using zip       reason=7z doesn't support NFD-normalized filenames
+  • Detected arm64 process, HFS+ is unavailable. Creating dmg with APFS - supports Mac OSX 10.12+
+  • building block map  blockMapFile=dist/naver-blog-app-1.1.6-universal.dmg.blockmap
+  • building block map  blockMapFile=dist/naver-blog-app-1.1.6-universal.zip.blockmap

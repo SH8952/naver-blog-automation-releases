@@ -25,3 +25,20 @@ Gemini_Generated_Image_*.png
 *.log
 .vscode/
 .idea/
+
+
+# 난독화 빌드 산출물 — 원본 아님, 매 빌드 시 자동 재생성 (2026-07-15)
+# build-obfuscated: 배포용 난독화 결과물 스테이징(패키징 직전 beforePack이 생성)
+# build-obfuscated-maps: 비공개 소스맵(원인 추적용, 절대 배포/커밋 금지)
+build-obfuscated/
+build-obfuscated-maps/
+
+# 난독화 캐시 키(해시) 저장 폴더 — 배포 미포함, 재생성 여부 판단용 (2026-07-15 4차 수정)
+.obfuscate-cache/
+
+# 빌드 산출물 폴더 — electron-builder 결과물(dmg/zip/.app 등, 수백MB급).
+# 2026-07-15: dist/ 가 gitignore에 없어서 git add -A 커밋에 통째로
+# 딸려 들어가 GitHub 100MB 파일 크기 제한으로 push 거부되는 사고 발생.
+# 매 빌드 시 자동 재생성되는 폴더이므로 항상 제외해야 함 — 절대 다시
+# 빼지 말 것(HARD RULE).
+dist/
