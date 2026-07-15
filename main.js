@@ -4409,6 +4409,37 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     await new Promise(r => setTimeout(r, 1000));
   }
 
+  // ── 전체 글감 패널 접기 (2026-07-15 추가) ──────────────────
+  // 네이버가 에디터 하단에 '전체 글감' 검색 툴바(se-flayer-unified-toolbar)를
+  // 추가한 뒤로, 이 패널이 펼쳐진 상태로 남아있으면 이후 태그 입력 단계의
+  // 폴백 매칭을 오염시키는 문제가 발견됨(사용자 실사용 테스트, 2026-07-15).
+  // 도움말 닫기 직후, 다른 DOM 조작을 하기 전에 우측 끝 '접기' 버튼
+  // (aria-label="접기", data-log="matuni.fold")을 눌러 항상 접어둔 상태로
+  // 진행한다.
+  const foldMaterialPanel = await retryUntilFound(
+    () => publishWin.webContents.executeJavaScript(`
+      (function() {
+        var btn = document.querySelector('button[data-log="matuni.fold"]')
+          || document.querySelector('button.se-flayer-unified-fold-button[aria-label="접기"]')
+          || Array.from(document.querySelectorAll('button[aria-label="접기"]')).find(function(b){ return b.offsetParent !== null; });
+        if (!btn) return null;
+        var r = btn.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return null;
+        return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+      })()
+    `).catch(() => null),
+    (v) => !!v,
+    4, 400
+  );
+  if (foldMaterialPanel) {
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: foldMaterialPanel.x, y: foldMaterialPanel.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: foldMaterialPanel.x, y: foldMaterialPanel.y, button: 'left', clickCount: 1 });
+    writeLog('INFO', 'PUBLISH', '전체 글감 패널 접기', `x=${foldMaterialPanel.x} y=${foldMaterialPanel.y}`);
+    await new Promise(r => setTimeout(r, 500));
+  } else {
+    writeLog('WARN', 'PUBLISH', '전체 글감 접기 버튼 못 찾음 — 건너뜀 (없는 계정/버전일 수 있음)');
+  }
+
   // ── DOM 전체 스냅샷 (디버그) ────────────────────────────────
   const snap = await publishWin.webContents.executeJavaScript(`
     (function() {
@@ -4880,24 +4911,30 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       (function() {
         var inputs = Array.from(document.querySelectorAll('input, textarea'));
         var tagKw = ['태그', 'tag', 'Tag', '해시태그', 'hashtag'];
-        // 1순위: placeholder에 태그 관련 단어 포함
+        var excludeKw = ['글감', '검색', 'search'];
+        function isExcludedInput(inp) {
+          var ph = (inp.placeholder||'').toLowerCase();
+          var cls = (inp.className||'').toLowerCase();
+          return excludeKw.some(function(k){ return ph.includes(k.toLowerCase()) || cls.includes(k.toLowerCase()); });
+        }
+        // 1순위: placeholder에 태그 관련 단어 포함 (글감/검색 계열 제외)
         var found = inputs.find(function(inp) {
+          if (isExcludedInput(inp)) return false;
           return tagKw.some(function(k) { return (inp.placeholder||'').toLowerCase().includes(k.toLowerCase()); });
         });
-        // 2순위: 클래스명에 'tag' 포함
+        // 2순위: 클래스명에 'tag' 포함 (글감/검색 계열 제외)
         if (!found) {
           found = inputs.find(function(inp) {
+            if (isExcludedInput(inp)) return false;
             return (inp.className||'').toLowerCase().includes('tag');
           });
         }
-        // 3순위: 가장 아래쪽에 있는 input (편집창 제외 — y > 600)
-        if (!found) {
-          var bottom = inputs.filter(function(inp) {
-            var r = inp.getBoundingClientRect();
-            return r.height > 0 && r.top > 600;
-          });
-          if (bottom.length) found = bottom[bottom.length - 1];
-        }
+        // 2026-07-15: 3순위(가장 아래쪽 input 무조건 선택) 폴백 제거 —
+        // 네이버가 에디터 하단에 '전체 글감' 검색창을 추가한 뒤로 이 폴백이
+        // 그 검색창을 태그 입력창으로 오인해 해시태그를 붙여넣고 엔터를 치는
+        // 오작동이 실사용 중 발견됨. 확실한 매칭(1·2순위)이 없으면 이 단계는
+        // 건너뛰고, 태그는 발행 패널 안의 재시도 로직(하단 '④ 발행 패널
+        // 태그 입력')에서 처리한다.
         if (!found) {
           return { found: false, list: inputs.map(function(e,i){ return i+':'+e.placeholder+':y='+Math.round(e.getBoundingClientRect().top); }).join(' | ') };
         }
