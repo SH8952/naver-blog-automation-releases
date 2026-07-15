@@ -1253,26 +1253,7 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:3000');
-    // 2026-07-16: 개발자 도구 자동 오픈을 끔(기본값 꺼짐) — 필요할 때만
-    // Ctrl+Alt+I로 직접 켜고 끌 수 있도록 아래 단축키로 대체.
-    // mainWindow.webContents.openDevTools({ mode: 'detach' });
-
-    // 2026-07-16 추가: Ctrl+Alt+I로 개발자 도구 켜기/끄기 토글.
-    // 개발자 전용 기능이라 isDev 안에서만 등록 — 배포판(일반 사용자용
-    // 패키징 빌드)에는 이 단축키 자체가 아예 존재하지 않는다.
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-      if (
-        input.type === 'keyDown' &&
-        input.control &&
-        input.alt &&
-        !input.shift &&
-        !input.meta &&
-        input.key.toLowerCase() === 'i'
-      ) {
-        mainWindow.webContents.toggleDevTools();
-        event.preventDefault();
-      }
-    });
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, 'build', 'index.html'));
   }
@@ -4429,9 +4410,6 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   }
 
   // ── 전체 글감 패널 접기 (2026-07-15 추가) ──────────────────
-  // [진단 마커 2026-07-15] 이 블록 진입 자체를 확실히 찍기 위한 로그.
-  // 원인 확인 후 제거 예정.
-  writeLog('INFO', 'PUBLISH', '[진단] 접기 단계 진입');
   // 네이버가 에디터 하단에 '전체 글감' 검색 툴바(se-flayer-unified-toolbar)를
   // 추가한 뒤로, 이 패널이 펼쳐진 상태로 남아있으면 이후 태그 입력 단계의
   // 폴백 매칭을 오염시키는 문제가 발견됨(사용자 실사용 테스트, 2026-07-15).
@@ -4453,8 +4431,6 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     (v) => !!v,
     4, 400
   );
-  // [진단 마커 2026-07-15] retryUntilFound를 빠져나온 직후 — 결과값 자체를 그대로 찍음.
-  writeLog('INFO', 'PUBLISH', '[진단] 접기 결과 수신', JSON.stringify(foldMaterialPanel));
   if (foldMaterialPanel) {
     publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: foldMaterialPanel.x, y: foldMaterialPanel.y, button: 'left', clickCount: 1 });
     publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: foldMaterialPanel.x, y: foldMaterialPanel.y, button: 'left', clickCount: 1 });
@@ -4917,18 +4893,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     }
   }
 
-  // ── ③ 태그 입력 (2026-07-15 비활성화) ───────────────────────
-  // 발행 버튼을 누르기 전 화면에는 실제 해시태그 입력창이 존재하지
-  // 않음(진짜 입력창은 발행 버튼 클릭 후 열리는 패널 안에만 있음).
-  // 이 블록은 항상 페이지 안의 "그나마 비슷해 보이는" 다른 요소를
-  // 잘못 붙잡아 왔음 — 처음엔 '전체 글감' 검색창(2026-07-15 오전),
-  // 매칭 조건을 보강한 뒤에는 본문 내 다른 요소(추정: SmartEditor
-  // 인라인 해시태그 자동완성)로 오작동 대상만 바뀜(2026-07-15 저녁,
-  // 수동으로 '전체 글감' 패널을 접은 상태에서 재현). 근본 원인은
-  // 이 블록 자체가 존재할 이유가 없다는 것 — 태그는 발행 버튼을
-  // 누른 뒤 열리는 패널 안의 '④ 발행 패널 태그 입력' 로직이 이미
-  // 정상적으로 처리하고 있어 이 블록 없이도 기능 손실이 없음.
-  if (false && tagList.length > 0) {
+  // ── ③ 태그 입력 ─────────────────────────────────────────────
+  if (tagList.length > 0) {
     await new Promise(r => setTimeout(r, 600));
 
     // 페이지 하단으로 스크롤 → 태그 input 노출

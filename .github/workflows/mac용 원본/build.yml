@@ -3,18 +3,8 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'          # v1.0.0 처럼 태그 push 시 자동 빌드 (Mac/Windows 항상 함께)
-  workflow_dispatch:  # GitHub Actions 탭에서 수동 실행 — 플랫폼 선택 가능
-    inputs:
-      platform:
-        description: '빌드할 플랫폼 선택 (태그 push로 실행할 땐 이 값과 무관하게 항상 all으로 동작합니다)'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - mac
-          - win
+      - 'v*'          # v1.0.0 처럼 태그 push 시 자동 빌드
+  workflow_dispatch:  # GitHub Actions 탭에서 수동 실행도 가능
 
 permissions:
   contents: write   # release 잡이 GitHub Release를 생성/첨부하려면 필요
@@ -23,13 +13,6 @@ jobs:
   # ── macOS 빌드 (.dmg) ──────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
-    # 2026-07-16 변경: Mac은 Electron 크래시 이슈로 배포 보류 결정
-    # (2026-07-15) — 태그 push(자동 배포) 경로에서는 Mac 빌드를 아예
-    # 실행하지 않는다. Mac을 다시 진행하고 싶을 때는 GitHub Actions
-    # 탭에서 workflow_dispatch로 이 태그를 선택하고 platform을
-    # 'mac' 또는 'all'로 지정해 수동 실행하면 된다.
-    # (이전 조건은 태그 push 시 항상 실행이었음 — 아래로 교체)
-    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'mac')
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
@@ -65,9 +48,6 @@ jobs:
   # ── Windows 빌드 (.exe) ────────────────────────────────────────
   build-win:
     runs-on: windows-2022   # VS 2022 (v17) 고정 — windows-latest는 VS 2025(v18)로 node-gyp 미지원
-    # 태그 push일 땐 항상 실행(기존 동작 유지).
-    # workflow_dispatch로 수동 실행할 때만 platform 선택값을 확인한다.
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform == 'all' || github.event.inputs.platform == 'win'
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
@@ -102,24 +82,15 @@ jobs:
   release:
     needs: [build-mac, build-win]
     runs-on: ubuntu-latest
-    # needs로 지정한 잡 중 하나가 platform 선택으로 건너뛰어진(skipped) 경우에도
-    # 이 잡 자체는 계속 진행되도록 always()를 추가 (2026-07-16 Windows 포팅 시 추가).
-    # 원래는 build-mac/build-win이 항상 둘 다 성공(success)해야만 다음으로
-    # 넘어갔지만, 플랫폼을 선택해 한쪽이 skipped되면 그 상태로도 릴리즈는
-    # 계속 진행되어야 하므로 always()로 바꾸고, 태그 push 여부만 별도로 검사한다.
-    if: always() && startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: mac 빌드 다운로드
-        # build-mac이 platform 선택으로 건너뛰어졌다면 이 스텝은 건너뛴다
-        # (아티팩트 자체가 없어 다운로드 시도 시 실패하므로).
-        if: needs.build-mac.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: mac-build
           path: artifacts/mac
 
       - name: win 빌드 다운로드
-        if: needs.build-win.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: win-build
@@ -128,9 +99,6 @@ jobs:
       - name: GitHub Release 생성 및 파일 첨부
         uses: softprops/action-gh-release@v2
         with:
-          # 존재하지 않는 플랫폼 폴더의 glob은 자동으로 무시됨(매칭되는
-          # 파일이 없으면 그냥 건너뜀) — mac/win 중 하나만 빌드된 경우에도
-          # 문제없이 있는 파일만 첨부된다.
           files: |
             artifacts/mac/*.dmg
             artifacts/mac/*.zip
