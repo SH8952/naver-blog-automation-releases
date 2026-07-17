@@ -143,6 +143,21 @@ function getDB() {
     ).run();
   } catch (_) {}
 
+  // 마이그레이션: accounts.sort_order (2026-07-17 신규)
+  // 계정 관리 화면에서 사용자가 드래그로 순서를 직접 바꿀 수 있는 기능을
+  // 위한 컬럼. 값이 클수록 목록 위쪽에 표시됨(ORDER BY sort_order DESC).
+  // 기존에 이미 등록된 계정이 있는 상태에서 이 컬럼이 처음 생기면, 전부
+  // 기본값 0으로 채워져 순서가 뒤섞일 수 있으므로, 이번 최초 1회만
+  // 기존 계정들에 한해 지금까지의 표시 순서(최신 계정이 위 = id가 클수록
+  // 위)를 그대로 유지하도록 sort_order = id로 백필한다. 배포 버전처럼
+  // 계정이 아예 없는 상태에서는 이 UPDATE가 그냥 0건 처리되어 아무 영향
+  // 없음 — 이후 새로 추가되는 계정은 계정 추가 로직에서 직접 다음 순서
+  // 값을 매긴다(아래 account:add 쪽 참고).
+  try {
+    db.prepare("ALTER TABLE accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0").run();
+    db.prepare("UPDATE accounts SET sort_order = id WHERE sort_order = 0").run();
+  } catch (_) {}
+
   return db;
 }
 

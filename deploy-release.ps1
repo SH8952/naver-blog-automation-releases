@@ -11,6 +11,17 @@
 #   빌드됩니다(원본과 동일한 동작).
 
 $ErrorActionPreference = "Stop"
+# 2026-07-17 수정: PowerShell 7.3+ 는 기본적으로 외부 명령(git 등)이 stderr에
+# 뭔가 출력하면(종료 코드와 무관하게) 그걸 $ErrorActionPreference="Stop"과
+# 결합해 스크립트를 강제 종료하는 에러로 취급한다. 그런데 "git rev-parse
+# <아직 없는 태그>"처럼, 이 스크립트가 "실패해도 정상"으로 간주하고
+# $LASTEXITCODE만 직접 확인하려던 지점들(예: 최초 배포 시 태그가 아직
+# 없는 경우)까지 전부 여기 걸려 스크립트가 중간에 멈추는 문제가 실사용
+# 중 확인됨. 이 설정을 꺼서, 외부 명령 실행 결과는 원래 의도대로
+# $LASTEXITCODE로만 직접 판단하게 한다.
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue) {
+    $global:PSNativeCommandUseErrorActionPreference = $false
+}
 Set-Location -Path $PSScriptRoot
 
 function Pause-Exit {
