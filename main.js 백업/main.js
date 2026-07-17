@@ -1389,12 +1389,9 @@ ipcMain.handle('app:readLog', () => {
   try {
     const file = getLogFile();
     if (!fs.existsSync(file)) return { success: true, content: '' };
-    // 최신이 상단 — 앞에서 1000줄 반환 (2026-07-17: 200 -> 1000으로 확대,
-    // 계정 2개 이상을 완전자동으로 연달아 돌리면 한 사이클만으로도 200줄을
-    // 훌쩍 넘겨 최근 것만 보이고 그 앞 계정 기록이 잘리는 문제가 있었음 —
-    // 여러 계정 발행 결과를 서로 비교하려는 실사용 요청으로 확대함)
+    // 최신이 상단 — 앞에서 200줄만 반환
     const lines = fs.readFileSync(file, 'utf8').split('\n');
-    return { success: true, content: lines.slice(0, 1000).join('\n'), path: file };
+    return { success: true, content: lines.slice(0, 200).join('\n'), path: file };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1422,7 +1419,7 @@ ipcMain.handle('app:readLoopLog', () => {
     const file = getLoopLogFile();
     if (!fs.existsSync(file)) return { success: true, content: '' };
     const lines = fs.readFileSync(file, 'utf8').split('\n');
-    return { success: true, content: lines.slice(0, 1000).join('\n'), path: file };
+    return { success: true, content: lines.slice(0, 200).join('\n'), path: file };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1450,7 +1447,7 @@ ipcMain.handle('app:readErrorLog', () => {
     const file = getErrorOnlyLogFile();
     if (!fs.existsSync(file)) return { success: true, content: '' };
     const lines = fs.readFileSync(file, 'utf8').split('\n');
-    return { success: true, content: lines.slice(0, 1000).join('\n'), path: file };
+    return { success: true, content: lines.slice(0, 200).join('\n'), path: file };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -3113,22 +3110,11 @@ ipcMain.handle('image:search', async (event, { keywords, excludeIds = [] }) => {
 // 늘어남에 따라 count 매개변수화). pool 안에서 균등 간격으로 count개
 // 선택(중복 방지), 부족하면 앞에서부터 순환해 채움.
 function pickImagesFromPool(pool, count = 5) {
-  // 2026-07-16 변경: 기존엔 "0, step, step*2, ..." 처럼 항상 같은 자리만
-  // 뽑아서, 같거나 비슷한 키워드로 여러 번 발행하면 이미지가 그대로
-  // 겹치는 문제가 있었음(네이버 노출에 불리할 수 있음 — 사용자 확인).
-  // Unsplash 검색 결과는 관련성 순으로 정렬되므로, 페이지를 넓히는 대신
-  // (엉뚱한 사진 섞일 위험 증가) 같은 1페이지 안에서 "관련성 높은 상위
-  // 구간"으로 후보를 좁힌 뒤, 그 안에서만 무작위로 골라 다양성을 확보한다.
-  // 관련성 기준 자체는 그대로 유지되므로 이전보다 엉뚱한 이미지가 섞일
-  // 위험이 늘어나지 않는다.
-  const relevantSlice = pool.slice(0, Math.min(pool.length, Math.max(count * 4, 20)));
-  const shuffled = [...relevantSlice];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  const picked = [];
+  const step   = Math.floor(pool.length / count) || 1;
+  for (let i = 0; i < count && i * step < pool.length; i++) {
+    picked.push(pool[i * step]);
   }
-  const picked = shuffled.slice(0, count);
-  // 후보가 count보다 적으면(검색 결과 자체가 적을 때) 남은 자리는 순환 채움
   while (picked.length < count && pool.length > 0) {
     picked.push(pool[picked.length % pool.length]);
   }
@@ -4168,12 +4154,6 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
     </body></html>`;
 
     thumbWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    // 2026-07-17 수정: 캡처가 성공/실패로 먼저 끝나도 아래 10초 타임아웃
-    // 타이머가 취소되지 않고 계속 돌아가다가, 몇 초 뒤 뒤늦게 발동해
-    // 이미 성공한 건에도 "썸네일 생성 타임아웃" WARN이 찍히던 문제 수정
-    // (실사용 로그로 확인 — 실제 발행에는 지장 없었지만 오해를 유발함).
-    // 타이머 ID를 저장해두고, 어느 쪽이 먼저 끝나든 나머지 타이머를 정리한다.
-    let timeoutId;
     thumbWin.webContents.once('did-finish-load', async () => {
       try {
         await new Promise(r => setTimeout(r, 600));
@@ -4183,19 +4163,17 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
         const buf = resized.toPNG();
         const tmpPath = path.join(os.tmpdir(), `naver_thumb_${Date.now()}.png`);
         fs.writeFileSync(tmpPath, buf);
-        clearTimeout(timeoutId);
         if (!thumbWin.isDestroyed()) thumbWin.destroy();
         writeLog('INFO', 'THUMB', '썸네일 생성 성공', `${tmpPath} (design=${design ? design.id : 'default'}, bg=${bgPhoto ? 'unsplash' : 'gradient'}, accent=${borderAccent})`);
         done(tmpPath);
       } catch (e) {
-        clearTimeout(timeoutId);
         writeLog('WARN', 'THUMB', '썸네일 캡처 실패', e.message);
         if (!thumbWin.isDestroyed()) thumbWin.destroy();
         done(null);
       }
     });
 
-    timeoutId = setTimeout(() => {
+    setTimeout(() => {
       writeLog('WARN', 'THUMB', '썸네일 생성 타임아웃');
       if (!thumbWin.isDestroyed()) thumbWin.destroy();
       done(null);
@@ -4804,46 +4782,16 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           const alignBtnResult = await retryUntilFound(
             () => publishWin.webContents.executeJavaScript(`
             (function() {
-              // 2026-07-17 추가: 좌표 이상 원인을 다음 실패 시 바로 특정하기
-              // 위해 진단 정보를 대폭 확장. "제목 줄바꿈으로 좌표가
-              // 바뀐다"는 가설이 실사용 확인으로 반박되어(1줄 확정된
-              // 사례에서도 실패), 다른 가능성(예: 토글 버튼 3개 중 실제로는
-              // 여러 개가 동시에 "보이는" 상태라 엉뚱한 버튼을 클릭하는
-              // 경우, 혹은 스크롤/문서 높이 자체의 이상)까지 함께 남긴다.
               var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
-              var img = document.querySelector('.se-section-image');
-              var imgRect = img ? img.getBoundingClientRect() : null;
-              var base = {
-                scrollY: window.scrollY,
-                innerHeight: window.innerHeight,
-                docHeight: document.documentElement.scrollHeight,
-                thumbRect: imgRect ? { top: Math.round(imgRect.top), left: Math.round(imgRect.left), width: Math.round(imgRect.width), height: Math.round(imgRect.height) } : null,
-              };
-              if (!container) return Object.assign({ found:false, reason:'container_not_found' }, base);
-              var cRect = container.getBoundingClientRect();
-              base.containerRect = { top: Math.round(cRect.top), left: Math.round(cRect.left), width: Math.round(cRect.width), height: Math.round(cRect.height) };
+              if (!container) return { found:false, reason:'container_not_found' };
               var btns = Array.from(container.querySelectorAll('button'));
-              var btnInfo = btns.map(function(b) {
-                var r = b.getBoundingClientRect();
-                return {
-                  visible: r.width > 0 && r.height > 0,
-                  x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2),
-                  w: Math.round(r.width), h: Math.round(r.height),
-                  cls: (b.className||'').slice(0,40),
-                  aria: b.getAttribute('aria-label') || b.getAttribute('aria-pressed') || ''
-                };
-              });
-              base.totalButtons = btns.length;
-              base.allButtons = btnInfo;
-              var visibleCount = btnInfo.filter(function(b){ return b.visible; }).length;
-              base.visibleCount = visibleCount;
               var btn = btns.find(function(b) {
                 var r = b.getBoundingClientRect();
                 return r.width > 0 && r.height > 0;
               });
-              if (!btn) return Object.assign({ found:false, reason:'no_visible_button' }, base);
+              if (!btn) return { found:false, reason:'no_visible_button', total:btns.length };
               var r = btn.getBoundingClientRect();
-              return Object.assign({ found:true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }, base);
+              return { found:true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
             })()
           `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
             (v) => v && v.found,
@@ -4852,40 +4800,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
           writeLog('INFO', 'PUBLISH', '썸네일 정렬 버튼 조회', JSON.stringify(alignBtnResult));
 
-          // 2026-07-17 추가: 썸네일이 문서 맨 위쪽에 가까우면
-          // scrollIntoView({block:'center'})가 스크롤 상한(0)에 막혀
-          // 실제로는 정중앙에 못 오고 화면 맨 위쪽(상단 고정 발행 툴바와
-          // 겹치는 위치, y<60)에 눌려버리는 경우가 있음(제목 길이에 따라
-          // 간헐적으로 발생 — 실사용 중 확인). 이 경우 클릭 좌표는 정상
-          // 계산되지만 실제 클릭이 겹쳐진 상단 고정 툴바로 전달돼 아무
-          // 반응이 없었던 것으로 추정. 위험 구간이면 보정 스크롤 후
-          // 좌표를 다시 측정한다.
-          let finalAlignBtn = alignBtnResult;
-          if (finalAlignBtn && finalAlignBtn.found && finalAlignBtn.y < 60) {
-            writeLog('WARN', 'PUBLISH', '썸네일 정렬 버튼이 상단 고정 툴바와 겹침 — 보정 스크롤', JSON.stringify(finalAlignBtn));
-            await publishWin.webContents.executeJavaScript(`window.scrollBy(0, -120);`).catch(() => {});
-            await sleep(300);
-            finalAlignBtn = await publishWin.webContents.executeJavaScript(`
-              (function() {
-                var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
-                if (!container) return { found:false, reason:'container_not_found_after_correction' };
-                var btns = Array.from(container.querySelectorAll('button'));
-                var btn = btns.find(function(b) {
-                  var r = b.getBoundingClientRect();
-                  return r.width > 0 && r.height > 0;
-                });
-                if (!btn) return { found:false, reason:'no_visible_button_after_correction' };
-                var r = btn.getBoundingClientRect();
-                return { found:true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-              })()
-            `).catch((e) => ({ found:false, reason:'js_err_after_correction:' + e.message }));
-            writeLog('INFO', 'PUBLISH', '썸네일 정렬 버튼 보정 후 재조회', JSON.stringify(finalAlignBtn));
-          }
-
-          if (finalAlignBtn && finalAlignBtn.found) {
-            publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: finalAlignBtn.x, y: finalAlignBtn.y, button: 'left', clickCount: 1 });
-            publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: finalAlignBtn.x, y: finalAlignBtn.y, button: 'left', clickCount: 1 });
-            writeLog('INFO', 'PUBLISH', '썸네일 가운데 정렬 클릭', JSON.stringify(finalAlignBtn));
+          if (alignBtnResult && alignBtnResult.found) {
+            publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: alignBtnResult.x, y: alignBtnResult.y, button: 'left', clickCount: 1 });
+            publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: alignBtnResult.x, y: alignBtnResult.y, button: 'left', clickCount: 1 });
+            writeLog('INFO', 'PUBLISH', '썸네일 가운데 정렬 클릭', JSON.stringify(alignBtnResult));
             await sleep(300);
           } else {
             writeLog('WARN', 'PUBLISH', '썸네일 정렬 버튼 찾기 실패 — 좌측 정렬 상태로 유지됨');

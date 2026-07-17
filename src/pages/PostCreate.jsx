@@ -215,6 +215,14 @@ export default function PostCreate() {
         if (s.sentenceStyle) setSentenceStyle(s.sentenceStyle);
         // 환경설정의 customThumbnail 값으로 초기화 (기본 true)
         setAutoThumbnail(s.customThumbnail !== false);
+        // 2026-07-16 추가: "브라우저 표시" 체크박스도 저장된 전역 설정
+        // (settings.autoShowPublishWindow)으로 초기화 — 지금까지는 이
+        // 화면을 새로 열 때마다 항상 꺼짐(headlessMode=true)으로
+        // 리셋되고, 이 값이 반자동/완전자동 루프에는 전혀 반영되지
+        // 않았음. 이제 main.js도 같은 키(settings.autoShowPublishWindow)를
+        // 읽어 완전자동/예약 발행에 반영하므로, 이 화면과 자동화가 같은
+        // 설정값을 공유하게 된다.
+        setHeadlessMode(!s.autoShowPublishWindow);
       }
     });
   }, []);
@@ -982,7 +990,25 @@ export default function PostCreate() {
                     <input
                       type="checkbox"
                       checked={!headlessMode}
-                      onChange={e => setHeadlessMode(!e.target.checked)}
+                      onChange={e => {
+                        const showBrowser = e.target.checked;
+                        setHeadlessMode(!showBrowser);
+                        // 2026-07-16 추가: 이 체크박스 상태를 전역 설정
+                        // (settings.autoShowPublishWindow)에도 저장해,
+                        // 반자동(예약 발행)·완전자동 루프도 같은 값을
+                        // 따르도록 함. settings:set은 전체 settings 객체를
+                        // 통째로 교체하므로, 최신 설정을 먼저 읽어와
+                        // 병합한 뒤 저장한다(다른 설정값이 지워지지
+                        // 않도록).
+                        window.electronAPI.settings.get().then(res => {
+                          if (res.success && res.settings) {
+                            window.electronAPI.settings.set({
+                              ...res.settings,
+                              autoShowPublishWindow: showBrowser,
+                            });
+                          }
+                        });
+                      }}
                     />
                     <span className="toggle-text">🖥️ 브라우저 표시</span>
                   </label>
