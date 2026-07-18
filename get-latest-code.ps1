@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 # 콘솔 한글 깨짐 방지 (cmd.exe 기본 코드페이지가 UTF-8이 아닐 때 대비)
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 # PowerShell 7.3+ 에서 git 같은 외부 명령의 정상적인 안내 메시지(예: git
