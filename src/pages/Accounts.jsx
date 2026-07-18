@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './Accounts.css';
 import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
@@ -51,6 +51,144 @@ export default function Accounts() {
   const [addProgress, setAddProgress] = useState({ current: 0, total: 0 });
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({ nickname: '', memo: '', naver_id: '' });
+  // 2026-07-17 추가: 계정 목록 열이 많아 가로 스크롤이 생기던 문제 —
+  // 행마다 있던 삭제 버튼을 없애고, 상단 툴바의 작은 삭제 버튼으로
+  // "선택 모드"를 켠 뒤 체크박스로 여러 계정을 골라 한 번에 삭제하는
+  // 방식으로 변경.
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  // ── 계정 순서 드래그 변경 (2026-07-17 7차 수정) ──────────────
+  // 행 전체를 드래그해서 원하는 위치로 끌어놓으면 순서가 바뀌고,
+  // DB(sort_order)에도 저장되어 재시작해도 유지됨. 편집 중이거나
+  // 선택 삭제 모드일 때는 혼동을 막기 위해 드래그를 비활성화한다.
+  const [dragIndex, setDragIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const dragEnabled = !bulkMode && editingId === null;
+
+  const handleRowDragStart = (idx) => setDragIndex(idx);
+
+  const handleRowDragOver = (e, idx) => {
+    e.preventDefault(); // 드롭을 허용하려면 반드시 필요
+    if (dragIndex === null) return;
+    if (idx !== dragOverIndex) setDragOverIndex(idx);
+  };
+
+  const handleRowDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleRowDrop = async (dropIdx) => {
+    if (dragIndex === null || dragIndex === dropIdx) {
+      handleRowDragEnd();
+      return;
+    }
+    const reordered = [...accounts];
+    const [moved] = reordered.splice(dragIndex, 1);
+    reordered.splice(dropIdx, 0, moved);
+    setAccounts(reordered); // 먼저 화면부터 즉시 반영(체감 반응성)
+    handleRowDragEnd();
+
+    const ids = reordered.map(a => a.id);
+    const res = await window.electronAPI.account.reorder(ids);
+    if (!res.success) {
+      console.error('계정 순서 저장 실패:', res.error);
+      loadAccounts(); // 저장 실패 시 실제 DB 상태로 다시 맞춤
+    }
+  };
+
+  // ── 열 너비 (엑셀 방식 드래그 리사이즈, 2026-07-17 3차 수정) ──────
+  // 사용자가 각 열 경계를 직접 드래그해서 늘리거나 줄일 수 있고,
+  // 경계를 더블클릭하면 그 열의 실제 내용에 딱 맞는 최소 너비로
+  // 자동 조정된다. 텍스트를 잘라내거나 말줄임표(...)로 숨기지 않고,
+  // 사용자가 원하는 만큼만 좁히거나 넓힐 수 있게 하는 게 목적.
+  const DEFAULT_WIDTHS = { id: 140, nickname: 100, status: 90, lastlogin: 130, memo: 110 };
+  const [colWidths, setColWidths] = useState(DEFAULT_WIDTHS);
+  const resizingRef = useRef(null); // { col, startX, startWidth }
+  const [resizingCol, setResizingCol] = useState(null); // 드래그 중인 열(하이라이트 표시용)
+  const colWidthsRef = useRef(colWidths); // 저장 시점에 최신값을 정확히 읽기 위한 참조
+
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+
+  // 2026-07-17 추가: 프로그램을 껐다 켜도 사용자가 조절한 열 너비가
+  // 그대로 유지되도록, 기존 설정 저장 방식(settings.get/set)에 함께 저장.
+  useEffect(() => {
+    window.electronAPI.settings.get().then(res => {
+      if (res.success && res.settings && res.settings.accountsColWidths) {
+        setColWidths(prev => ({ ...prev, ...res.settings.accountsColWidths }));
+      }
+    });
+  }, []);
+
+  const persistColWidths = (widths) => {
+    window.electronAPI.settings.get().then(res => {
+      if (res.success && res.settings) {
+        window.electronAPI.settings.set({ ...res.settings, accountsColWidths: widths });
+      }
+    });
+  };
+
+  const handleResizeMove = useCallback((e) => {
+    const r = resizingRef.current;
+    if (!r) return;
+    const delta = e.clientX - r.startX;
+    const next = Math.max(36, r.startWidth + delta); // 너무 좁아져서 아예 안 보이는 것 방지(최소 36px)
+    setColWidths(prev => ({ ...prev, [r.col]: next }));
+  }, []);
+
+  const handleResizeEnd = useCallback(() => {
+    resizingRef.current = null;
+    setResizingCol(null);
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    persistColWidths(colWidthsRef.current); // 드래그가 끝난 시점의 최신 폭을 저장
+  }, [handleResizeMove]);
+
+  const handleResizeStart = (col, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = { col, startX: e.clientX, startWidth: colWidths[col] };
+    setResizingCol(col);
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    // 드래그 중 텍스트가 선택되거나 커서가 깜빡이지 않도록
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  // 경계 더블클릭 — 그 열의 실제 내용 중 가장 긴 것에 딱 맞는 최소 폭으로 조정
+  // 2026-07-17 수정: 이미 줄바꿈된 상태에서 scrollWidth를 재면 "한 줄로
+  // 폈을 때 진짜 필요한 폭"이 아니라 "지금 줄바꿈된 상태의 폭"이 측정돼,
+  // 더블클릭할 때마다 미세하게 어긋나며 계속 커지는 문제가 있었음.
+  // 측정하는 순간에만 강제로 한 줄(nowrap)로 펼쳐서 정확한 값을 재고
+  // 즉시 원래 상태로 되돌린다.
+  const handleAutoFit = (col) => {
+    const cells = document.querySelectorAll(`[data-col="${col}"]`);
+    let maxContent = 0;
+    cells.forEach(el => {
+      const prevWhiteSpace = el.style.whiteSpace;
+      el.style.whiteSpace = 'nowrap';
+      maxContent = Math.max(maxContent, el.scrollWidth);
+      el.style.whiteSpace = prevWhiteSpace;
+    });
+    const next = Math.max(36, maxContent + 20); // 좌우 여백 보정
+    setColWidths(prev => {
+      const updated = { ...prev, [col]: next };
+      persistColWidths(updated);
+      return updated;
+    });
+  };
+
+  useEffect(() => {
+    // 컴포넌트가 사라질 때 혹시 드래그 중이던 리스너가 남아있지 않도록 정리
+    return () => {
+      document.removeEventListener('mousemove', handleResizeMove);
+      document.removeEventListener('mouseup', handleResizeEnd);
+    };
+  }, [handleResizeMove, handleResizeEnd]);
 
   // ── 계정 목록 로드 ─────────────────────────────────────────
   const loadAccounts = useCallback(async () => {
@@ -82,11 +220,36 @@ export default function Accounts() {
     if (res.success) loadAccounts();
   };
 
-  // ── 계정 삭제 ──────────────────────────────────────────────
-  const handleDelete = async (id) => {
-    if (!window.confirm('이 계정을 삭제하시겠습니까?')) return;
-    const res = await window.electronAPI.account.delete(id);
-    if (res.success) setAccounts(prev => prev.filter(a => a.id !== id));
+  // ── 계정 삭제 (2026-07-17: 행별 삭제 버튼 → 상단 일괄 삭제로 대체) ──
+  const toggleBulkMode = () => {
+    setBulkMode(prev => !prev);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelectOne = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev =>
+      prev.size === accounts.length ? new Set() : new Set(accounts.map(a => a.id))
+    );
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`선택한 ${selectedIds.size}개 계정을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      await window.electronAPI.account.delete(id);
+    }
+    setAccounts(prev => prev.filter(a => !selectedIds.has(a.id)));
+    setSelectedIds(new Set());
+    setBulkMode(false);
   };
 
   // ── 재로그인 (만료된 계정) ─────────────────────────────────
@@ -172,29 +335,113 @@ export default function Accounts() {
           </div>
         )}
 
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="account-count-badge">{accounts.length}개 계정</span>
+          {!bulkMode ? (
+            <button
+              className="btn-bulk-toggle"
+              onClick={toggleBulkMode}
+              title="계정 삭제"
+              disabled={accounts.length === 0}
+            >
+              <TrashIcon />
+            </button>
+          ) : (
+            <div className="bulk-actions">
+              <button
+                className="btn-bulk-delete"
+                onClick={handleBulkDelete}
+                disabled={selectedIds.size === 0}
+              >
+                선택 삭제 ({selectedIds.size})
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={toggleBulkMode}>취소</button>
+            </div>
+          )}
         </div>
       </div>
 
       {/* 계정 테이블 */}
       <div className="card accounts-table-wrap">
         <table className="accounts-table">
+          {/* 2026-07-17 3차 수정: colgroup으로 실제 열 너비를 제어 —
+              사용자가 드래그로 조절한 값(colWidths)이 그대로 반영됨.
+              2026-07-17 4차 수정: 선택삭제 체크박스를 별도 열로 추가하지
+              않고, 기존 "편집" 칸 안에 왼쪽 정렬로 넣어 선택 모드를 켜도
+              테이블 전체 폭이 늘어나지 않도록 함. */}
+          <colgroup>
+            <col style={{ width: 30 }} />
+            <col style={{ width: colWidths.id }} />
+            <col style={{ width: colWidths.nickname }} />
+            <col style={{ width: colWidths.status }} />
+            <col style={{ width: colWidths.lastlogin }} />
+            <col style={{ width: colWidths.memo }} />
+            <col style={{ width: 40 }} />
+          </colgroup>
           <thead>
             <tr>
               <th>#</th>
-              <th>아이디</th>
-              <th>닉네임</th>
-              <th>상태</th>
-              <th>마지막 로그인</th>
-              <th>메모</th>
-              <th>삭제</th>
+              <th className="resizable-th">
+                <span className="measure-wrap" data-col="id">아이디</span>
+                <span
+                  className={`col-resize-handle${resizingCol === 'id' ? ' resizing' : ''}`}
+                  onMouseDown={e => handleResizeStart('id', e)}
+                  onDoubleClick={() => handleAutoFit('id')}
+                  title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤"
+                />
+              </th>
+              <th className="resizable-th">
+                <span className="measure-wrap" data-col="nickname">닉네임</span>
+                <span
+                  className={`col-resize-handle${resizingCol === 'nickname' ? ' resizing' : ''}`}
+                  onMouseDown={e => handleResizeStart('nickname', e)}
+                  onDoubleClick={() => handleAutoFit('nickname')}
+                  title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤"
+                />
+              </th>
+              <th className="resizable-th">
+                <span className="measure-wrap" data-col="status">상태</span>
+                <span
+                  className={`col-resize-handle${resizingCol === 'status' ? ' resizing' : ''}`}
+                  onMouseDown={e => handleResizeStart('status', e)}
+                  onDoubleClick={() => handleAutoFit('status')}
+                  title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤"
+                />
+              </th>
+              <th className="resizable-th">
+                <span className="measure-wrap" data-col="lastlogin">마지막 로그인</span>
+                <span
+                  className={`col-resize-handle${resizingCol === 'lastlogin' ? ' resizing' : ''}`}
+                  onMouseDown={e => handleResizeStart('lastlogin', e)}
+                  onDoubleClick={() => handleAutoFit('lastlogin')}
+                  title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤"
+                />
+              </th>
+              <th className="resizable-th">
+                <span className="measure-wrap" data-col="memo">메모</span>
+                <span
+                  className={`col-resize-handle${resizingCol === 'memo' ? ' resizing' : ''}`}
+                  onMouseDown={e => handleResizeStart('memo', e)}
+                  onDoubleClick={() => handleAutoFit('memo')}
+                  title="드래그로 너비 조절 · 더블클릭으로 자동 맞춤"
+                />
+              </th>
+              <th className="col-actions">
+                {bulkMode && (
+                  <input
+                    type="checkbox"
+                    checked={accounts.length > 0 && selectedIds.size === accounts.length}
+                    onChange={toggleSelectAll}
+                    title="전체 선택"
+                  />
+                )}
+              </th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <div className="empty-state">
                     <div className="spinner" style={{ margin: '0 auto 10px' }} />
                     <p>불러오는 중…</p>
@@ -203,7 +450,7 @@ export default function Accounts() {
               </tr>
             ) : accounts.length === 0 ? (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <div className="empty-state">
                     <div className="empty-icon">👤</div>
                     <p>등록된 계정이 없습니다.</p>
@@ -213,7 +460,21 @@ export default function Accounts() {
               </tr>
             ) : (
               accounts.map((acct, idx) => (
-                <tr key={acct.id} className={editingId === acct.id ? 'row-editing' : ''}>
+                <tr
+                  key={acct.id}
+                  className={[
+                    editingId === acct.id ? 'row-editing' : '',
+                    dragIndex === idx ? 'row-dragging' : '',
+                    dragOverIndex === idx && dragIndex !== idx ? 'row-drag-over' : '',
+                  ].filter(Boolean).join(' ')}
+                  draggable={dragEnabled}
+                  onDragStart={() => handleRowDragStart(idx)}
+                  onDragOver={e => handleRowDragOver(e, idx)}
+                  onDrop={() => handleRowDrop(idx)}
+                  onDragEnd={handleRowDragEnd}
+                  style={dragEnabled ? { cursor: 'grab' } : undefined}
+                  title={dragEnabled ? '행을 끌어서 순서를 바꿀 수 있습니다' : undefined}
+                >
                   {/* # */}
                   <td className="col-idx">{idx + 1}</td>
 
@@ -232,6 +493,7 @@ export default function Accounts() {
                     ) : (
                       <span
                         className="editable-cell"
+                        data-col="id"
                         onClick={() => startEdit(acct)}
                         title="클릭하여 아이디 수정"
                         style={{ color: acct.naver_id?.startsWith('naver_') ? 'var(--danger)' : undefined }}
@@ -254,7 +516,7 @@ export default function Accounts() {
                         autoFocus
                       />
                     ) : (
-                      <span className="editable-cell" onClick={() => startEdit(acct)}>
+                      <span className="editable-cell" data-col="nickname" onClick={() => startEdit(acct)}>
                         {acct.nickname || <span className="placeholder-text">편집</span>}
                       </span>
                     )}
@@ -262,24 +524,26 @@ export default function Accounts() {
 
                   {/* 상태 */}
                   <td className="col-status">
-                    <span className={`status-badge status-${acct.status}`}>
-                      {acct.status === 'active' ? '✓ 활성' : '⚠ 만료'}
+                    <span className="status-cell-wrap" data-col="status">
+                      <span className={`status-badge status-${acct.status}`}>
+                        {acct.status === 'active' ? '✓ 활성' : '⚠ 만료'}
+                      </span>
+                      {acct.status === 'expired' && (
+                        <button
+                          className="btn-relogin"
+                          onClick={handleReLogin}
+                          disabled={adding}
+                          title="다시 로그인"
+                        >
+                          <RefreshIcon />
+                          재로그인
+                        </button>
+                      )}
                     </span>
-                    {acct.status === 'expired' && (
-                      <button
-                        className="btn-relogin"
-                        onClick={handleReLogin}
-                        disabled={adding}
-                        title="다시 로그인"
-                      >
-                        <RefreshIcon />
-                        재로그인
-                      </button>
-                    )}
                   </td>
 
                   {/* 마지막 로그인 */}
-                  <td className="col-lastlogin">{formatDate(acct.last_login)}</td>
+                  <td className="col-lastlogin"><span className="measure-wrap" data-col="lastlogin">{formatDate(acct.last_login)}</span></td>
 
                   {/* 메모 */}
                   <td className="col-memo">
@@ -292,28 +556,25 @@ export default function Accounts() {
                         placeholder="메모 입력"
                       />
                     ) : (
-                      <span className="editable-cell" onClick={() => startEdit(acct)}>
+                      <span className="editable-cell" data-col="memo" onClick={() => startEdit(acct)}>
                         {acct.memo || <span className="placeholder-text">편집</span>}
                       </span>
                     )}
                   </td>
 
-                  {/* 삭제 / 편집 액션 (맨 오른쪽) */}
+                  {/* 편집 액션 / 선택 삭제 체크박스 (2026-07-17 4차 수정:
+                      별도 열 대신 같은 칸을 공유해 선택 모드를 켜도
+                      테이블 폭이 늘어나지 않도록 함) */}
                   <td className="col-actions">
-                    {editingId === acct.id ? (
-                      <div className="action-btns">
-                        <button className="btn btn-primary btn-sm" onClick={() => saveEdit(acct.id)}>저장</button>
-                        <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>취소</button>
-                      </div>
-                    ) : (
-                      <button
-                        className="btn-delete"
-                        onClick={() => handleDelete(acct.id)}
-                        title="계정 삭제"
-                      >
-                        <TrashIcon />
-                      </button>
-                    )}
+                    {editingId === acct.id ? null : bulkMode ? (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(acct.id)}
+                        onChange={() => toggleSelectOne(acct.id)}
+                      />
+                    ) : dragEnabled ? (
+                      <span className="drag-grip" title="행을 끌어서 순서를 바꿀 수 있습니다">⠿</span>
+                    ) : null}
                   </td>
                 </tr>
               ))
@@ -321,6 +582,16 @@ export default function Accounts() {
           </tbody>
         </table>
       </div>
+
+      {/* 2026-07-17 9차 수정: 저장/취소 버튼을 테이블 안(좁은 칸)에 두지
+          않고 테이블 바깥으로 완전히 빼서, 편집 중에도 테이블 자체의
+          가로 스크롤이 생기지 않도록 함. */}
+      {editingId !== null && (
+        <div className="edit-float-actions">
+          <button className="btn btn-primary btn-sm" onClick={() => saveEdit(editingId)}>저장</button>
+          <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>취소</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setCategoryPairCategory: (pairId, category) => ipcRenderer.invoke('account:setCategoryPairCategory', { pairId, category }),
     setCategoryPairNaverCategory: (pairId, category) => ipcRenderer.invoke('account:setCategoryPairNaverCategory', { pairId, category }),
 
+    /** 계정 목록 순서 변경 (2026-07-17 신규) — 위에서 아래 순서로 정렬된 id 배열을 통째로 전달 */
+    reorder: (orderedIds) => ipcRenderer.invoke('account:reorder', orderedIds),
+
   },
 
   // ── 환경설정 ───────────────────────────────────────────────

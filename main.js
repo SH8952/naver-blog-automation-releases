@@ -474,76 +474,13 @@ function decrypt(text) {
 
 // ── 유효한 네이버 ID 검증 ────────────────────────────────────
 function isValidNaverId(id) {
-  return id && /^[a-z0-9][a-z0-9_.]{2,19}$/i.test(id) &&
+  return id && /^[a-z0-9][a-z0-9_.-]{2,19}$/i.test(id) &&
     !['naver', 'search', 'blog', 'cafe', 'news', 'main', 'my', 'help', 'api'].includes(id.toLowerCase());
 }
 
-// ── 네이버 ID 추출: 전략 1 — 현재 페이지 JS 실행 ─────────────
-async function extractIdFromPage(win) {
-  try {
-    const id = await win.webContents.executeJavaScript(`
-      (function() {
-        const candidates = [];
-
-        // 1. GNB 로그인 영역 — 최신 선택자 포함
-        const gnbSelectors = [
-          '.gnb_id', '#gnb_my_m .gnb_id', '.MyView-module__gnb_id',
-          '#account .gnb_id', '.gnb_my_area .gnb_id',
-          '[class*="gnb_id"]', '[class*="user_id"]', '[class*="login_id"]',
-          '[class*="userId"]', '[class*="loginId"]', '[class*="userName"]',
-          '.NNB_idtext', '.NNB_id', '#NM_TOP_UTIL .user_id',
-          '.btn_my .user_id', '.MyView-module__user_name',
-        ];
-        for (const sel of gnbSelectors) {
-          try {
-            document.querySelectorAll(sel).forEach(el => {
-              const t = el.textContent.trim();
-              if (t) candidates.push(t);
-            });
-          } catch {}
-        }
-
-        // 2. data 속성에서 추출
-        document.querySelectorAll('[data-loginid],[data-userid],[data-nid],[data-user-id],[data-login-id]').forEach(el => {
-          ['data-loginid','data-userid','data-nid','data-user-id','data-login-id'].forEach(attr => {
-            const v = el.getAttribute(attr);
-            if (v) candidates.push(v);
-          });
-        });
-
-        // 3. window 전역 변수
-        const winVars = ['__LOGIN_ID__','__USER_ID__','naver_user_id','NNB_ID','_nid_','naverLoginId'];
-        for (const v of winVars) {
-          try { if (window[v]) candidates.push(String(window[v])); } catch {}
-        }
-        try { if (window.naver?.com?.user) {
-          const u = window.naver.com.user;
-          candidates.push(u.id || u.loginId || u.userId || '');
-        }} catch {}
-
-        // 유효한 ID 반환 (스크립트 태그 스캔 제거 — false positive 원인)
-        const BLOCKED_IDS = new Set([
-          'naver','search','blog','cafe','news','main','my','help','api',
-          'finish','start','close','open','click','back','next','home',
-          'page','view','list','type','name','user','pass','data','info',
-          'text','link','item','icon','dark','light','left','right','true',
-          'false','null','none','more','less','error','login','logout',
-        ]);
-        for (const c of candidates) {
-          const cleaned = (c || '').trim().toLowerCase();
-          if (/^[a-z0-9][a-z0-9_.]{3,20}$/.test(cleaned) && !BLOCKED_IDS.has(cleaned)) {
-            return cleaned;
-          }
-        }
-        return null;
-      })()
-    `);
-    return id || null;
-  } catch (err) {
-    writeLog('WARN', 'LOGIN', 'extractIdFromPage 실패', err.message);
-    return null;
-  }
-}
+// 2026-07-17 제거: extractIdFromPage(전략2, 현재 페이지 JS 추출) — 실사용
+// 테스트에서 매번 예외 없이 null만 반환해 완전히 제거함. GNB 셀렉터들이
+// 현재 네이버 화면 구조와 더 이상 맞지 않는 것으로 추정.
 
 // ── 네이버 ID 추출: 전략 2 — 숨겨진 창으로 블로그 리다이렉트 확인 ──
 async function extractIdViaHiddenWindow(ses) {
@@ -559,13 +496,25 @@ async function extractIdViaHiddenWindow(ses) {
       return resolve(null);
     }
 
+    // 2026-07-17: 내부 재시도 로직이 최대 약 17초까지 걸릴 수 있어(5초 +
+    // 3초x4회), 기존 25초 전체 타임아웃과 너무 빠듯해질 수 있어 32초로 확대.
     const timeout = setTimeout(() => {
       writeLog('WARN', 'LOGIN', 'hiddenWin ID 추출 타임아웃');
       if (!hiddenWin.isDestroyed()) hiddenWin.destroy();
       resolve(null);
-    }, 25000);
+    }, 32000);
 
+    // 2026-07-17 발견: cleanup(id)가 hiddenWin.destroy()를 호출하면 'closed'
+    // 이벤트가 동기적으로 발생하고, 그 핸들러가 다시 cleanup(null)을
+    // 호출한다 — resolve(id)가 실행되기 전에 이 중첩 호출의 resolve(null)이
+    // 먼저 실행되어, 실제로는 ID 추출에 성공했는데도 최종 결과가 null로
+    // 덮어써지는 문제가 실사용 로그로 확인됨(hiddenWin redirect에서 ID
+    // 추출 성공 직후 곧바로 "전략3(hiddenWin) null"로 이어짐). settled
+    // 플래그로 첫 호출만 유효하게 만들어 해결.
+    let settled = false;
     const cleanup = (id) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       try { if (!hiddenWin.isDestroyed()) hiddenWin.destroy(); } catch {}
       resolve(id);
@@ -575,10 +524,13 @@ async function extractIdViaHiddenWindow(ses) {
       'my', 'prologue', 'postwrite', 'blogmain', 'section', 'postview', 'main',
       'naver', 'my.naver', 'search', 'api', 'blog', 'help', 'tag', 'category',
       'postlist.naver', 'write', 'admin', 'postlist', 'gonaver',
+      // 2026-07-17 추가: 블로그 마켓 광고 배너 링크(blog.naver.com/market)를
+      // 실제 아이디로 잘못 추출한 사례가 실사용 로그로 확인되어 차단.
+      'market',
     ]);
 
     function extractIdFromUrl(url) {
-      const m1 = url.match(/(?:m\.)?blog\.naver\.com\/([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})\/?(?:\?|#|$|\/)/);
+      const m1 = url.match(/(?:m\.)?blog\.naver\.com\/([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})\/?(?:\?|#|$|\/)/);
       if (m1 && !BLOCKED_PATHS.has(m1[1].toLowerCase()) && isValidNaverId(m1[1]) && !m1[1].includes('.')) return m1[1].toLowerCase();
       try {
         const u = new URL(url);
@@ -608,79 +560,151 @@ async function extractIdViaHiddenWindow(ses) {
       writeLog('INFO', 'LOGIN', 'hiddenWin did-finish-load', url);
       const id = extractIdFromUrl(url);
       if (id) { cleanup(id); return; }
-      // 5초 대기 (SPA 렌더링 완료 대기)
-      await new Promise(r => setTimeout(r, 5000));
-      if (hiddenWin.isDestroyed()) return;
+      // 2026-07-17 변경: 기존엔 5초 딱 한 번만 기다린 뒤 한 번만 확인했음.
+      // 실사용 로그에서 htmlLen이 비정상적으로 작고(2566자) 화면에 보이는
+      // 텍스트도 없는(bodyText 없음) "빈 껍데기" 상태가 계속 확인되어,
+      // 이게 아직 실제 콘텐츠로 리다이렉트/렌더링되기 전 중간 상태일
+      // 가능성을 보고 최대 15초까지 3초 간격으로 여러 번 재확인하도록
+      // 변경. 예전 방식(5초 후 1회 확인)과 첫 시도는 동일하게 동작하고,
+      // 그때 못 찾으면 추가로 3번 더 재시도한다.
+      let htmlResult = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await new Promise(r => setTimeout(r, attempt === 0 ? 5000 : 3000));
+        if (hiddenWin.isDestroyed()) return;
 
-      // ── 방법 A: 렌더링된 DOM HTML 전체에서 blogId 패턴 파싱 ──
-      try {
-        const htmlResult = await hiddenWin.webContents.executeJavaScript(`
-          (function() {
-            var BLOCKED = ['my','naver','my.naver','blog','search','api','help','main','section','start','tag','category','recommendation','write','undefined','null'];
-            var ok = function(v) {
-              return v && typeof v === 'string' && v.length >= 3 && v.length <= 20 &&
-                /^[a-zA-Z0-9][a-zA-Z0-9_.]{2,19}$/.test(v.trim()) &&
-                BLOCKED.indexOf(v.trim().toLowerCase()) === -1 &&
-                !v.trim().toLowerCase().endsWith('.naver');
-            };
-            // 1. window 전역 변수 우선
-            var candidates = [window.naver_id, window.blogId, window.ownerId, window.ownerBlogId, window.__BLOG_ID__, window.currentBlogId];
-            try { var ps = window.__PRELOADED_STATE__; if (ps) candidates.push(ps.blogId, ps.ownerId, ps.blog && ps.blog.blogId); } catch(e) {}
-            for (var i = 0; i < candidates.length; i++) {
-              if (ok(candidates[i])) return {id: candidates[i].trim().toLowerCase(), src: 'window'};
+        // ── 방법 A: 렌더링된 DOM HTML 전체에서 blogId 패턴 파싱 ──
+        try {
+          htmlResult = await hiddenWin.webContents.executeJavaScript(`
+            (function() {
+              var BLOCKED = ['my','naver','my.naver','blog','search','api','help','main','section','start','tag','category','recommendation','write','undefined','null','market'];
+              var ok = function(v) {
+                return v && typeof v === 'string' && v.length >= 3 && v.length <= 20 &&
+                  /^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,19}$/.test(v.trim()) &&
+                  BLOCKED.indexOf(v.trim().toLowerCase()) === -1 &&
+                  !v.trim().toLowerCase().endsWith('.naver');
+              };
+              // 2026-07-17 추가 — 방법 0(최우선): "내 블로그" 링크의 href에서
+              // 직접 추출. blog.naver.com(파라미터 없이)으로 들어가면
+              // section.blog.naver.com/BlogHome.naver로 리다이렉트되는데,
+              // 그 화면 우측 프로필 영역에 "내 블로그"라는 실제 링크
+              // (href="https://blog.naver.com/{내아이디}")가 있는 것을
+              // 실사용 확인으로 발견함. 클릭 없이 href만 읽으면 됨 —
+              // 지금까지 의존해온 blog.naver.com/write 리다이렉트가 더
+              // 이상 정상 동작하지 않는 것으로 확인되어 이 방법으로 대체.
+              var idRe = /blog\\.naver\\.com\\/([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})(?:[\\/?#]|$)/;
+              var links = Array.from(document.querySelectorAll('a[href*="blog.naver.com/"]'));
+              var myBlogLink = links.find(function(a) { return (a.textContent||'').indexOf('내 블로그') !== -1; });
+              if (myBlogLink) {
+                var mLink = myBlogLink.href.match(idRe);
+                if (mLink && ok(mLink[1])) return {id: mLink[1].toLowerCase(), src: 'myblog_link_text'};
+              }
+              // 2026-07-17 변경: "아무 blog.naver.com/{id} 링크나" 폴백은
+              // 화면의 다른 배너(예: 블로그 마켓 광고)를 잘못 집는 사고가
+              // 실사용 확인됨(id: "market" 오추출) — 제거.
+              // 대신 "내 블로그" 버튼이 진짜 <a href>가 아니라 React
+              // 클릭 핸들러로 동작하는 경우를 대비해, 텍스트가 정확히
+              // "내 블로그"인 요소를 찾아 React fiber onClick을 직접
+              // 호출(실패 시 일반 click())한다. 클릭 이후 실제로 이동한
+              // 주소를 바깥(Node) 쪽에서 별도로 확인한다.
+              function reactClick(el) {
+                var key = Object.keys(el).find(function(k){ return k.indexOf('__reactFiber') === 0 || k.indexOf('__reactInternalInstance') === 0; });
+                if (!key) return false;
+                var fiber = el[key];
+                while (fiber) {
+                  if (fiber.memoizedProps && fiber.memoizedProps.onClick) {
+                    try { fiber.memoizedProps.onClick({ preventDefault: function(){}, stopPropagation: function(){} }); return true; } catch(e) {}
+                  }
+                  fiber = fiber.return;
+                }
+                return false;
+              }
+              var target = Array.from(document.querySelectorAll('*')).find(function(el) {
+                return el.children.length === 0 && (el.textContent||'').trim() === '내 블로그';
+              });
+              if (target) {
+                var clicked = reactClick(target);
+                if (!clicked) { try { target.click(); clicked = true; } catch(e) {} }
+                if (clicked) return { id: null, clicked: true };
+              }
+              // 1. window 전역 변수 우선
+              var candidates = [window.naver_id, window.blogId, window.ownerId, window.ownerBlogId, window.__BLOG_ID__, window.currentBlogId];
+              try { var ps = window.__PRELOADED_STATE__; if (ps) candidates.push(ps.blogId, ps.ownerId, ps.blog && ps.blog.blogId); } catch(e) {}
+              for (var i = 0; i < candidates.length; i++) {
+                if (ok(candidates[i])) return {id: candidates[i].trim().toLowerCase(), src: 'window'};
+              }
+              // 2. 전체 HTML에서 패턴 검색
+              var html = document.documentElement.outerHTML;
+              var patterns = [
+                /"blogId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+                /"ownerId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+                /"logName"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+                /data-blog-id="([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+                /data-blogid="([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+              ];
+              for (var j = 0; j < patterns.length; j++) {
+                var m = html.match(patterns[j]);
+                if (m && ok(m[1])) return {id: m[1].toLowerCase(), src: 'html_pattern_' + j};
+              }
+              return {
+                id: null,
+                htmlLen: html.length,
+                title: document.title || '',
+                bodyText: (document.body ? document.body.innerText : '').trim().slice(0, 500),
+                preview: html.substring(0, 300)
+              };
+            })()
+          `);
+          writeLog('INFO', 'LOGIN', `hiddenWin DOM 파싱 결과 (시도${attempt + 1})`, JSON.stringify({
+            id: htmlResult.id, src: htmlResult.src, htmlLen: htmlResult.htmlLen, title: htmlResult.title, clicked: htmlResult.clicked
+          }));
+          if (htmlResult.bodyText) writeLog('INFO', 'LOGIN', `hiddenWin 화면 텍스트 (시도${attempt + 1})`, htmlResult.bodyText);
+          if (htmlResult.preview) writeLog('INFO', 'LOGIN', `hiddenWin HTML 미리보기 (시도${attempt + 1})`, htmlResult.preview);
+          if (htmlResult.id && isValidNaverId(htmlResult.id)) {
+            writeLog('INFO', 'LOGIN', 'hiddenWin DOM에서 ID 추출', htmlResult.id);
+            cleanup(htmlResult.id);
+            return;
+          }
+          // 2026-07-17 추가: "내 블로그" 요소를 클릭했다는 신호를 받으면,
+          // 실제 페이지 이동이 반영될 시간을 준 뒤 현재 주소창 URL에서
+          // 직접 아이디를 추출한다 (blog.naver.com/{아이디} 형태로
+          // 이동하는 것을 실사용으로 확인함).
+          if (htmlResult.clicked) {
+            await new Promise(r => setTimeout(r, 1500));
+            if (hiddenWin.isDestroyed()) return;
+            const clickedUrl = hiddenWin.webContents.getURL();
+            writeLog('INFO', 'LOGIN', `'내 블로그' 클릭 후 이동한 URL (시도${attempt + 1})`, clickedUrl);
+            const idFromClick = extractIdFromUrl(clickedUrl);
+            if (idFromClick && isValidNaverId(idFromClick)) {
+              writeLog('INFO', 'LOGIN', "'내 블로그' 클릭으로 ID 추출", idFromClick);
+              cleanup(idFromClick);
+              return;
             }
-            // 2. 전체 HTML에서 패턴 검색
-            var html = document.documentElement.outerHTML;
-            var patterns = [
-              /"blogId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-              /"ownerId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-              /"logName"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-              /data-blog-id="([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-              /data-blogid="([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-            ];
-            for (var j = 0; j < patterns.length; j++) {
-              var m = html.match(patterns[j]);
-              if (m && ok(m[1])) return {id: m[1].toLowerCase(), src: 'html_pattern_' + j};
-            }
-            return {id: null, htmlLen: html.length, preview: html.substring(0, 300)};
-          })()
-        `);
-        writeLog('INFO', 'LOGIN', 'hiddenWin DOM 파싱 결과', JSON.stringify({
-          id: htmlResult.id, src: htmlResult.src, htmlLen: htmlResult.htmlLen
-        }));
-        if (htmlResult.preview) writeLog('INFO', 'LOGIN', 'hiddenWin HTML 미리보기', htmlResult.preview);
-        if (htmlResult.id && isValidNaverId(htmlResult.id)) {
-          writeLog('INFO', 'LOGIN', 'hiddenWin DOM에서 ID 추출', htmlResult.id);
-          cleanup(htmlResult.id);
-          return;
-        }
-      } catch (e) { writeLog('WARN', 'LOGIN', 'hiddenWin DOM 파싱 오류', e.message); }
+          }
+        } catch (e) { writeLog('WARN', 'LOGIN', `hiddenWin DOM 파싱 오류 (시도${attempt + 1})`, e.message); }
+      }
     });
 
     hiddenWin.on('closed', () => { writeLog('WARN', 'LOGIN', 'hiddenWin 닫힘'); cleanup(null); });
 
-    hiddenWin.loadURL('https://blog.naver.com/write').catch(err => {
+    // 2026-07-17 변경: blog.naver.com/write가 더 이상 "로그인한 사용자의
+    // 블로그"로 이어지지 않고 write라는 글자를 존재하지 않는 블로그
+    // 아이디처럼 취급하는 빈 페이지로 이어지는 것을 실사용 로그로 확인.
+    // 대신 blog.naver.com(파라미터 없음)으로 이동 — 이 경우 네이버가
+    // section.blog.naver.com/BlogHome.naver로 리다이렉트하며, 그 화면에
+    // "내 블로그" 링크가 실제 아이디를 담은 채로 존재함(위의 방법 0 참고).
+    hiddenWin.loadURL('https://blog.naver.com').catch(err => {
       writeLog('WARN', 'LOGIN', 'hiddenWin URL 로드 실패', err.message);
       cleanup(null);
     });
   });
 }
 
-// ── 네이버 ID 추출: 전략 3 — 쿠키에서 직접 파싱 ───────────────
-function extractIdFromCookies(cookies) {
-  for (const cookie of cookies) {
-    if (cookie.name === 'nid_inf') {
-      try {
-        const decoded = Buffer.from(cookie.value, 'base64').toString('utf8');
-        const m = decoded.match(/"id"\s*:\s*"([a-z0-9_.]+)"/i);
-        if (m && isValidNaverId(m[1])) return m[1];
-      } catch {}
-    }
-  }
-  return null;
-}
+// 2026-07-17 제거: extractIdFromCookies(nid_inf 쿠키 파싱) — 실사용
+// 테스트에서 매번 예외 없이 null만 반환해 완전히 제거함. nid_inf 쿠키
+// 인코딩/필드 구조가 바뀐 것으로 추정.
 
-// ── 네이버 ID 추출: 전략 4 — net.request로 리다이렉트 URL 추적 ──
+// ── 네이버 ID 추출: net.request로 리다이렉트 URL 추적
+// (발행 시점 재확인(needsIdRefresh)에서 계속 사용됨 — 로그인 흐름에서는 제거) ──
 async function extractIdViaNetRedirect(ses) {
   const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
   const BLOCKED = new Set(['my', 'naver', 'my.naver', 'blog', 'search', 'api', 'help', 'main', 'section', 'start', 'tag', 'category', 'recommendation', 'rank', 'popular', 'notice']);
@@ -692,12 +716,12 @@ async function extractIdViaNetRedirect(ses) {
   // body에서 blogId 추출 패턴
   const extractFromBody = (body) => {
     const patterns = [
-      /"blogId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-      /blogId\s*=\s*['"]([ a-zA-Z0-9][a-zA-Z0-9_.]{2,19})['"]/,
-      /window\.naver_id\s*=\s*['"]([ a-zA-Z0-9][a-zA-Z0-9_.]{2,19})['"]/,
-      /data-blogid="([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-      /"ownerId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-      /"userId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
+      /"blogId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+      /blogId\s*=\s*['"]([ a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})['"]/,
+      /window\.naver_id\s*=\s*['"]([ a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})['"]/,
+      /data-blogid="([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+      /"ownerId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+      /"userId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
     ];
     for (const p of patterns) {
       const m = body.match(p);
@@ -752,7 +776,7 @@ async function extractIdViaNetRedirect(ses) {
       req.on('redirect', (statusCode, method, redirectUrl) => {
         writeLog('INFO', 'LOGIN', `my.naver redirect (${statusCode})`, redirectUrl);
         // my.naver.com/{userId} 패턴
-        const m = redirectUrl.match(/my\.naver\.com\/([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})\/?(?:\?|#|$)/);
+        const m = redirectUrl.match(/my\.naver\.com\/([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})\/?(?:\?|#|$)/);
         if (m && checkId(m[1])) { finish(m[1].toLowerCase()); }
         else { try { req.followRedirect(); } catch {} }
       });
@@ -785,10 +809,10 @@ async function extractIdViaNetRedirect(ses) {
           writeLog('INFO', 'LOGIN', `my.naver body 길이`, body.length.toString());
           // JSON 패턴 우선 (내 계정 정보)
           const jsonPatterns = [
-            /"loginId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-            /"userId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-            /"blogId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-            /data-nid="([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
+            /"loginId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+            /"userId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+            /"blogId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+            /data-nid="([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
           ];
           for (const p of jsonPatterns) {
             const m = body.match(p);
@@ -804,6 +828,14 @@ async function extractIdViaNetRedirect(ses) {
           }
           const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
           writeLog('INFO', 'LOGIN', 'my.naver blog 링크 후보', JSON.stringify(sorted.slice(0, 5)));
+          // 2026-07-17 추가: 링크 후보가 0개일 때 원인 파악을 위해
+          // 페이지 제목과 본문 미리보기를 남긴다 (지금까지는 body.length만
+          // 남아 실제로 무슨 페이지였는지 확인할 방법이 없었음).
+          if (!sorted.length) {
+            const titleMatch = body.match(/<title[^>]*>([^<]*)<\/title>/i);
+            writeLog('INFO', 'LOGIN', 'my.naver 응답 제목', titleMatch ? titleMatch[1].trim() : '(제목 없음)');
+            writeLog('INFO', 'LOGIN', 'my.naver 응답 미리보기', body.slice(0, 500));
+          }
           finish(sorted.length ? sorted[0][0] : null);
         });
         res.on('error', () => finish(null));
@@ -833,10 +865,10 @@ async function extractIdViaNetRedirect(ses) {
         res.on('end', () => {
           // 1순위: loginId / userId JSON 패턴 (내 계정)
           const JSON_PATTERNS = [
-            /"loginId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-            /"userId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
-            /"id"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})".*?"type"\s*:\s*"user"/,
-            /data-nid="([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})"/,
+            /"loginId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+            /"userId"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
+            /"id"\s*:\s*"([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})".*?"type"\s*:\s*"user"/,
+            /data-nid="([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})"/,
           ];
           for (const p of JSON_PATTERNS) {
             const m = body.match(p);
@@ -877,7 +909,7 @@ async function extractIdViaNetRedirect(ses) {
         req.on('redirect', (statusCode, method, redirectUrl) => {
           writeLog('INFO', 'LOGIN', `net redirect (${statusCode}) [${new URL(startUrl).pathname}]`, redirectUrl);
           // blog.naver.com/{userId} 패턴
-          const m = redirectUrl.match(/(?:(?:admin|m)\.)?blog\.naver\.com\/([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})\/?(?:\?|#|$)/);
+          const m = redirectUrl.match(/(?:(?:admin|m)\.)?blog\.naver\.com\/([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})\/?(?:\?|#|$)/);
           if (m && checkId(m[1])) { finish(m[1].toLowerCase()); return; }
           // blogId= 쿼리 파라미터
           try {
@@ -952,7 +984,7 @@ async function openNaverLogin() {
         } catch {}
         // 2) 다른 파라미터(url=...) 안에 인코딩되어 중첩된 경우 (예: finalize) —
         //    원문 문자열에서 id=/id%3D 패턴(이중 인코딩된 %26id%3D 포함)을 직접 탐색
-        const m = url.match(/(?:[?&]id(?:=|%3D)|%26id%3D)([a-zA-Z0-9][a-zA-Z0-9_.]{2,19})(?=[&%]|$)/i);
+        const m = url.match(/(?:[?&]id(?:=|%3D)|%26id%3D)([a-zA-Z0-9][a-zA-Z0-9_.-]{2,19})(?=[&%]|$)/i);
         if (m && isValidNaverId(m[1])) return m[1].toLowerCase();
       } catch {}
       return null;
@@ -990,7 +1022,15 @@ async function openNaverLogin() {
 
         writeLog('INFO', 'LOGIN', '현재 URL', loginWin.isDestroyed() ? '(destroyed)' : loginWin.webContents.getURL());
 
-        // ID 추출 — 전략0(로그인 URL 캡처) + 기존 4단계 전략 (창 이동 없이 ses.fetch 우선)
+        // ID 추출 — 전략0(로그인 URL 캡처) + 전략3(hiddenWin, "내 블로그" 클릭)
+        // 2026-07-17 정리: 기존 전략1(net.request/my.naver)·전략2(현재 페이지
+        // JS 추출)·전략4(쿠키 파싱)는 실사용 테스트에서 매번 예외 없이
+        // null만 반환하는 것이 확인됨 — 특히 전략1은 my.naver가 최신
+        // 프레임워크(클라이언트 렌더링 SPA) 구조로 바뀌면서 서버가 주는
+        // 원본 HTML만으로는 구조적으로 절대 ID를 찾을 수 없게 되어 더
+        // 이상 의미가 없음. 매 로그인마다 불필요한 네트워크 요청만
+        //늘리고 있어 제거. (extractIdViaNetRedirect 함수 자체는 발행
+        // 시점 재확인(needsIdRefresh)에서 별도로 계속 쓰이므로 남겨둠.)
         let naverId = null;
 
         // 전략0: 로그인 과정 중 URL에서 미리 캡처된 실제 ID가 있으면 최우선 사용
@@ -1001,26 +1041,9 @@ async function openNaverLogin() {
           writeLog('INFO', 'LOGIN', '전략0(로그인URL캡처)', naverId);
         }
 
-        // 전략1: net.request 리다이렉트 추적 (가장 확실)
-        if (!naverId) {
-          naverId = await extractIdViaNetRedirect(ses);
-          writeLog('INFO', 'LOGIN', '전략1(netRedirect)', naverId || 'null');
-        }
-
-        if (!naverId) {
-          // 전략2: 현재 페이지 JS 추출
-          naverId = await extractIdFromPage(loginWin);
-          writeLog('INFO', 'LOGIN', '전략2(JS)', naverId || 'null');
-        }
-
         if (!naverId) {
           naverId = await extractIdViaHiddenWindow(ses);
           writeLog('INFO', 'LOGIN', '전략3(hiddenWin)', naverId || 'null');
-        }
-
-        if (!naverId) {
-          naverId = extractIdFromCookies(allCookies);
-          writeLog('INFO', 'LOGIN', '전략4(쿠키)', naverId || 'null');
         }
 
         // 전략0 재확인 (2026-07-04): 위 1~4번이 진행되는 수 초~수십 초 동안
@@ -1468,7 +1491,10 @@ ipcMain.handle('account:getAll', () => {
     const { getDB } = require('./src/db');
     const accounts = getDB()
       .prepare(
-        'SELECT id, naver_id, nickname, memo, last_login, status, loop_enabled, loop_category, naver_category FROM accounts ORDER BY id DESC'
+        // 2026-07-17 변경: 사용자가 드래그로 지정한 순서(sort_order)를
+        // 우선 따르고, 값이 같은 경우(예: 아직 한 번도 재정렬 안 한
+        // 신규 계정들)에는 기존처럼 최신 등록 순으로 표시.
+        'SELECT id, naver_id, nickname, memo, last_login, status, loop_enabled, loop_category, naver_category, sort_order FROM accounts ORDER BY sort_order DESC, id DESC'
       )
       .all();
     // 진단용 로그 (2026-07-05 추가) — 계정 목록 조회 결과(개수) + 실제 DB 파일 위치 추적용
@@ -1477,6 +1503,35 @@ ipcMain.handle('account:getAll', () => {
   } catch (err) {
     // 진단용 로그 (2026-07-05 추가) — 계정 목록 조회 실패 원인 추적용
     writeLog('ERROR', 'ACCOUNT', 'account:getAll 조회 실패', err.stack || err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ── IPC: 계정 순서 변경 (2026-07-17 신규) ──────────────────────
+// 계정 관리 화면에서 드래그로 순서를 바꾸면, 새로 정렬된 전체 계정
+// id 배열(위에서 아래 순서)을 통째로 받아 sort_order를 다시 매긴다.
+// 맨 위(배열의 첫 번째)가 가장 큰 값을 갖도록 해서, account:getAll의
+// "ORDER BY sort_order DESC"와 그대로 맞물리게 한다. 매번 전체를
+// 다시 매기는 방식이라, 몇 번을 반복해도 값이 어긋나거나 밀리지 않는다.
+ipcMain.handle('account:reorder', (event, orderedIds) => {
+  try {
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+      return { success: false, error: '잘못된 순서 목록입니다.' };
+    }
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const total = orderedIds.length;
+    const update = db.prepare('UPDATE accounts SET sort_order = ? WHERE id = ?');
+    const runAll = db.transaction((ids) => {
+      ids.forEach((id, idx) => {
+        update.run(total - idx, id); // 맨 위 = total, 맨 아래 = 1
+      });
+    });
+    runAll(orderedIds);
+    writeLog('INFO', 'ACCOUNT', '계정 순서 변경 완료', `${total}개`);
+    return { success: true };
+  } catch (err) {
+    writeLog('ERROR', 'ACCOUNT', '계정 순서 변경 실패', err.stack || err.message);
     return { success: false, error: err.message };
   }
 });
@@ -4026,7 +4081,12 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
   // border-outer/inner+PICK 뱃지 테두리를 그대로 사용, 그 외 22종 중 하나를
   // 고른 상태면 해당 design 객체를 찾아 아래에서 (동일한 사진 배경 위에)
   // renderThumbDesignChrome()의 장식 테두리로 교체한다.
-  const designId = getStore().get('settings.thumbnailDesign', 'default');
+  // 2026-07-17 추가: 'random'이면 매 발행마다 22종 중 무작위로 하나를 골라
+  // 적용 — postStyle(-1=랜덤)과 동일한 개념을 디자인 선택에도 도입.
+  let designId = getStore().get('settings.thumbnailDesign', 'default');
+  if (designId === 'random') {
+    designId = THUMB_DESIGNS[Math.floor(Math.random() * THUMB_DESIGNS.length)].id;
+  }
   const design = designId !== 'default' ? THUMB_DESIGNS.find(d => d.id === designId) : null;
 
   // 배경 사진 검색어: 첫 해시태그 우선, 없으면 제목
@@ -6124,17 +6184,23 @@ ipcMain.handle('dashboard:getAccountStats', () => {
   }
 });
 
-// ── IPC: [개발용] 데이터 초기화 (계정 제외) ──────────────────
+// ── IPC: 환경설정 - 시스템 "전체 초기화" ──────────────────────
+// 2026-07-17 변경: 기존엔 posts 테이블(발행 이력 + 예약글) 전체를
+// 삭제했음. 그런데 발행 안전 설정의 "하루 최대 발행 횟수" 제한이 이
+// posts 테이블의 오늘 발행 건수를 세어 판단하는 구조라, 사용자가 이
+// 버튼을 반복해서 누르면 이력을 계속 지워가며 하루 발행 제한을 사실상
+// 무제한으로 우회할 수 있는 문제가 있었음(사용자 지적). 발행 이력/예약은
+// 절대 건드리지 않고, 로그 기록·오류 로그·자동화 루프 로그 3종만 한 번에
+// 비우는 기능으로 용도를 변경.
 ipcMain.handle('dev:reset', () => {
   try {
-    const { getDB } = require('./src/db');
-    const db = getDB();
-    db.prepare('DELETE FROM posts').run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name='posts'").run();
-    writeLog('INFO', 'DEV', '데이터 초기화 완료 (posts 테이블 삭제)');
+    fs.writeFileSync(getLogFile(), '', 'utf8');
+    fs.writeFileSync(getLoopLogFile(), '', 'utf8');
+    fs.writeFileSync(getErrorOnlyLogFile(), '', 'utf8');
+    writeLog('INFO', 'DEV', '전체 초기화 완료 (로그 기록/오류 로그/자동화 루프 로그)');
     return { success: true };
   } catch (err) {
-    writeLog('ERROR', 'DEV', '데이터 초기화 실패', err.message);
+    writeLog('ERROR', 'DEV', '전체 초기화 실패', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -7175,7 +7241,15 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
 
     writeLog('INFO', 'CATTOPIC', '실제 카테고리 매칭 시작', `accountId=${accountId}, naverId=${naverId}`);
 
-    const partition = `persist:cattopic-${accountId}`;
+    // 2026-07-18 수정: 기존엔 persist:cattopic-{accountId}처럼 계정마다
+    // 고정된 이름의 "디스크에 저장되는" 세션을 재사용했음. 이 경우 예전
+    // 테스트 때 쌓인 오래된 쿠키가 디스크에 계속 남아있다가, 지금 새로
+    // 주입하는 정상 쿠키와 뒤섞여 네이버가 로그인 안 된 것으로 판단해
+    // 로그인 화면으로 돌려보내는 문제가 실사용 확인됨(5개 계정 중 4개
+    // 발생, skysmoga만 우연히 찌꺼기가 없어 정상 동작). 발행 기능
+    // (publishToNaver)처럼 매번 완전히 새로운, 저장되지 않는 임시 세션을
+    // 쓰도록 변경 — 매번 깨끗한 상태로 시작해 이런 오염 자체가 불가능함.
+    const partition = `cattopic-${accountId}-${Date.now()}`;
     const ses = electronSession.fromPartition(partition);
     for (const cookie of cookies) {
       try {
@@ -7264,9 +7338,38 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
                 return interactive || target;
               }
 
-              var iframe = Array.from(document.querySelectorAll('iframe')).find(function(f){ return (f.id||f.name) === 'papermain'; });
-              if (!iframe || !iframe.contentDocument) return JSON.stringify({ error: 'papermain iframe 접근 불가' });
-              var doc = iframe.contentDocument;
+              // 2026-07-18 수정: 기존엔 바깥에서 3초 딱 한 번만 기다린 뒤
+              // iframe 접근을 단 한 번만 확인했음. 이 창은 계정마다 매번
+              // 새로운 빈 세션(persist:cattopic-{accountId}, 캐시 없음)을
+              // 쓰기 때문에 무거운 관리자 페이지가 3초 안에 다 못 뜨는
+              // 경우가 실사용 테스트(5개 계정 중 4개 실패)로 확인됨.
+              // iframe과 그 안의 카테고리 목록이 실제로 준비될 때까지
+              // 최대 8초(800ms x 10회) 반복 확인하도록 변경.
+              // 2026-07-18 추가: 재시도해도 여전히 실패하는 계정이 있어,
+              // 단순 로딩 지연이 아니라 애초에 다른 화면(권한 없음/로그인
+              // 필요 등)으로 갔을 가능성을 확인하기 위해 실패 시 페이지
+              // 제목·주소·화면 텍스트·iframe 존재 여부까지 진단 정보로 남김.
+              var iframe = null, doc = null;
+              for (var waitAttempt = 0; waitAttempt < 10; waitAttempt++) {
+                iframe = Array.from(document.querySelectorAll('iframe')).find(function(f){ return (f.id||f.name) === 'papermain'; });
+                if (iframe && iframe.contentDocument && iframe.contentDocument.querySelectorAll('li').length > 0) {
+                  doc = iframe.contentDocument;
+                  break;
+                }
+                await sleep(800);
+              }
+              if (!doc) {
+                var allIframeInfo = Array.from(document.querySelectorAll('iframe')).map(function(f) {
+                  return { id: f.id, name: f.name, src: f.src, accessible: !!f.contentDocument };
+                });
+                return JSON.stringify({
+                  error: 'papermain iframe 접근 불가',
+                  pageTitle: document.title || '',
+                  pageUrl: document.URL || '',
+                  bodyText: (document.body ? document.body.innerText : '').trim().slice(0, 300),
+                  iframes: allIframeInfo
+                });
+              }
 
               var catEls = extractCategoryElements(doc);
               if (catEls.length === 0) return JSON.stringify({ error: '카테고리 목록을 찾지 못함' });
@@ -7294,6 +7397,15 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
           clearTimeout(globalTimeout);
           if (parsed.error) {
             writeLog('WARN', 'CATTOPIC', '매칭 실패', parsed.error);
+            // 2026-07-18 추가: 진단 정보(페이지 제목/주소/화면 텍스트/iframe
+            // 목록)가 있으면 함께 남겨, 단순 로딩 지연인지 애초에 다른
+            // 화면으로 갔는지 다음 실패 시 바로 구분할 수 있게 함.
+            if (parsed.pageTitle !== undefined) {
+              writeLog('WARN', 'CATTOPIC', '실패 시점 페이지 정보', JSON.stringify({
+                title: parsed.pageTitle, url: parsed.pageUrl, iframes: parsed.iframes
+              }));
+              if (parsed.bodyText) writeLog('WARN', 'CATTOPIC', '실패 시점 화면 텍스트', parsed.bodyText);
+            }
             done({ success: false, error: parsed.error });
             return;
           }
