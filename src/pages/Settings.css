@@ -996,3 +996,8 @@
   line-height: 1.3;
   text-align: center;
 }
+
+/* 2026-07-17: "랜덤" 옵션 미리보기는 이제 RandomDesignPreview 컴포넌트가
+   ThumbDesignPreview의 "기본" 분기와 동일한 구조를 인라인 스타일로 직접
+   그리므로(다른 22종과 정확히 같은 크기/비율을 위해), 별도 CSS 클래스는
+   더 이상 필요 없어 제거함. */

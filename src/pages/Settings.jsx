@@ -72,7 +72,6 @@ function ThumbDesignPreview({ design }) {
       </div>
     );
   }
-
   const acc = design.accent || '#d4af37';
   const logoDots = (design.logos || []).map((p) => {
     const pos = {
@@ -184,6 +183,26 @@ function ThumbDesignPreview({ design }) {
   );
 }
 
+// ── "랜덤" 옵션 전용 미리보기 (2026-07-17 추가) ────────────────
+// 위 ThumbDesignPreview(!design 분기, "기본" 미리보기)와 완전히 동일한
+// 배경/박스 구조를 그대로 재사용 — 바깥 가장자리가 아니라 4px 안쪽에
+// 테두리를 그리는 동일한 방식이라야 다른 22종 미리보기와 크기·비율이
+// 정확히 같아 보임(사용자 확인 요청으로 구조를 맞춤). 테두리 색만
+// 흰색으로, 그 안에 코너 뱃지 대신 주사위 아이콘을 가운데 배치.
+function RandomDesignPreview({ small }) {
+  const PLACEHOLDER_PHOTO = 'linear-gradient(160deg,#6b7684,#3f4750)';
+  const OVERLAY = 'linear-gradient(180deg, rgba(0,0,0,0.28), rgba(0,0,0,0.55))';
+  return (
+    <div style={{ position:'relative', width:'100%', height:'100%', borderRadius:'6px', overflow:'hidden',
+      background: `${OVERLAY}, ${PLACEHOLDER_PHOTO}` }}>
+      <div style={{ position:'absolute', inset:'4px', border:'2px solid #ffffff', borderRadius:'6px',
+        display:'flex', alignItems:'center', justifyContent:'center', fontSize: small ? '12px' : '22px' }}>
+        🎲
+      </div>
+    </div>
+  );
+}
+
 // ── 썸네일 디자인 커스텀 드롭다운 (2026-07-13 3차 수정) ────────────
 // 처음엔 22개 카드를 항상 펼쳐서 보여줬는데, 사용자가 "카드가 너무 커지고
 // 지저분해 보인다"고 피드백 — 평소엔 닫혀 있다가 클릭했을 때만 미리보기가
@@ -230,16 +249,26 @@ function ThumbDesignPicker({ value, onChange }) {
     };
   }, [open]);
 
-  const selectedDesign = value && value !== 'default'
+  const isRandom = value === 'random';
+  const selectedDesign = (value && value !== 'default' && !isRandom)
     ? THUMB_DESIGN_OPTIONS.find(d => d.id === value)
     : null;
-  const displayLabel = selectedDesign ? selectedDesign.label : '기본 (포토 프레임)';
+  const displayLabel = isRandom ? '🎲 랜덤 (매번 다른 디자인)' : (selectedDesign ? selectedDesign.label : '기본 (포토 프레임)');
 
   const panel = open ? createPortal(
     <div className="thumb-design-panel" ref={panelRef} style={{ top: coords.top, left: coords.left, width: coords.width }}>
       <div className="thumb-design-panel-grid">
+        {/* 2026-07-17 추가: 매번 발행할 때마다 22종 중 무작위로 하나 골라
+            적용되는 옵션. main.js의 THUMB_DESIGNS 랜덤 선택 로직과 짝을
+            이룸(설정값 'random'). 사용자 요청으로 "기본"보다 앞에 배치. */}
         <button type="button"
-          className={`thumb-design-panel-item${!selectedDesign ? ' selected' : ''}`}
+          className={`thumb-design-panel-item${isRandom ? ' selected' : ''}`}
+          onClick={() => { onChange('random'); setOpen(false); }}>
+          <div className="thumb-design-panel-preview"><RandomDesignPreview /></div>
+          <span className="thumb-design-panel-label">랜덤</span>
+        </button>
+        <button type="button"
+          className={`thumb-design-panel-item${!selectedDesign && !isRandom ? ' selected' : ''}`}
           onClick={() => { onChange('default'); setOpen(false); }}>
           <div className="thumb-design-panel-preview"><ThumbDesignPreview design={null} /></div>
           <span className="thumb-design-panel-label">기본</span>
@@ -260,7 +289,9 @@ function ThumbDesignPicker({ value, onChange }) {
   return (
     <div className="thumb-design-picker">
       <button type="button" ref={btnRef} className="thumb-design-picker-btn" onClick={() => setOpen(o => !o)}>
-        <span className="thumb-design-picker-preview"><ThumbDesignPreview design={selectedDesign} /></span>
+        <span className="thumb-design-picker-preview">
+          {isRandom ? <RandomDesignPreview small /> : <ThumbDesignPreview design={selectedDesign} />}
+        </span>
         <span className="thumb-design-picker-label">{displayLabel}</span>
         <span className="naver-cat-picker-arrow">{open ? '\u25b2' : '\u25bc'}</span>
       </button>
@@ -306,10 +337,10 @@ const NAVER_CATEGORY_GROUPS = [
 const NAVER_CAT_PANEL_WIDTH = 560; // 2026-07-06: 컬럼별 가로폭이 너무 넓다는 피드백으로 700→560 축소
 const SIDEBAR_MIN_LEFT = 216; // 사이드바 너비(200px) + 여유 16px
 
-// 2026-07-06 신규: 계정당 다중 배정/네이버 카테고리 쌍(+추가/-삭제) 기능을
-// 파일럿으로 노출할 계정 목록. skysmoga로 시작해 skysmogs66도 함께 확인
-// 요청받아 추가함 — 다른 계정은 기존 단일 쌍 UI 그대로 유지.
-const PILOT_NAVER_IDS = ['skysmoga', 'skysmogs66'];
+// 2026-07-06 신규, 2026-07-18 정식 전환: 계정당 다중 배정/네이버 카테고리
+// 쌍(+추가/-삭제) 기능. 처음엔 skysmoga/skysmogs66 두 계정으로만 시범
+// 운영했으나, 정상 확인되어 이제 등록된 계정 수와 무관하게 모든 계정에
+// 동일하게 적용(더 이상 특정 계정 이름으로 제한하지 않음).
 
 function NaverCategoryPicker({ value, realNameMap, onChange, placeholder }) {
   const [open, setOpen] = useState(false);
@@ -466,9 +497,11 @@ export default function Settings() {
   const [inquiryResult, setInquiryResult]           = useState(null); // { success, error? } | null
   const [inquiryLogPreview, setInquiryLogPreview]   = useState('');
   // 2026-07-13 신규: 배포 버전은 사이드바 개발자 전용 초기화 버튼이 숨겨져
-  // 있어 데이터를 초기화할 방법이 없다는 요청으로, 시스템 탭에 전체 초기화를
-  // 노출. 로그 초기화(handleClearLog)와는 별개 — 계정 제외 전체 데이터(발행
-  // 이력/예약/검수 대기 등, dev:reset과 동일 범위) 초기화.
+  // 있어 데이터를 초기화할 방법이 없다는 요청으로, 시스템 탭에 로그 전체
+  // 초기화 버튼을 노출. 2026-07-17부터는 main.js의 dev:reset 자체가
+  // "로그 기록·오류 로그·자동화 루프 로그 3종만" 초기화하도록 범위가
+  // 좁혀짐(발행 이력을 반복 삭제해 하루 최대 발행 제한을 우회하는 문제
+  // 방지). 아래 handleFullReset은 그 범위 축소된 dev:reset을 그대로 호출.
   const [fullResetting, setFullResetting] = useState(false);
 
   // 자동화 루프 전용 로그 (2026-07-05 신규)
@@ -576,9 +609,9 @@ export default function Settings() {
     window.electronAPI.account.getAll().then(res => {
       if (res.success) {
         setLoopAccounts(res.accounts || []);
-        // 2026-07-06: 파일럿 계정들(PILOT_NAVER_IDS)의 추가 카테고리 쌍을 함께 로드
-        (res.accounts || []).filter(a => PILOT_NAVER_IDS.includes(a.naver_id))
-          .forEach(a => loadCategoryPairsForAccount(a.id));
+        // 2026-07-06 신규, 2026-07-18 전체 계정으로 확대: 모든 계정의
+        // 추가 카테고리 쌍을 함께 로드
+        (res.accounts || []).forEach(a => loadCategoryPairsForAccount(a.id));
       }
     });
   };
@@ -700,11 +733,16 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 2500);
   };
 
-  // 2026-07-13 신규: 계정을 제외한 전체 데이터 초기화 — Sidebar.jsx의
-  // 개발자 전용 handleDevReset과 동일한 IPC(dev:reset)를 사용. 배포
-  // 버전에서는 그 버튼이 숨겨져 있어 여기(시스템 탭)에서 노출.
+  // 2026-07-13 신규: 시스템 탭에 로그 초기화 버튼 노출(배포 버전은 사이드바
+  // 개발자 전용 초기화 버튼이 숨겨져 있어 대안으로 추가).
+  // 2026-07-17 변경: 원래는 dev:reset이 posts 테이블(발행 이력·예약)까지
+  // 통째로 지웠는데, 이걸 반복하면 발행 안전 설정의 "하루 최대 발행 횟수"
+  // 제한을 사실상 무제한으로 우회할 수 있는 문제가 있어(사용자 지적),
+  // main.js의 dev:reset 자체를 "로그 기록·오류 로그·자동화 루프 로그
+  // 3종만 초기화"하도록 범위를 좁혔음. 발행 이력·예약·계정 정보는 이
+  // 버튼으로 지워지지 않음 — 아래 문구/버튼명도 그에 맞게 수정.
   const handleFullReset = async () => {
-    if (!window.confirm('계정을 제외한 모든 데이터(발행 이력, 예약 등)를 초기화합니다.\n계속하시겠습니까?')) return;
+    if (!window.confirm('로그 기록 · 오류 로그 · 자동화 루프 로그를 초기화합니다.\n발행 이력·예약·계정 정보에는 영향을 주지 않습니다.\n계속하시겠습니까?')) return;
     setFullResetting(true);
     await window.electronAPI.dev.reset();
     window.location.reload();
@@ -1424,10 +1462,9 @@ export default function Settings() {
               {loopAccounts.length === 0 && <p className="loop-empty-hint">등록된 계정이 없습니다.</p>}
               {(showAllAccounts ? loopAccounts : loopAccounts.filter(a => a.loop_enabled)).map(a => {
                 // 2026-07-06 신규: 계정당 여러 개의 "배정 카테고리 + 네이버
-                // 카테고리" 쌍 지원 — 현재는 PILOT_NAVER_IDS(skysmoga,
-                // skysmogs66)에 한해서만 UI로 추가/삭제 가능(파일럿). 다른
-                // 계정은 기존과 완전히 동일.
-                const isPilot = PILOT_NAVER_IDS.includes(a.naver_id);
+                // 카테고리" 쌍 지원 — 2026-07-18부터 계정 수와 무관하게
+                // 모든 계정에 적용(기존 파일럿 제한 제거).
+                const isPilot = true;
                 const pairs = isPilot ? (categoryPairs[a.id] || []) : [];
                 const canAddMore = pairs.length < 4;
                 // 2026-07-06: 추가된 쌍이 있으면(hasExtra) 계정 블록 전체를
@@ -1676,8 +1713,8 @@ export default function Settings() {
               2026-07-05 수정: 사용자 요청으로 "오류 로그 보기"와 "파일로 열기" 사이로 위치 이동. */}
           <button className="btn btn-ghost btn-sm" onClick={handleShowLoopLog}>🔁 자동화 루프 로그</button>
           <button className="btn btn-ghost btn-sm" onClick={handleOpenLog}>↗ 파일로 열기</button>
-          <button className="btn btn-ghost btn-sm log-clear-btn" onClick={handleFullReset} disabled={fullResetting} title="계정을 제외한 발행 이력·예약 등 전체 데이터를 초기화합니다">
-            {fullResetting ? '초기화 중…' : '🗑 전체 초기화'}
+          <button className="btn btn-ghost btn-sm log-clear-btn" onClick={handleFullReset} disabled={fullResetting} title="로그 기록·오류 로그·자동화 루프 로그를 한 번에 초기화합니다 (발행 이력·예약·계정 정보는 영향받지 않음)">
+            {fullResetting ? '초기화 중…' : '🗑 로그 전체 초기화'}
           </button>
           {/* 문의하기 — 오류 로그 자동 첨부 (2026-07-14 신규) */}
           <button className="btn btn-ghost btn-sm" onClick={handleOpenInquiry}>📮 문의하기</button>

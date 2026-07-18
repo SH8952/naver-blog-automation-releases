@@ -4081,7 +4081,12 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
   // border-outer/inner+PICK 뱃지 테두리를 그대로 사용, 그 외 22종 중 하나를
   // 고른 상태면 해당 design 객체를 찾아 아래에서 (동일한 사진 배경 위에)
   // renderThumbDesignChrome()의 장식 테두리로 교체한다.
-  const designId = getStore().get('settings.thumbnailDesign', 'default');
+  // 2026-07-17 추가: 'random'이면 매 발행마다 22종 중 무작위로 하나를 골라
+  // 적용 — postStyle(-1=랜덤)과 동일한 개념을 디자인 선택에도 도입.
+  let designId = getStore().get('settings.thumbnailDesign', 'default');
+  if (designId === 'random') {
+    designId = THUMB_DESIGNS[Math.floor(Math.random() * THUMB_DESIGNS.length)].id;
+  }
   const design = designId !== 'default' ? THUMB_DESIGNS.find(d => d.id === designId) : null;
 
   // 배경 사진 검색어: 첫 해시태그 우선, 없으면 제목
@@ -7236,7 +7241,15 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
 
     writeLog('INFO', 'CATTOPIC', '실제 카테고리 매칭 시작', `accountId=${accountId}, naverId=${naverId}`);
 
-    const partition = `persist:cattopic-${accountId}`;
+    // 2026-07-18 수정: 기존엔 persist:cattopic-{accountId}처럼 계정마다
+    // 고정된 이름의 "디스크에 저장되는" 세션을 재사용했음. 이 경우 예전
+    // 테스트 때 쌓인 오래된 쿠키가 디스크에 계속 남아있다가, 지금 새로
+    // 주입하는 정상 쿠키와 뒤섞여 네이버가 로그인 안 된 것으로 판단해
+    // 로그인 화면으로 돌려보내는 문제가 실사용 확인됨(5개 계정 중 4개
+    // 발생, skysmoga만 우연히 찌꺼기가 없어 정상 동작). 발행 기능
+    // (publishToNaver)처럼 매번 완전히 새로운, 저장되지 않는 임시 세션을
+    // 쓰도록 변경 — 매번 깨끗한 상태로 시작해 이런 오염 자체가 불가능함.
+    const partition = `cattopic-${accountId}-${Date.now()}`;
     const ses = electronSession.fromPartition(partition);
     for (const cookie of cookies) {
       try {
@@ -7325,9 +7338,38 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
                 return interactive || target;
               }
 
-              var iframe = Array.from(document.querySelectorAll('iframe')).find(function(f){ return (f.id||f.name) === 'papermain'; });
-              if (!iframe || !iframe.contentDocument) return JSON.stringify({ error: 'papermain iframe 접근 불가' });
-              var doc = iframe.contentDocument;
+              // 2026-07-18 수정: 기존엔 바깥에서 3초 딱 한 번만 기다린 뒤
+              // iframe 접근을 단 한 번만 확인했음. 이 창은 계정마다 매번
+              // 새로운 빈 세션(persist:cattopic-{accountId}, 캐시 없음)을
+              // 쓰기 때문에 무거운 관리자 페이지가 3초 안에 다 못 뜨는
+              // 경우가 실사용 테스트(5개 계정 중 4개 실패)로 확인됨.
+              // iframe과 그 안의 카테고리 목록이 실제로 준비될 때까지
+              // 최대 8초(800ms x 10회) 반복 확인하도록 변경.
+              // 2026-07-18 추가: 재시도해도 여전히 실패하는 계정이 있어,
+              // 단순 로딩 지연이 아니라 애초에 다른 화면(권한 없음/로그인
+              // 필요 등)으로 갔을 가능성을 확인하기 위해 실패 시 페이지
+              // 제목·주소·화면 텍스트·iframe 존재 여부까지 진단 정보로 남김.
+              var iframe = null, doc = null;
+              for (var waitAttempt = 0; waitAttempt < 10; waitAttempt++) {
+                iframe = Array.from(document.querySelectorAll('iframe')).find(function(f){ return (f.id||f.name) === 'papermain'; });
+                if (iframe && iframe.contentDocument && iframe.contentDocument.querySelectorAll('li').length > 0) {
+                  doc = iframe.contentDocument;
+                  break;
+                }
+                await sleep(800);
+              }
+              if (!doc) {
+                var allIframeInfo = Array.from(document.querySelectorAll('iframe')).map(function(f) {
+                  return { id: f.id, name: f.name, src: f.src, accessible: !!f.contentDocument };
+                });
+                return JSON.stringify({
+                  error: 'papermain iframe 접근 불가',
+                  pageTitle: document.title || '',
+                  pageUrl: document.URL || '',
+                  bodyText: (document.body ? document.body.innerText : '').trim().slice(0, 300),
+                  iframes: allIframeInfo
+                });
+              }
 
               var catEls = extractCategoryElements(doc);
               if (catEls.length === 0) return JSON.stringify({ error: '카테고리 목록을 찾지 못함' });
@@ -7355,6 +7397,15 @@ ipcMain.handle('blog:getCategoryTopics', async (_, accountId) => {
           clearTimeout(globalTimeout);
           if (parsed.error) {
             writeLog('WARN', 'CATTOPIC', '매칭 실패', parsed.error);
+            // 2026-07-18 추가: 진단 정보(페이지 제목/주소/화면 텍스트/iframe
+            // 목록)가 있으면 함께 남겨, 단순 로딩 지연인지 애초에 다른
+            // 화면으로 갔는지 다음 실패 시 바로 구분할 수 있게 함.
+            if (parsed.pageTitle !== undefined) {
+              writeLog('WARN', 'CATTOPIC', '실패 시점 페이지 정보', JSON.stringify({
+                title: parsed.pageTitle, url: parsed.pageUrl, iframes: parsed.iframes
+              }));
+              if (parsed.bodyText) writeLog('WARN', 'CATTOPIC', '실패 시점 화면 텍스트', parsed.bodyText);
+            }
             done({ success: false, error: parsed.error });
             return;
           }
