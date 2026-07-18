@@ -1615,18 +1615,62 @@ ipcMain.handle('account:delete', (event, id) => {
 });
 
 // ── IPC: 닉네임·메모 수정 ────────────────────────────────────
-ipcMain.handle('account:update', (event, { id, nickname, memo, naver_id }) => {
+ipcMain.handle('account:update', async (event, { id, nickname, memo, naver_id }) => {
   try {
     const { getDB } = require('./src/db');
     const db = getDB();
+    const existing = db.prepare('SELECT naver_id, status, cookies_encrypted FROM accounts WHERE id = ?').get(id);
+    const idChanged = naver_id !== undefined && naver_id.trim() !== (existing?.naver_id || '');
+
     if (naver_id !== undefined) {
       db.prepare('UPDATE accounts SET nickname = ?, memo = ?, naver_id = ? WHERE id = ?')
-        .run(nickname ?? '', memo ?? '', naver_id, id);
+        .run(nickname ?? '', memo ?? '', naver_id.trim(), id);
     } else {
       db.prepare('UPDATE accounts SET nickname = ?, memo = ? WHERE id = ?')
         .run(nickname ?? '', memo ?? '', id);
     }
-    return { success: true };
+
+    let newStatus = existing?.status || 'active';
+
+    // 2026-07-19 신규: 사용자가 아이디 칸을 직접 수정했을 때, 실제로
+    // 저장된 쿠키(로그인 세션)로 접속되는 진짜 블로그 아이디와 일치하는지
+    // 확인. 예를 들어 "skysmogs66"으로 로그인했는데 아이디 칸을
+    // "skysmogs69"처럼 잘못 고치면, 실제 블로그/카테고리를 전혀 다른
+    // (또는 존재하지 않는) 곳에서 찾게 되어 여러 기능이 조용히 실패함.
+    // 로그인 캡처 때 검증된 "내 블로그 클릭해서 진짜 아이디 확인" 로직
+    // (extractIdViaHiddenWindow)을 그대로 재사용해 즉시 일치 여부를 확인.
+    if (idChanged && existing?.cookies_encrypted) {
+      writeLog('INFO', 'ACCOUNT', '아이디 수정 감지 — 실제 블로그와 일치 확인 시작', `accountId=${id}, 입력값=${naver_id}`);
+      try {
+        const cookies = JSON.parse(decrypt(existing.cookies_encrypted) || '[]');
+        const partition = `verify-id-${id}-${Date.now()}`; // 매번 새로운 임시 세션(발행 기능과 동일한 방식)
+        const ses = electronSession.fromPartition(partition);
+        for (const cookie of cookies) {
+          try {
+            const urlBase = cookie.domain?.startsWith('.')
+              ? `https://www${cookie.domain}`
+              : `https://${cookie.domain || 'naver.com'}`;
+            await ses.cookies.set({
+              url: urlBase, name: cookie.name, value: cookie.value,
+              domain: cookie.domain, path: cookie.path || '/',
+              secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+              expirationDate: cookie.expirationDate,
+            });
+          } catch {}
+        }
+        const realId = await extractIdViaHiddenWindow(ses);
+        const matches = !!realId && realId.toLowerCase() === naver_id.trim().toLowerCase();
+        newStatus = matches ? 'active' : 'error';
+        db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run(newStatus, id);
+        writeLog(matches ? 'INFO' : 'WARN', 'ACCOUNT', '아이디 일치 확인 결과', `accountId=${id}, 입력값=${naver_id}, 실제값=${realId}, 일치=${matches}`);
+      } catch (verifyErr) {
+        // 검증 자체가 실패한 경우(네트워크 오류 등)는 오류로 단정하지 않고
+        // 기존 상태를 유지 — 잘못된 오류 표시를 방지
+        writeLog('WARN', 'ACCOUNT', '아이디 일치 확인 중 오류(검증 보류)', verifyErr.message);
+      }
+    }
+
+    return { success: true, status: newStatus };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -7000,7 +7044,13 @@ ipcMain.handle('blog:getCategories', async (_, accountId) => {
     writeLog('INFO', 'CATEGORY', `naverId=${naverId}, 쿠키수=${cookies.length}`);
 
     // ── 격리 세션 + 쿠키 주입 ──────────────────────────────
-    const partition = `persist:cat-${accountId}`;
+    // 2026-07-19 수정: persist:cat-{accountId}처럼 계정마다 고정된 이름의
+    // "디스크에 저장되는" 세션을 재사용하고 있었음 — CATTOPIC(실제 카테고리
+    // 불러오기) 기능에서 겪었던 것과 완전히 동일한 구조. 이 경우 로그인
+    // 페이지로 리다이렉트되는 문제가 실사용 확인됨(발행 버튼을 찾다가
+    // 로그인 화면의 문구들만 검색됨). 발행 기능(publishToNaver)처럼 매번
+    // 완전히 새로운, 저장되지 않는 임시 세션을 쓰도록 변경.
+    const partition = `cat-${accountId}-${Date.now()}`;
     const ses = electronSession.fromPartition(partition);
     for (const cookie of cookies) {
       try {
@@ -7101,6 +7151,30 @@ ipcMain.handle('blog:getCategories', async (_, accountId) => {
           await sleep(1000);
         }
         writeLog('INFO', 'CATEGORY', '발행 버튼 클릭', clickResult);
+        if (clickResult.startsWith('NOT_FOUND')) {
+          // 2026-07-19 추가: 발행 버튼을 못 찾을 때, 실제 페이지가 무엇인지
+          // (로그인 화면으로 리다이렉트된 것인지 등) 바로 확인할 수 있도록
+          // 제목/주소를 함께 남김 (CATTOPIC에서 효과를 봤던 진단 방식)
+          let pageInfo = null;
+          try {
+            pageInfo = await catWin.webContents.executeJavaScript(
+              `({ title: document.title, url: document.URL })`
+            );
+            writeLog('WARN', 'CATEGORY', '발행 버튼 못 찾음 - 페이지 정보', JSON.stringify(pageInfo));
+          } catch {}
+          // 2026-07-19 추가: 여기서 이미 실패가 사실상 확정된 상태인데도
+          // 계속 다음 단계(카테고리 추출)를 시도하다가, 전체 타임아웃(45초)
+          // 으로 창이 먼저 파괴돼 "Object has been destroyed" 오류가 뒤늦게
+          // 나던 문제가 실사용 확인됨. 여기서 바로 실패 처리하고 종료.
+          const isLoginPage = pageInfo && /nid\.naver\.com|NAVER 로그인/.test(pageInfo.title + pageInfo.url);
+          done({
+            success: false,
+            error: isLoginPage
+              ? '로그인 세션이 유효하지 않습니다 (재로그인 후 다시 시도해주세요)'
+              : '발행 버튼을 찾을 수 없습니다',
+          });
+          return;
+        }
         await sleep(3000); // 발행 패널 열릴 때까지 충분히 대기
 
         // ── 카테고리 드롭다운 버튼 클릭 → catBtn 조상 컨테이너에서 li 추출

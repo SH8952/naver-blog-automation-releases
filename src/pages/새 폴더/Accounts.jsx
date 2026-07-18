@@ -35,8 +35,12 @@ const TrashIcon = () => (
   </svg>
 );
 
-// 2026-07-19: RefreshIcon(재로그인 버튼용)은 별도 버튼이 상태 배지로
-// 통합되며 더 이상 쓰이지 않아 제거함.
+const RefreshIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+    <polyline points="23 4 23 10 17 10" />
+    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+  </svg>
+);
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function Accounts() {
@@ -518,31 +522,22 @@ export default function Accounts() {
                     )}
                   </td>
 
-                  {/* 상태 (2026-07-19 변경: 별도 재로그인 버튼 대신 배지
-                      자체에 기능 통합 — 공간 절약 + 직관성 개선)
-                      - 활성(녹색): 정상
-                      - 만료(주황, 클릭 가능): 클릭하면 재로그인 진행
-                      - 오류(빨강): 아이디를 수동으로 잘못 고쳐 실제
-                        블로그와 안 맞는 경우 등(account:update 검증 결과) */}
+                  {/* 상태 */}
                   <td className="col-status">
                     <span className="status-cell-wrap" data-col="status">
-                      {acct.status === 'active' && (
-                        <span className="status-badge status-active">✓ 활성</span>
-                      )}
+                      <span className={`status-badge status-${acct.status}`}>
+                        {acct.status === 'active' ? '✓ 활성' : '⚠ 만료'}
+                      </span>
                       {acct.status === 'expired' && (
                         <button
-                          className="status-badge status-expired status-badge-clickable"
+                          className="btn-relogin"
                           onClick={handleReLogin}
                           disabled={adding}
-                          title="클릭하면 재로그인 창이 열립니다"
+                          title="다시 로그인"
                         >
-                          ⚠ 만료
+                          <RefreshIcon />
+                          재로그인
                         </button>
-                      )}
-                      {acct.status === 'error' && (
-                        <span className="status-badge status-error" title="아이디가 실제 로그인된 블로그와 일치하지 않습니다 — 아이디를 다시 확인해주세요">
-                          ⛔ 오류
-                        </span>
                       )}
                     </span>
                   </td>

@@ -226,43 +226,38 @@
 /* 체크박스(선택모드)와 저장/취소 버튼(편집 중) 모두 가운데 정렬 */
 .col-actions  { text-align: center; }
 
-/* ─── 상태 뱃지 ──────────────────────────────────────────────── */
+/* ─── 상태 뱃지 (2026-07-19 변경: 3단계 — 활성/만료/오류) ────────── */
 .status-badge {
   display: inline-block;
   padding: 3px 8px;
   border-radius: 99px;
   font-size: 11px;
   font-weight: 600;
+  border: none;
 }
 .status-active {
   background: rgba(52, 211, 153, 0.12);
   color: var(--success);
 }
+/* 만료 — 기존 재로그인 버튼과 같은 주황(warning) 색상, 클릭 가능 */
 .status-expired {
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warning);
+}
+.status-badge-clickable {
+  cursor: pointer;
+  transition: background var(--transition);
+  font-family: inherit;
+}
+.status-badge-clickable:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.22);
+}
+.status-badge-clickable:disabled { opacity: 0.4; cursor: not-allowed; }
+/* 오류 — 아이디가 실제 블로그와 안 맞는 등, 명확한 문제 상황 */
+.status-error {
   background: rgba(248, 113, 113, 0.12);
   color: var(--danger);
 }
-
-/* ─── 재로그인 버튼 ──────────────────────────────────────────── */
-.btn-relogin {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 8px;
-  padding: 3px 8px;
-  background: transparent;
-  border: 1px solid var(--warning);
-  color: var(--warning);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--transition);
-}
-.btn-relogin:hover:not(:disabled) {
-  background: rgba(251, 191, 36, 0.1);
-}
-.btn-relogin:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ─── 인라인 편집 셀 ─────────────────────────────────────────── */
 .editable-cell {
