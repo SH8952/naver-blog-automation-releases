@@ -115,7 +115,11 @@ function firebasePush(path, data, method = 'POST') {
   return new Promise((resolve) => {
     try {
       const body = JSON.stringify(data);
-      const req = net.request({ method, url: `${FIREBASE_DB_URL}/${path}.json` });
+      // 2026-07-20: 경로 이름을 한글로 바꾸면서(라이선스발급/기기활성화 등)
+      // 비ASCII 문자가 URL에 그대로 들어가게 됨 — Node의 URL 클래스로 감싸서
+      // 퍼센트 인코딩을 확실히 적용한 뒤 net.request에 넘긴다.
+      const url = new URL(`${FIREBASE_DB_URL}/${path}.json`);
+      const req = net.request({ method, url: url.href });
       req.setHeader('Content-Type', 'application/json');
       let respBody = '';
       req.on('response', (res) => {
@@ -155,7 +159,8 @@ function sanitizeFirebaseKey(str) {
 function firebaseGet(path) {
   return new Promise((resolve) => {
     try {
-      const req = net.request({ method: 'GET', url: `${FIREBASE_DB_URL}/${path}.json` });
+      const url = new URL(`${FIREBASE_DB_URL}/${path}.json`);
+      const req = net.request({ method: 'GET', url: url.href });
       let body = '';
       req.on('response', (res) => {
         res.on('data', (chunk) => { body += chunk.toString(); });
@@ -190,7 +195,7 @@ async function checkLicenseBlocked(licenseId) {
   const now = Date.now();
   const cached = _blockedCache.get(licenseId);
   if (cached && (now - cached.ts) < BLOCKED_CACHE_TTL_MS) return cached.value;
-  const data = await firebaseGet(`blocked/${sanitizeFirebaseKey(licenseId)}`);
+  const data = await firebaseGet(`차단목록/${sanitizeFirebaseKey(licenseId)}`);
   const blocked = !!(data && data['차단']);
   _blockedCache.set(licenseId, { value: blocked, ts: now });
   return blocked;
@@ -216,7 +221,7 @@ async function sendInquiry(message) {
       '앱버전': app.getVersion(),
       '플랫폼': process.platform,
     };
-    const result = await firebasePush('inquiries', payload);
+    const result = await firebasePush('문의내역', payload);
     if (result.success) writeLog('INFO', 'INQUIRY', '문의 전송 완료');
     return result;
   } catch (err) {
@@ -277,7 +282,7 @@ async function getLicenseStatus() {
         // 2026-07-14 신규: 활성화 이벤트를 파이어베이스에도 기록(실패해도 무시,
         // await 안 함 — 오프라인이어도 라이선스 검증 자체는 계속 진행돼야 함)
         firebasePush(
-          `activations/${sanitizeFirebaseKey(result.licenseId)}/${sanitizeFirebaseKey(myHwid)}`,
+          `라이선스발급/${sanitizeFirebaseKey(result.licenseId)}/기기활성화/${sanitizeFirebaseKey(myHwid)}`,
           {
             '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
             '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
@@ -292,7 +297,7 @@ async function getLicenseStatus() {
             // 아직 정원이 남아있으면 이 기기를 새 자리로 등록
             store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid] });
             firebasePush(
-              `activations/${sanitizeFirebaseKey(activation.licenseId)}/${sanitizeFirebaseKey(myHwid)}`,
+              `라이선스발급/${sanitizeFirebaseKey(activation.licenseId)}/기기활성화/${sanitizeFirebaseKey(myHwid)}`,
               {
                 '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
                 '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,

@@ -53,13 +53,17 @@ function formatKoreanTimestamp(date = new Date()) {
 
 // 실패해도(오프라인 등) 발급 자체는 계속 진행돼야 하므로 절대 throw하지
 // 않고, 호출부에서도 await하지 않는다(fire-and-forget).
-function firebasePush(pathSeg, data) {
+// method 파라미터 추가(2026-07-20) — 'POST'(자동생성 키로 계속 추가) 또는
+// 'PUT'(지정한 경로에 그대로 저장/덮어쓰기, 라이선스ID를 키로 써서 라이선스
+// 발급 기록을 저장할 때 씀). new URL()로 감싸므로 한글 경로도 자동으로
+// 퍼센트 인코딩된다.
+function firebasePush(pathSeg, data, method = 'POST') {
   return new Promise((resolve) => {
     try {
       const body = JSON.stringify(data);
       const url = new URL(`${FIREBASE_DB_URL}/${pathSeg}.json`);
       const req = https.request(url, {
-        method: 'POST',
+        method,
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       }, (res) => {
         res.on('data', () => {});
@@ -79,7 +83,7 @@ function sanitizeFirebaseKey(str) {
 }
 
 // ── 원격 차단(2026-07-14 신규) — 관리자 인증 ─────────────────────
-// /blocked 쓰기는 파이어베이스 보안 규칙에서 "로그인한 관리자 계정만" 되도록
+// /차단목록 쓰기는 파이어베이스 보안 규칙에서 "로그인한 관리자 계정만" 되도록
 // 걸어둘 예정(레거시 database secret은 구글이 지원 중단해서 안 씀). 이 파일이
 // Firebase Authentication(이메일/비밀번호)으로 직접 로그인해 idToken을 받고,
 // 그 토큰을 REST 요청의 ?auth= 파라미터로 실어 보낸다. 자격증명은
@@ -136,7 +140,7 @@ function readAdminCred() {
 function logAdminSession(uid, idToken, actionLabel) {
   try {
     const key = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    firebasePutAuthed(`admin_login_log/${sanitizeFirebaseKey(uid)}/${key}`, {
+    firebasePutAuthed(`관리자로그인기록/${sanitizeFirebaseKey(uid)}/${key}`, {
       '시각': formatKoreanTimestamp(),
       '기기명': os.hostname(),
       '플랫폼': process.platform,
@@ -182,10 +186,45 @@ async function getAdminIdToken(actionLabel) {
 async function getAdminLoginLogs() {
   const auth = await getAdminIdToken('로그인 기록 조회');
   if (!auth.success) return auth;
-  const res = await firebaseGetAuthed(`admin_login_log/${sanitizeFirebaseKey(auth.uid)}`, auth.idToken);
+  const res = await firebaseGetAuthed(`관리자로그인기록/${sanitizeFirebaseKey(auth.uid)}`, auth.idToken);
   if (!res.success) return res;
   const raw = res.data || {};
   const list = Object.keys(raw).map(k => raw[k]).sort((a, b) => String(b['시각'] || '').localeCompare(String(a['시각'] || '')));
+  return { success: true, list };
+}
+
+// 원격(파이어베이스) 발급 이력 조회 — 2026-07-20 신규. 로컬
+// keys/license-ledger.json은 기기마다 따로 있어서 다른 기기(예: 윈도우
+// 데스크탑)에서 발급한 이력은 이 파일에 안 남는다. 반면 handleGenerate()는
+// 발급마다 항상 라이선스발급/{라이선스ID}에도 fire-and-forget으로 같은
+// 내용을 올려두므로, 그 경로를 읽으면 기기에 상관없이 전체 발급 이력을
+// 볼 수 있다. 프론트에서 이 목록과 로컬 목록을 라이선스ID 기준으로
+// 비교해 "로컬에 없는 것"만 따로 보여주는 데 쓴다(로컬 표 자체를 이걸로
+// 대체하지는 않음 — 로컬 "삭제" 버튼의 기존 동작을 그대로 유지하기 위함).
+// 2026-07-20 — licenses가 라이선스ID를 키로 쓰는 라이선스발급으로 바뀌면서
+// Object.keys(raw)의 키 자체가 곧 라이선스ID다(예전엔 의미 없는 자동생성
+// push 키였음). 각 레코드 하위에는 main.js가 쓰는 기기활성화 서브트리도
+// 같이 딸려오지만 여기서는 안 쓰므로 무시된다.
+async function getRemoteLicenses() {
+  const auth = await getAdminIdToken('발급 이력(원격) 조회');
+  if (!auth.success) return auth;
+  const res = await firebaseGetAuthed('라이선스발급', auth.idToken);
+  if (!res.success) return res;
+  const raw = res.data || {};
+  const list = Object.keys(raw).map((licenseId) => {
+    const r = raw[licenseId] || {};
+    return {
+      licenseId,
+      tier: r['등급'] || 'standard',
+      maxDevices: r['기기수'] || 1,
+      issuedAt: r['발급일'] || '-',
+      expiresAt: r['만료일'] === '무제한' ? null : (r['만료일'] || null),
+      userEmail: r['이메일'] || null,
+      channel: r['판매채널'] || null,
+      orderId: r['주문번호'] || null,
+      note: r['메모'] || null,
+    };
+  });
   return { success: true, list };
 }
 
@@ -207,7 +246,7 @@ async function changeAdminPassword(newPassword) {
   return { success: true };
 }
 
-// /blocked 쓰기 — 관리자 idToken 필요.
+// /차단목록 쓰기 — 관리자 idToken 필요.
 function firebasePutAuthed(pathSeg, data, idToken) {
   return new Promise((resolve) => {
     try {
@@ -235,14 +274,14 @@ function firebasePutAuthed(pathSeg, data, idToken) {
 async function setLicenseBlocked(licenseId, blockedFlag, reasonText) {
   const auth = await getAdminIdToken(blockedFlag ? '라이선스 차단' : '라이선스 차단 해제');
   if (!auth.success) return auth;
-  return firebasePutAuthed(`blocked/${sanitizeFirebaseKey(licenseId)}`, {
+  return firebasePutAuthed(`차단목록/${sanitizeFirebaseKey(licenseId)}`, {
     '차단': !!blockedFlag,
     '사유': reasonText ? String(reasonText).slice(0, 500) : null,
     '처리시각': formatKoreanTimestamp(),
   }, auth.idToken);
 }
 
-// GET/DELETE with 인증 — /activations는 구매자 이메일 등 개인정보가 섞여
+// GET/DELETE with 인증 — 라이선스발급 하위 기기활성화는 구매자 이메일 등 개인정보가 섞여
 // 있어 /blocked처럼 공개 읽기로 열어두지 않고 관리자 idToken이 있어야만
 // 읽고/지울 수 있게 한다(파이어베이스 보안 규칙에서 별도 적용 필요).
 function firebaseGetAuthed(pathSeg, idToken) {
@@ -286,12 +325,12 @@ function firebaseDeleteAuthed(pathSeg, idToken) {
 }
 
 // 라이선스 1건에 등록된 기기(hwid) 목록 조회 — main.js의 getLicenseStatus()가
-// 최초활성화/신규기기등록 시 activations/{licenseId}/{hwid}에 기록해두는
+// 최초활성화/신규기기등록 시 라이선스발급/{licenseId}/기기활성화/{hwid}에 기록해두는
 // 데이터를 그대로 읽는다(코드 자체는 건드리지 않음, 읽기 전용 조회).
 async function getLicenseDevices(licenseId) {
   const auth = await getAdminIdToken('구매자 기기 조회');
   if (!auth.success) return auth;
-  const res = await firebaseGetAuthed(`activations/${sanitizeFirebaseKey(licenseId)}`, auth.idToken);
+  const res = await firebaseGetAuthed(`라이선스발급/${sanitizeFirebaseKey(licenseId)}/기기활성화`, auth.idToken);
   if (!res.success) return res;
   const raw = res.data || {};
   const list = Object.keys(raw).map(hwidKey => ({ hwidKey, ...raw[hwidKey] }));
@@ -306,7 +345,7 @@ async function getLicenseDevices(licenseId) {
 async function releaseDevice(licenseId, hwidKey) {
   const auth = await getAdminIdToken('구매자 기기 해제');
   if (!auth.success) return auth;
-  return firebaseDeleteAuthed(`activations/${sanitizeFirebaseKey(licenseId)}/${hwidKey}`, auth.idToken);
+  return firebaseDeleteAuthed(`라이선스발급/${sanitizeFirebaseKey(licenseId)}/기기활성화/${hwidKey}`, auth.idToken);
 }
 
 function todayStr() {
@@ -419,7 +458,12 @@ function handleGenerate(body) {
   // 2026-07-14 신규 — 발급 즉시 파이어베이스에도 자동 전송(fire-and-forget).
   // 테스트로 만든 키도 그대로 전송되므로, 테스트 발급분은 콘솔에서 직접
   // 지워야 함(자동 구분 로직 없음 — 의도적으로 단순하게 유지).
-  firebasePush('licenses', {
+  // 2026-07-20 — 자동생성 키(push) 대신 라이선스ID를 키로 써서 PUT으로
+  // 저장(라이선스ID는 항상 고유하므로 충돌 없음). 이렇게 하면 main.js가
+  // 기기 활성화 시 쓰는 `라이선스발급/{라이선스ID}/기기활성화/{기기ID}`가
+  // 이 레코드 바로 하위에 자연스럽게 붙는다 — 어떤 라이선스에 누가
+  // 활성화했는지 한 경로에서 바로 확인 가능.
+  firebasePush(`라이선스발급/${sanitizeFirebaseKey(licenseId)}`, {
     '시각': formatKoreanTimestamp(),
     '라이선스ID': licenseId,
     '라이선스키': key,
@@ -431,7 +475,7 @@ function handleGenerate(body) {
     '판매채널': channel,
     '주문번호': orderId,
     '메모': note,
-  });
+  }, 'PUT');
 
   return { success: true, key, payload };
 }
@@ -704,6 +748,12 @@ const HTML_PAGE = `<!DOCTYPE html>
     <h2>발급 이력 (로컬 기록, keys/license-ledger.json)</h2>
     <div id="historyBox"><div class="empty">불러오는 중…</div></div>
   </div>
+
+  <div class="card history-card">
+    <h2>로컬 미보유</h2>
+    <p class="sub" style="margin:-6px 0 10px">다른 기기에서 발급했거나 이 기기 로컬 기록에서 삭제된 항목 — 파이어베이스엔 있지만 위 로컬 표엔 없는 라이선스입니다.</p>
+    <div id="remoteOnlyBox"><div class="empty">불러오는 중…</div></div>
+  </div>
   </div>
 
 <script>
@@ -802,46 +852,87 @@ const HTML_PAGE = `<!DOCTYPE html>
     return String(str || '').replace(/[.#$[\\]/]/g, '_');
   }
 
+  // 로컬 표와 "로컬 미보유" 표가 같은 행 구조를 쓰도록 공통 함수로 분리
+  // (2026-07-20). includeDelete가 false면 삭제 버튼 칸 자체를 만들지 않음
+  // — "로컬 미보유" 쪽은 로컬 파일에 없는 항목이라 지울 대상이 없음.
+  function buildHistoryRow(rec, blockedMap, includeDelete) {
+    const key = sanitizeFirebaseKeyJs(rec.licenseId);
+    const isBlocked = !!(blockedMap[key] && blockedMap[key]['차단']);
+    let row = '<tr>' +
+      '<td>' + rec.issuedAt + '</td>' +
+      '<td><span class="badge badge-' + rec.tier + '">' + (rec.tier === 'premium' ? '프리미엄' : '스탠다드') + '</span></td>' +
+      '<td>' + rec.maxDevices + '대</td>' +
+      '<td>' + (rec.expiresAt || '무제한') + '</td>' +
+      '<td>' + (rec.userEmail || '-') + '</td>' +
+      '<td>' + rec.licenseId + '</td>' +
+      '<td>' + (rec.channel || '-') + '</td>' +
+      '<td>' + (rec.orderId || '-') + '</td>' +
+      '<td>' + (rec.note || '-') + '</td>' +
+      '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
+      '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
+      '<td><button class="copy-btn" style="margin-top:0" onclick="openDeviceModal(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">기기 관리</button></td>';
+    if (includeDelete) {
+      row += '<td style="text-align:right"><button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>';
+    }
+    row += '</tr>';
+    return row;
+  }
+
+  async function fetchBlockedMap() {
+    try {
+      const bres = await fetch(FIREBASE_DB_URL_JS + '/차단목록.json');
+      const bdata = await bres.json();
+      return bdata || {};
+    } catch {
+      return {};
+    }
+  }
+
   async function loadHistory() {
     const res = await fetch('/api/history');
     const data = await res.json();
     const box = document.getElementById('historyBox');
     if (!data.success || !data.list.length) {
       box.innerHTML = '<div class="empty">아직 발급 이력이 없습니다.</div>';
-      return;
+    } else {
+      const blockedMap = await fetchBlockedMap();
+      let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th><th></th><th></th></tr></thead><tbody>';
+      for (const rec of data.list) html += buildHistoryRow(rec, blockedMap, true);
+      html += '</tbody></table>';
+      box.innerHTML = html;
     }
-    // /blocked는 보안 규칙에서 공개 읽기(.read:true)로 열어둘 경로라 브라우저에서
-    // 인증 없이 바로 조회 가능 — 규칙을 아직 안 넣었다면 이 fetch는 조용히
-    // 실패하고 전부 "정상"으로만 표시됨(차단 기능을 아직 못 쓴다는 뜻).
-    let blockedMap = {};
-    try {
-      const bres = await fetch(FIREBASE_DB_URL_JS + '/blocked.json');
-      const bdata = await bres.json();
-      blockedMap = bdata || {};
-    } catch {}
+    loadRemoteOnlyHistory(data.success ? data.list : []);
+  }
 
-    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th><th></th><th></th></tr></thead><tbody>';
-    for (const rec of data.list) {
-      const key = sanitizeFirebaseKeyJs(rec.licenseId);
-      const isBlocked = !!(blockedMap[key] && blockedMap[key]['차단']);
-      html += '<tr>' +
-        '<td>' + rec.issuedAt + '</td>' +
-        '<td><span class="badge badge-' + rec.tier + '">' + (rec.tier === 'premium' ? '프리미엄' : '스탠다드') + '</span></td>' +
-        '<td>' + rec.maxDevices + '대</td>' +
-        '<td>' + (rec.expiresAt || '무제한') + '</td>' +
-        '<td>' + (rec.userEmail || '-') + '</td>' +
-        '<td>' + rec.licenseId + '</td>' +
-        '<td>' + (rec.channel || '-') + '</td>' +
-        '<td>' + (rec.orderId || '-') + '</td>' +
-        '<td>' + (rec.note || '-') + '</td>' +
-        '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
-        '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
-                '<td><button class="copy-btn" style="margin-top:0" onclick="openDeviceModal(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">기기 관리</button></td>' +
-'<td style="text-align:right"><button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>' +
-        '</tr>';
+  // "로컬 미보유"(2026-07-20 신규) — 파이어베이스 /licenses 전체를 읽어와
+  // 로컬 목록에 없는 라이선스ID만 걸러서 보여준다. 다른 기기에서 발급한
+  // 것과 이 기기에서 발급 후 로컬 표에서 "삭제"한 것이 구분 없이 섞여
+  // 나오지만, "지금 로컬 표에 없다"는 기준으로는 정확하다.
+  async function loadRemoteOnlyHistory(localList) {
+    const box = document.getElementById('remoteOnlyBox');
+    if (!box) return;
+    box.innerHTML = '<div class="empty">불러오는 중…</div>';
+    try {
+      const res = await fetch('/api/licenses/remote', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) {
+        box.innerHTML = '<div class="empty">' + (data.error || '조회에 실패했습니다. 관리자 계정으로 로그인되어 있는지 확인하세요.') + '</div>';
+        return;
+      }
+      const localIds = new Set((localList || []).map((r) => r.licenseId));
+      const remoteOnly = data.list.filter((r) => !localIds.has(r.licenseId));
+      if (!remoteOnly.length) {
+        box.innerHTML = '<div class="empty">로컬 미보유 항목이 없습니다.</div>';
+        return;
+      }
+      const blockedMap = await fetchBlockedMap();
+      let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th><th></th></tr></thead><tbody>';
+      for (const rec of remoteOnly) html += buildHistoryRow(rec, blockedMap, false);
+      html += '</tbody></table>';
+      box.innerHTML = html;
+    } catch (e) {
+      box.innerHTML = '<div class="empty">불러오는 중 오류: ' + e.message + '</div>';
     }
-    html += '</tbody></table>';
-    box.innerHTML = html;
   }
 
   async function toggleBlock(licenseId, newBlockedValue) {
@@ -860,7 +951,7 @@ const HTML_PAGE = `<!DOCTYPE html>
     if (data.success) {
       loadHistory();
     } else {
-      alert(data.error || '처리에 실패했습니다. 관리자 계정이 설정되어 있는지, 파이어베이스 보안 규칙에 blocked 쓰기 권한이 반영됐는지 확인하세요.');
+      alert(data.error || '처리에 실패했습니다. 관리자 계정이 설정되어 있는지, 파이어베이스 보안 규칙에 차단목록 쓰기 권한이 반영됐는지 확인하세요.');
     }
   }
 
@@ -899,6 +990,15 @@ const HTML_PAGE = `<!DOCTYPE html>
     }
   }
 
+  // 저장은 process.platform 원본값(darwin/win32/linux)을 그대로 쓰되,
+  // 화면에는 사람이 읽기 쉬운 이름으로 바꿔 보여준다(2026-07-20).
+  function platformLabel(p) {
+    if (p === 'darwin') return 'macOS';
+    if (p === 'win32') return 'Windows';
+    if (p === 'linux') return 'Linux';
+    return p || '-';
+  }
+
   async function loadAdminLogs() {
     const box = document.getElementById('adminLogBox');
     box.innerHTML = '<div class="empty">불러오는 중…</div>';
@@ -916,7 +1016,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       let html = '';
       for (const rec of data.list) {
         html += '<div class="device-row"><div class="meta">' +
-          '<b>' + (rec['기기명'] || '-') + '</b> · ' + (rec['플랫폼'] || '-') + ' · ' + (rec['작업'] || '-') + '<br/>' +
+          '<b>' + (rec['기기명'] || '-') + '</b> · ' + platformLabel(rec['플랫폼']) + ' · ' + (rec['작업'] || '-') + '<br/>' +
           (rec['시각'] || '-') +
           '</div></div>';
       }
@@ -969,7 +1069,7 @@ const HTML_PAGE = `<!DOCTYPE html>
     const data = await res.json();
     if (data.success) {
       box.classList.remove('error');
-      box.innerHTML = '계정이 생성되었습니다. 아래 UID를 파이어베이스 콘솔 "규칙" 탭의 blocked 쓰기 조건에 붙여넣으세요:' +
+      box.innerHTML = '계정이 생성되었습니다. 아래 UID를 파이어베이스 콘솔 "규칙" 탭의 차단목록 쓰기 조건에 붙여넣으세요:' +
         '<div class="key-value">' + data.uid + '</div>' +
         '<button class="copy-btn" onclick="copyKey(this, \\'' + data.uid + '\\')">UID 복사</button>';
       checkAdminStatus();
@@ -1029,7 +1129,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       let html = '';
       for (const d of data.list) {
         html += '<div class="device-row"><div class="meta">' +
-          '<b>' + (d['플랫폼'] || '-') + '</b> · ' + (d['이벤트'] || '-') + '<br/>' +
+          '<b>' + platformLabel(d['플랫폼']) + '</b> · ' + (d['이벤트'] || '-') + '<br/>' +
           (d['시각'] || '-') + ' · v' + (d['앱버전'] || '-') + ' · ' + (d['이메일'] || '(미기재)') +
           '</div>' +
           '<button class="copy-btn delete-btn" style="margin-top:0" onclick="releaseDeviceUI(\\'' + d.hwidKey.replace(/'/g, "\\'") + '\\')">해제</button>' +
@@ -1145,6 +1245,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && req.url === '/api/admin/logs') {
       const result = await getAdminLoginLogs();
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/licenses/remote') {
+      const result = await getRemoteLicenses();
       return sendJson(res, result.success ? 200 : 400, result);
     }
     if (req.method === 'POST' && req.url === '/api/admin/change-password') {
