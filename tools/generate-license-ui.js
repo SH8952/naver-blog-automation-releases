@@ -28,6 +28,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execFile } = require('child_process');
 const { signPayload, verifyLicenseKey } = require('../license/licenseCore');
 
@@ -124,22 +125,86 @@ function readAdminCred() {
   } catch { return null; }
 }
 
+// 로그인 감사 기록(2026-07-20 신규) — 이 관리자 계정으로 인증이 성공할
+// 때마다(계정 생성/명시적 로그인/이후 모든 관리 액션에서의 재인증 포함)
+// "이 기기에서 이 계정이 쓰였다"는 기록을 파이어베이스에 남긴다. Firebase
+// Auth 자체는 구글 계정처럼 "현재 로그인된 기기 목록" 조회 API를 제공하지
+// 않아서(관리자 SDK로도 불가, 세션 전체 무효화만 가능) 이 로그가 사실상
+// 유일한 "누가/어느 기기에서 이 계정을 썼는지" 확인 수단이다. 실패해도
+// 절대 throw하지 않는 fire-and-forget — 로그 기록 실패가 실제 관리
+// 작업을 막으면 안 됨.
+function logAdminSession(uid, idToken, actionLabel) {
+  try {
+    const key = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    firebasePutAuthed(`admin_login_log/${sanitizeFirebaseKey(uid)}/${key}`, {
+      '시각': formatKoreanTimestamp(),
+      '기기명': os.hostname(),
+      '플랫폼': process.platform,
+      '작업': actionLabel || '-',
+    }, idToken);
+  } catch { /* 무시 */ }
+}
+
 async function setupAdmin(email, password) {
   const res = await identityToolkitRequest('signUp', { email, password });
   if (!res.success) return res;
   fs.mkdirSync(path.dirname(ADMIN_CRED_PATH), { recursive: true });
   fs.writeFileSync(ADMIN_CRED_PATH, JSON.stringify({ email, password }, null, 2), 'utf8');
+  logAdminSession(res.localId, res.idToken, '계정 생성(최초 로그인)');
+  return { success: true, uid: res.localId };
+}
+
+// 이미 만든 계정으로 로그인만(signUp 아님) — 2026-07-20 신규.
+async function loginAdmin(email, password) {
+  const res = await identityToolkitRequest('signInWithPassword', { email, password });
+  if (!res.success) return res;
+  fs.mkdirSync(path.dirname(ADMIN_CRED_PATH), { recursive: true });
+  fs.writeFileSync(ADMIN_CRED_PATH, JSON.stringify({ email, password }, null, 2), 'utf8');
+  logAdminSession(res.localId, res.idToken, '로그인');
   return { success: true, uid: res.localId };
 }
 
 // 매번 새로 로그인(짧은 세션 도구라 리프레시 토큰 관리는 생략, 관리자 액션
-// 빈도가 낮아 매번 로그인해도 비용이 크지 않음).
-async function getAdminIdToken() {
+// 빈도가 낮아 매번 로그인해도 비용이 크지 않음). actionLabel을 넘기면 이
+// 인증이 어떤 작업 때문이었는지까지 로그인 기록에 남는다 — 만약 이 계정
+// 정보를 모르는 사람/기기가 도구를 실행해 라이선스를 차단 해제하거나
+// 기기를 조회/해제하려 시도해도, 그 순간 자동으로 기록이 남는다는 뜻.
+async function getAdminIdToken(actionLabel) {
   const cred = readAdminCred();
   if (!cred) return { success: false, error: '관리자 계정이 설정되지 않았습니다.' };
   const res = await identityToolkitRequest('signInWithPassword', { email: cred.email, password: cred.password });
   if (!res.success) return res;
-  return { success: true, idToken: res.idToken };
+  logAdminSession(res.localId, res.idToken, actionLabel);
+  return { success: true, idToken: res.idToken, uid: res.localId };
+}
+
+// 로그인 기록 조회 — 이 계정 uid 하위 전체 기록을 최신순으로.
+async function getAdminLoginLogs() {
+  const auth = await getAdminIdToken('로그인 기록 조회');
+  if (!auth.success) return auth;
+  const res = await firebaseGetAuthed(`admin_login_log/${sanitizeFirebaseKey(auth.uid)}`, auth.idToken);
+  if (!res.success) return res;
+  const raw = res.data || {};
+  const list = Object.keys(raw).map(k => raw[k]).sort((a, b) => String(b['시각'] || '').localeCompare(String(a['시각'] || '')));
+  return { success: true, list };
+}
+
+// 비밀번호 변경 = 사실상 "전체 기기 로그아웃"(2026-07-20 신규). 이 도구는
+// 리프레시 토큰을 저장해두지 않고 매 작업마다 signInWithPassword로 새로
+// 인증하므로, 비밀번호를 바꾸면 예전 비밀번호를 알고 있는 다른 기기는
+// 바로 다음 인증 시도부터 곧장 거부된다 — 별도의 "세션 무효화" API 없이도
+// 이 도구의 사용 패턴상 즉시 로그아웃과 동일한 효과를 낸다. 변경 후
+// 로컬 자격증명 파일도 새 비밀번호로 갱신해서, 이 기기의 이 도구는
+// 계속 정상 동작하게 한다.
+async function changeAdminPassword(newPassword) {
+  const auth = await getAdminIdToken('비밀번호 변경(전체 기기 로그아웃)');
+  if (!auth.success) return auth;
+  const res = await identityToolkitRequest('update', { idToken: auth.idToken, password: newPassword });
+  if (!res.success) return res;
+  const cred = readAdminCred();
+  fs.mkdirSync(path.dirname(ADMIN_CRED_PATH), { recursive: true });
+  fs.writeFileSync(ADMIN_CRED_PATH, JSON.stringify({ email: cred.email, password: newPassword }, null, 2), 'utf8');
+  return { success: true };
 }
 
 // /blocked 쓰기 — 관리자 idToken 필요.
@@ -168,13 +233,80 @@ function firebasePutAuthed(pathSeg, data, idToken) {
 }
 
 async function setLicenseBlocked(licenseId, blockedFlag, reasonText) {
-  const auth = await getAdminIdToken();
+  const auth = await getAdminIdToken(blockedFlag ? '라이선스 차단' : '라이선스 차단 해제');
   if (!auth.success) return auth;
   return firebasePutAuthed(`blocked/${sanitizeFirebaseKey(licenseId)}`, {
     '차단': !!blockedFlag,
     '사유': reasonText ? String(reasonText).slice(0, 500) : null,
     '처리시각': formatKoreanTimestamp(),
   }, auth.idToken);
+}
+
+// GET/DELETE with 인증 — /activations는 구매자 이메일 등 개인정보가 섞여
+// 있어 /blocked처럼 공개 읽기로 열어두지 않고 관리자 idToken이 있어야만
+// 읽고/지울 수 있게 한다(파이어베이스 보안 규칙에서 별도 적용 필요).
+function firebaseGetAuthed(pathSeg, idToken) {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(`${FIREBASE_DB_URL}/${pathSeg}.json?auth=${idToken}`);
+      https.get(url, (res) => {
+        let respBody = '';
+        res.on('data', (chunk) => { respBody += chunk.toString(); });
+        res.on('end', () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return resolve({ success: false, error: respBody.slice(0, 200) });
+          }
+          try {
+            resolve({ success: true, data: JSON.parse(respBody) });
+          } catch {
+            resolve({ success: false, error: '응답 파싱 실패' });
+          }
+        });
+      }).on('error', (err) => resolve({ success: false, error: err.message }));
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+function firebaseDeleteAuthed(pathSeg, idToken) {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(`${FIREBASE_DB_URL}/${pathSeg}.json?auth=${idToken}`);
+      const req = https.request(url, { method: 'DELETE' }, (res) => {
+        res.on('data', () => {});
+        res.on('end', () => resolve({ success: res.statusCode >= 200 && res.statusCode < 300 }));
+      });
+      req.on('error', (err) => resolve({ success: false, error: err.message }));
+      req.end();
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
+}
+
+// 라이선스 1건에 등록된 기기(hwid) 목록 조회 — main.js의 getLicenseStatus()가
+// 최초활성화/신규기기등록 시 activations/{licenseId}/{hwid}에 기록해두는
+// 데이터를 그대로 읽는다(코드 자체는 건드리지 않음, 읽기 전용 조회).
+async function getLicenseDevices(licenseId) {
+  const auth = await getAdminIdToken('구매자 기기 조회');
+  if (!auth.success) return auth;
+  const res = await firebaseGetAuthed(`activations/${sanitizeFirebaseKey(licenseId)}`, auth.idToken);
+  if (!res.success) return res;
+  const raw = res.data || {};
+  const list = Object.keys(raw).map(hwidKey => ({ hwidKey, ...raw[hwidKey] }));
+  return { success: true, list };
+}
+
+// 기기 등록 해제 — 고객이 PC를 교체했는데 maxDevices 자리가 꽉 찬 경우,
+// 예전 기기의 원격 기록만 지운다. 실제 자리 회수는 고객이 새 PC에서
+// 재활성화할 때 로컬 store(settings._licenseActivation)가 비어있어
+// 자동으로 새 자리로 등록되는 기존 로직을 그대로 타는 것이며, 이 삭제
+// 자체는 관리자용 기록 정리 목적이다.
+async function releaseDevice(licenseId, hwidKey) {
+  const auth = await getAdminIdToken('구매자 기기 해제');
+  if (!auth.success) return auth;
+  return firebaseDeleteAuthed(`activations/${sanitizeFirebaseKey(licenseId)}/${hwidKey}`, auth.idToken);
 }
 
 function todayStr() {
@@ -339,6 +471,7 @@ const HTML_PAGE = `<!DOCTYPE html>
     margin: 0; padding: 32px; background: var(--bg-base); color: var(--text-primary);
     font-family: -apple-system, 'Apple SD Gothic Neo', BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
+  .page-wrap { max-width: 1100px; margin: 0 auto; }
   h1 { font-size: 18px; margin: 0 0 4px; }
   .sub { color: var(--text-secondary); font-size: 12px; margin-bottom: 24px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1100px; }
@@ -400,9 +533,40 @@ const HTML_PAGE = `<!DOCTYPE html>
     font-weight: 500;
   }
   .reset-btn:hover { border-color: var(--danger); color: var(--danger); background: transparent; opacity: 1; }
+  .link-btn {
+    background: none; border: none; color: var(--accent); font-size: 12px;
+    padding: 0; width: auto; margin: 10px 0 0; text-decoration: underline; cursor: pointer;
+  }
+  .link-btn:hover { opacity: 0.8; }
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal-box {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; width: 480px; max-height: 70vh; overflow-y: auto;
+  }
+  .modal-box h3 { font-size: 14px; margin: 0 0 4px; }
+  .modal-box .sub { margin-bottom: 14px; }
+  .device-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .device-row:last-child { border-bottom: none; }
+  .device-row .meta { color: var(--text-secondary); line-height: 1.6; }
+  .device-row .meta b { color: var(--text-primary); }
+  .modal-close-row { display: flex; justify-content: flex-end; margin-top: 14px; }
+  .modal-close-row button { width: auto; margin-top: 0; padding: 7px 14px; }
+  #adminLogBox { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  #adminLogBox::-webkit-scrollbar { width: 8px; }
+  #adminLogBox::-webkit-scrollbar-track { background: transparent; }
+  #adminLogBox::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  #adminLogBox::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 </style>
 </head>
 <body>
+  <div class="page-wrap">
   <h1>🔑 라이선스 키 생성기</h1>
   <p class="sub">네이버 블로그 자동화 — 로컬 전용 오프라인 발급 도구 (외부 전송 없음)</p>
   <div id="privKeyWarn" class="warn-banner">keys/private.pem 을 찾을 수 없습니다. 먼저 <code>node tools/gen-keypair.js</code> 를 실행해 키페어를 생성하세요.</div>
@@ -495,17 +659,51 @@ const HTML_PAGE = `<!DOCTYPE html>
           <input type="password" id="admin-password" placeholder="새로 정할 비밀번호" />
         </div>
       </div>
-      <button class="secondary" style="width:auto;padding:9px 16px" onclick="setupAdmin()">관리자 계정 만들기</button>
+      <div class="row" style="margin-top:14px">
+        <div><button class="secondary" style="width:100%" onclick="setupAdmin()">관리자 계정 만들기</button></div>
+        <div><button class="secondary" style="width:100%" onclick="loginAdmin()">이미 만든 계정으로 로그인</button></div>
+      </div>
+      <p class="sub" style="margin:6px 0 0">다른 PC에서 이 도구를 새로 켰거나 keys/firebase-admin.json이 사라진 경우, 위에 기존 이메일/비밀번호를 입력하고 "로그인"을 누르면 다시 연결됩니다.</p>
       <div id="adminSetupResult" class="result"></div>
     </div>
     <div id="adminReadyBox" style="display:none">
-      <p class="sub">관리자 계정: <b id="adminEmailLabel"></b> — 설정 완료. 아래 발급 이력에서 "차단" 버튼으로 특정 라이선스를 즉시 막을 수 있습니다.</p>
+      <div style="display:flex;gap:20px">
+        <div style="flex:1">
+          <p class="sub">관리자 계정: <b id="adminEmailLabel"></b><br/>아래 발급 이력에서 "차단"으로 라이선스를 막고, "기기 관리"로 등록된 기기를 확인/해제할 수 있습니다.</p>
+          <div style="margin-top:14px">
+            <label style="margin-bottom:6px">비밀번호 변경</label>
+            <div style="display:flex;gap:8px">
+              <input type="password" id="admin-newpw" placeholder="새 비밀번호" style="width:160px" />
+              <button class="secondary" style="width:auto;margin-top:0;padding:9px 16px" onclick="changeAdminPasswordUI()">전체 로그아웃</button>
+            </div>
+            <div id="changePwResult" class="result"></div>
+          </div>
+        </div>
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h3 style="font-size:13px;margin:0">로그인 기록</h3>
+            <button class="copy-btn" style="margin-top:0" onclick="loadAdminLogs()">새로고침</button>
+          </div>
+          <p class="sub" style="margin:4px 0 8px">인증마다 자동 기록됩니다. 모르는 기기가 보이면 비밀번호를 변경하세요.</p>
+          <div id="adminLogBox" style="max-height:280px;overflow-y:auto"><div class="empty">불러오는 중…</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="deviceModal">
+    <div class="modal-box">
+      <h3 id="deviceModalTitle">기기 관리</h3>
+      <p class="sub">이 라이선스에서 등록된 기기 목록입니다. "해제"를 누르면 원격 기록만 지워지며, 고객이 새 PC에서 재활성화하면 그 자리에 새로 등록됩니다.</p>
+      <div id="deviceModalBody"><div class="empty">불러오는 중…</div></div>
+      <div class="modal-close-row"><button class="secondary" onclick="closeDeviceModal()">닫기</button></div>
     </div>
   </div>
 
   <div class="card history-card">
     <h2>발급 이력 (로컬 기록, keys/license-ledger.json)</h2>
     <div id="historyBox"><div class="empty">불러오는 중…</div></div>
+  </div>
   </div>
 
 <script>
@@ -622,7 +820,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       blockedMap = bdata || {};
     } catch {}
 
-    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th><th></th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>발급일</th><th>등급</th><th>기기수</th><th>만료일</th><th>이메일</th><th>번호</th><th>판매채널</th><th>주문번호</th><th>메모</th><th>상태</th><th></th><th></th><th></th></tr></thead><tbody>';
     for (const rec of data.list) {
       const key = sanitizeFirebaseKeyJs(rec.licenseId);
       const isBlocked = !!(blockedMap[key] && blockedMap[key]['차단']);
@@ -638,7 +836,8 @@ const HTML_PAGE = `<!DOCTYPE html>
         '<td>' + (rec.note || '-') + '</td>' +
         '<td>' + (isBlocked ? '<span class="badge" style="background:rgba(248,113,113,0.15);color:var(--danger)">차단됨</span>' : '<span class="badge" style="color:var(--text-muted)">정상</span>') + '</td>' +
         '<td><button class="copy-btn" style="margin-top:0" onclick="toggleBlock(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\', ' + (!isBlocked) + ')">' + (isBlocked ? '차단 해제' : '차단') + '</button></td>' +
-        '<td style="text-align:right"><button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>' +
+                '<td><button class="copy-btn" style="margin-top:0" onclick="openDeviceModal(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">기기 관리</button></td>' +
+'<td style="text-align:right"><button class="copy-btn delete-btn" style="margin-top:0" onclick="deleteHistoryEntry(\\'' + rec.licenseId.replace(/'/g, "\\'") + '\\')">삭제</button></td>' +
         '</tr>';
     }
     html += '</tbody></table>';
@@ -694,7 +893,63 @@ const HTML_PAGE = `<!DOCTYPE html>
     const data = await res.json();
     document.getElementById('adminSetupBox').style.display = data.hasAdmin ? 'none' : 'block';
     document.getElementById('adminReadyBox').style.display = data.hasAdmin ? 'block' : 'none';
-    if (data.hasAdmin) document.getElementById('adminEmailLabel').textContent = data.email;
+    if (data.hasAdmin) {
+      document.getElementById('adminEmailLabel').textContent = data.email;
+      loadAdminLogs();
+    }
+  }
+
+  async function loadAdminLogs() {
+    const box = document.getElementById('adminLogBox');
+    box.innerHTML = '<div class="empty">불러오는 중…</div>';
+    try {
+      const res = await fetch('/api/admin/logs', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) {
+        box.innerHTML = '<div class="empty">' + (data.error || '조회에 실패했습니다.') + '</div>';
+        return;
+      }
+      if (!data.list.length) {
+        box.innerHTML = '<div class="empty">아직 기록이 없습니다.</div>';
+        return;
+      }
+      let html = '';
+      for (const rec of data.list) {
+        html += '<div class="device-row"><div class="meta">' +
+          '<b>' + (rec['기기명'] || '-') + '</b> · ' + (rec['플랫폼'] || '-') + ' · ' + (rec['작업'] || '-') + '<br/>' +
+          (rec['시각'] || '-') +
+          '</div></div>';
+      }
+      box.innerHTML = html;
+    } catch (e) {
+      box.innerHTML = '<div class="empty">불러오는 중 오류: ' + e.message + '</div>';
+    }
+  }
+
+  async function changeAdminPasswordUI() {
+    const newPassword = document.getElementById('admin-newpw').value;
+    const box = document.getElementById('changePwResult');
+    box.classList.add('show');
+    if (!newPassword || newPassword.length < 6) {
+      box.classList.add('error');
+      box.textContent = '새 비밀번호는 6자 이상이어야 합니다.';
+      return;
+    }
+    if (!confirm('비밀번호를 변경하면 예전 비밀번호로는 어떤 기기에서도 더 이상 이 관리자 계정을 쓸 수 없게 됩니다. 이 기기(지금 이 창)는 자동으로 새 비밀번호로 갱신되어 계속 정상 동작합니다. 계속할까요?')) return;
+    const res = await fetch('/api/admin/change-password', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ newPassword }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      box.classList.remove('error');
+      box.textContent = '비밀번호가 변경되었습니다. 다른 기기는 예전 비밀번호로 더 이상 인증되지 않습니다.';
+      document.getElementById('admin-newpw').value = '';
+      loadAdminLogs();
+    } else {
+      box.classList.add('error');
+      box.textContent = data.error || '변경에 실패했습니다.';
+    }
   }
 
   async function setupAdmin() {
@@ -721,6 +976,88 @@ const HTML_PAGE = `<!DOCTYPE html>
     } else {
       box.classList.add('error');
       box.textContent = data.error || '계정 생성에 실패했습니다.';
+    }
+  }
+
+  async function loginAdmin() {
+    const email = document.getElementById('admin-email').value;
+    const password = document.getElementById('admin-password').value;
+    const box = document.getElementById('adminSetupResult');
+    box.classList.add('show');
+    if (!email || !password) {
+      box.classList.add('error');
+      box.textContent = '이메일과 비밀번호를 입력하세요.';
+      return;
+    }
+    const res = await fetch('/api/admin/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      box.classList.remove('error');
+      box.textContent = '로그인되었습니다.';
+      checkAdminStatus();
+    } else {
+      box.classList.add('error');
+      box.textContent = data.error || '로그인에 실패했습니다. 이메일/비밀번호를 확인하세요.';
+    }
+  }
+
+  let currentDeviceLicenseId = null;
+
+  async function openDeviceModal(licenseId) {
+    currentDeviceLicenseId = licenseId;
+    document.getElementById('deviceModalTitle').textContent = '기기 관리 — ' + licenseId;
+    document.getElementById('deviceModalBody').innerHTML = '<div class="empty">불러오는 중…</div>';
+    document.getElementById('deviceModal').classList.add('show');
+    const body = document.getElementById('deviceModalBody');
+    try {
+      const res = await fetch('/api/devices', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ licenseId }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        body.innerHTML = '<div class="empty">' + (data.error || '조회에 실패했습니다. 관리자 계정으로 로그인되어 있는지 확인하세요.') + '</div>';
+        return;
+      }
+      if (!data.list.length) {
+        body.innerHTML = '<div class="empty">등록된 기기가 없습니다.</div>';
+        return;
+      }
+      let html = '';
+      for (const d of data.list) {
+        html += '<div class="device-row"><div class="meta">' +
+          '<b>' + (d['플랫폼'] || '-') + '</b> · ' + (d['이벤트'] || '-') + '<br/>' +
+          (d['시각'] || '-') + ' · v' + (d['앱버전'] || '-') + ' · ' + (d['이메일'] || '(미기재)') +
+          '</div>' +
+          '<button class="copy-btn delete-btn" style="margin-top:0" onclick="releaseDeviceUI(\\'' + d.hwidKey.replace(/'/g, "\\'") + '\\')">해제</button>' +
+          '</div>';
+      }
+      body.innerHTML = html;
+    } catch (e) {
+      body.innerHTML = '<div class="empty">불러오는 중 오류가 발생했습니다: ' + e.message + '<br/>(라이선스 발급기를 완전히 종료 후 다시 실행해보세요 — 도구가 켜진 채로 코드가 업데이트되면 새 기능이 반영되지 않습니다.)</div>';
+    }
+  }
+
+  function closeDeviceModal() {
+    document.getElementById('deviceModal').classList.remove('show');
+    currentDeviceLicenseId = null;
+  }
+
+  async function releaseDeviceUI(hwidKey) {
+    if (!currentDeviceLicenseId) return;
+    if (!confirm('이 기기 등록 기록을 해제할까요? 고객이 이 PC에서 다시 실행하면 재등록이 필요합니다.')) return;
+    const res = await fetch('/api/devices/release', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ licenseId: currentDeviceLicenseId, hwidKey }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      openDeviceModal(currentDeviceLicenseId);
+    } else {
+      alert(data.error || '해제에 실패했습니다.');
     }
   }
 
@@ -783,6 +1120,38 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(raw || '{}');
       if (!body.licenseId) return sendJson(res, 400, { success: false, error: '라이선스ID가 필요합니다.' });
       const result = await setLicenseBlocked(body.licenseId, body.blocked, body.reason);
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/admin/login') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.email || !body.password) return sendJson(res, 400, { success: false, error: '이메일/비밀번호를 입력하세요.' });
+      const result = await loginAdmin(body.email, body.password);
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/devices') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.licenseId) return sendJson(res, 400, { success: false, error: '라이선스ID가 필요합니다.' });
+      const result = await getLicenseDevices(body.licenseId);
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/devices/release') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.licenseId || !body.hwidKey) return sendJson(res, 400, { success: false, error: '라이선스ID/기기ID가 필요합니다.' });
+      const result = await releaseDevice(body.licenseId, body.hwidKey);
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/admin/logs') {
+      const result = await getAdminLoginLogs();
+      return sendJson(res, result.success ? 200 : 400, result);
+    }
+    if (req.method === 'POST' && req.url === '/api/admin/change-password') {
+      const raw = await readBody(req);
+      const body = JSON.parse(raw || '{}');
+      if (!body.newPassword || String(body.newPassword).length < 6) return sendJson(res, 400, { success: false, error: '새 비밀번호는 6자 이상이어야 합니다.' });
+      const result = await changeAdminPassword(body.newPassword);
       return sendJson(res, result.success ? 200 : 400, result);
     }
     res.writeHead(404);
