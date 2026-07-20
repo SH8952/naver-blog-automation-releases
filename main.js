@@ -152,6 +152,25 @@ function sanitizeFirebaseKey(str) {
   return String(str || '').replace(/[.#$\[\]/]/g, '_');
 }
 
+// 2026-07-20 신규: 기기활성화를 파이어베이스로 전송한 뒤 "성공" 여부를 로컬에
+// 남겨두기 위한 헬퍼. 실패(네트워크 오류, 배포 전환기의 일시적 규칙/경로
+// 불일치 등)했을 때 다음 라이선스 확인 시점에 자동으로 재시도할 수 있게
+// syncedHwids 배열을 갱신한다. 저장 시점 사이에 다른 값이 바뀌었을 수 있어
+// 클로저로 캡처한 값이 아니라 항상 store에서 다시 읽어와 반영한다.
+function markHwidSynced(licenseId, hwid) {
+  try {
+    const store = getStore();
+    const cur = store.get('settings._licenseActivation', null);
+    if (!cur || cur.licenseId !== licenseId) return;
+    const synced = Array.isArray(cur.syncedHwids) ? cur.syncedHwids : [];
+    if (!synced.includes(hwid)) {
+      store.set('settings._licenseActivation', { ...cur, syncedHwids: [...synced, hwid] });
+    }
+  } catch (e) {
+    writeLog('WARN', 'LICENSE', '파이어베이스 동기화 상태 저장 중 오류', e.message);
+  }
+}
+
 // 읽기 전용 GET — /blocked 확인용(2026-07-14 신규). 이 경로는 보안 규칙에서
 // 누구나 읽을 수 있게(.read:true) 열어둘 예정이라 인증 없이 조회 가능.
 // firebasePush와 마찬가지로 절대 throw하지 않고, 실패 시 null을 resolve —
@@ -275,42 +294,51 @@ async function getLicenseStatus() {
     const myHwid = getHardwareId();
     const activation = store.get('settings._licenseActivation', null);
     const maxDevices = Number.isFinite(result.maxDevices) ? result.maxDevices : 1;
+
+    // 2026-07-20 신규: 파이어베이스 기기활성화 전송이 실패해도(네트워크 문제,
+    // 배포 전환기의 일시적 규칙/경로 불일치 등) 조용히 무시만 하던 것을 보완 —
+    // 성공 여부를 markHwidSynced()로 로컬에 남기고, 아래에서 아직 동기화
+    // 안 된 기기가 있으면 매 실행마다 다시 시도한다. PUT 방식이라 여러 번
+    // 다시 보내도 데이터가 꼬이지 않는다.
+    const pushDeviceActivation = (licenseId, hwid, eventLabel) => {
+      firebasePush(
+        `라이선스발급/${sanitizeFirebaseKey(licenseId)}/기기활성화/${sanitizeFirebaseKey(hwid)}`,
+        {
+          '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
+          '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
+          '이벤트': eventLabel,
+        },
+        'PUT'
+      ).then((res) => {
+        if (res && res.success) markHwidSynced(licenseId, hwid);
+      });
+    };
+
     if (result.licenseId) {
       if (!activation || activation.licenseId !== result.licenseId) {
         // 이 licenseId를 이 기기에서 처음 보는 경우 — 첫 번째 자리로 자동 등록
-        store.set('settings._licenseActivation', { licenseId: result.licenseId, hwids: [myHwid] });
+        store.set('settings._licenseActivation', { licenseId: result.licenseId, hwids: [myHwid], syncedHwids: [] });
         // 2026-07-14 신규: 활성화 이벤트를 파이어베이스에도 기록(실패해도 무시,
         // await 안 함 — 오프라인이어도 라이선스 검증 자체는 계속 진행돼야 함)
-        firebasePush(
-          `라이선스발급/${sanitizeFirebaseKey(result.licenseId)}/기기활성화/${sanitizeFirebaseKey(myHwid)}`,
-          {
-            '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
-            '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
-            '이벤트': '최초활성화',
-          },
-          'PUT'
-        );
+        pushDeviceActivation(result.licenseId, myHwid, '최초활성화');
       } else {
         const hwids = Array.isArray(activation.hwids) ? activation.hwids : (activation.hwid ? [activation.hwid] : []);
+        const syncedHwids = Array.isArray(activation.syncedHwids) ? activation.syncedHwids : [];
         if (!hwids.includes(myHwid)) {
           if (hwids.length < maxDevices) {
             // 아직 정원이 남아있으면 이 기기를 새 자리로 등록
-            store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid] });
-            firebasePush(
-              `라이선스발급/${sanitizeFirebaseKey(activation.licenseId)}/기기활성화/${sanitizeFirebaseKey(myHwid)}`,
-              {
-                '시각': formatKoreanTimestamp(), '이메일': result.userEmail || null,
-                '등급': result.tier, '앱버전': app.getVersion(), '플랫폼': process.platform,
-                '이벤트': '신규기기등록',
-              },
-              'PUT'
-            );
+            store.set('settings._licenseActivation', { licenseId: activation.licenseId, hwids: [...hwids, myHwid], syncedHwids });
+            pushDeviceActivation(activation.licenseId, myHwid, '신규기기등록');
           } else {
             // 이미 maxDevices만큼 다 등록된 상태에서 등록 안 된 새 기기 — 차단
             hwidMismatch = true;
           }
+        } else if (!syncedHwids.includes(myHwid)) {
+          // 2026-07-20 신규: 로컬엔 이미 등록되어 있지만 파이어베이스 전송이
+          // 이전에 실패해 기록이 안 남은 경우 — 매 실행마다 재시도.
+          pushDeviceActivation(activation.licenseId, myHwid, '재전송');
         }
-        // hwids.includes(myHwid)면 이미 등록된 기기 — 통과
+        // hwids.includes(myHwid) && syncedHwids.includes(myHwid)면 이미 등록/동기화 완료 — 통과
       }
     }
   } catch (e) {
