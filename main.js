@@ -1813,8 +1813,8 @@ ipcMain.handle('account:setCategoryPairNaverCategory', (event, { pairId, categor
 const SETTINGS_DEFAULTS = {
   geminiKey: '', groqKey: '', unsplashKey: '',
   aiProvider: 'gemini',
-  geminiModel: 'gemini-2.0-flash-lite',
-  groqModel: 'llama-3.3-70b-versatile',
+  geminiModel: 'gemini-3.1-flash-lite',
+  groqModel: 'openai/gpt-oss-120b',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   // 2026-07-14: 프리미엄 등급의 하루 최대 발행 기본값 0 = 무제한
   // (computeMaxDailyPosts 참고). 스탠다드는 등급 자체가 10회 고정이라
@@ -2302,13 +2302,17 @@ function callGemini(apiKey, prompt, model, maxOutputTokens = 8192) {
 }
 
 // ── Groq API 호출 (OpenAI 호환) ──────────────────────────────
+// 2026-07-20: llama-4-maverick/scout, llama-3.1-70b는 이미 단종(shutdown)됐고
+// llama-3.3-70b-versatile/llama-3.1-8b-instant도 2026-08-16 단종 예정(Groq
+// 공식 발표) — gemma2-9b-it는 2025-10-08에 이미 단종되어 예전부터 폴백2가
+// 죽어있었음. Groq 권장 대체 모델인 openai/gpt-oss 계열로 전면 교체.
 const GROQ_MODELS = {
-  'llama-3.3-70b-versatile': { rpm: 30,  rpd: 1000,  tpd: 100000, label: 'Llama 3.3 70B (고품질)' },
-  'llama-3.1-8b-instant':    { rpm: 30,  rpd: 14400, tpd: 500000, label: 'Llama 3.1 8B (빠름, 폴백1)' },
-  'gemma2-9b-it':            { rpm: 30,  rpd: 14400, tpd: 500000, label: 'Gemma2 9B (폴백2)' },
+  'openai/gpt-oss-120b': { rpm: 1000, tpm: 250000, label: 'GPT-OSS 120B (고품질)' },
+  'openai/gpt-oss-20b':  { rpm: 1000, tpm: 250000, label: 'GPT-OSS 20B (빠름, 폴백1)' },
+  'qwen/qwen3.6-27b':    { rpm: 1000, tpm: 250000, label: 'Qwen3.6 27B (폴백2, Preview)' },
 };
 
-function callGroq(apiKey, prompt, model = 'llama-3.3-70b-versatile', maxOutputTokens = 8192) {
+function callGroq(apiKey, prompt, model = 'openai/gpt-oss-120b', maxOutputTokens = 8192) {
   return new Promise((resolve, reject) => {
     try {
       const payload = JSON.stringify({
@@ -2381,7 +2385,7 @@ function callOpenAI(apiKey, prompt, model = 'gpt-4o', maxOutputTokens = 8192) {
 }
 
 // ── Claude API 호출 ──────────────────────────────────────────
-function callClaude(apiKey, prompt, model = 'claude-sonnet-4-6', maxOutputTokens = 8192) {
+function callClaude(apiKey, prompt, model = 'claude-sonnet-5', maxOutputTokens = 8192) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model,
@@ -2426,24 +2430,27 @@ async function callAI(prompt, maxOutputTokens = 8192) {
 
   if (provider === 'claude') {
     const apiKey = (store.get('settings.claudeKey', '') || '').trim();
-    const model  = store.get('settings.claudeModel', 'claude-sonnet-4-6');
+    const model  = store.get('settings.claudeModel', 'claude-sonnet-5');
     if (!apiKey) throw new Error('Claude API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.');
     return callClaude(apiKey, prompt, model, maxOutputTokens);
   }
 
   if (provider === 'groq') {
     const apiKey = (store.get('settings.groqKey', '') || '').trim();
-    const primaryModel = store.get('settings.groqModel', 'llama-3.3-70b-versatile');
+    const primaryModel = store.get('settings.groqModel', 'openai/gpt-oss-120b');
     if (!apiKey) throw new Error('Groq API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.');
 
-    // 모델 폴백 순서: 설정 모델 → llama-3.1-8b-instant → gemma2-9b-it
+    // 2026-07-20: 기존 폴백 체인(llama-3.1-8b-instant → gemma2-9b-it)이
+    // gemma2-9b-it 단종(2025-10-08)으로 이미 죽어있었고, llama-3.1-8b-instant도
+    // 2026-08-16 단종 예정이라 Groq 권장 대체 모델로 전면 교체.
+    // 모델 폴백 순서: 설정 모델 → openai/gpt-oss-20b → openai/gpt-oss-120b
     const fallbackChain = [primaryModel];
-    if (primaryModel !== 'llama-3.1-8b-instant') fallbackChain.push('llama-3.1-8b-instant');
-    if (!fallbackChain.includes('gemma2-9b-it'))  fallbackChain.push('gemma2-9b-it');
+    if (primaryModel !== 'openai/gpt-oss-20b') fallbackChain.push('openai/gpt-oss-20b');
+    if (!fallbackChain.includes('openai/gpt-oss-120b')) fallbackChain.push('openai/gpt-oss-120b');
 
     let lastErr = null;
     for (const model of fallbackChain) {
-      const effectiveMax = model === 'llama-3.1-8b-instant'
+      const effectiveMax = model === 'openai/gpt-oss-20b'
         ? Math.min(maxOutputTokens, 4000)
         : maxOutputTokens;
       try {
@@ -2464,7 +2471,7 @@ async function callAI(prompt, maxOutputTokens = 8192) {
 
   // 기본: Gemini
   const apiKey = (store.get('settings.geminiKey', '') || '').trim();
-  const model  = store.get('settings.geminiModel', 'gemini-2.0-flash-lite');
+  const model  = store.get('settings.geminiModel', 'gemini-3.1-flash-lite');
   if (!apiKey) throw new Error('Gemini API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.');
   return callGemini(apiKey, prompt, model, maxOutputTokens);
 }
@@ -2622,7 +2629,10 @@ ipcMain.handle('settings:testSearchAd', (event, customerId, apiKey, secretKey) =
   });
 });
 
-// ── IPC: 키워드 자동 생성 (항상 Groq llama-3.1-8b-instant 사용 — 14.4K RPD) ──
+// ── IPC: 키워드 자동 생성 (항상 Groq openai/gpt-oss-20b 사용 — 무료 플랜
+// 기준 RPM 30 / RPD 1K / TPM 8K, 공식 rate-limits 문서 2026-07-20 확인.
+// gpt-oss-120b·qwen3.6-27b도 무료 플랜 RPD는 동일(1K)하지만 gpt-oss-20b가
+// 가장 빠르고(1000 t/s) 저렴해 이 짧은 작업에 고정 배정) ──
 ipcMain.handle('post:suggestKeywords', async (event, { topic }) => {
   try {
     const store   = getStore();
@@ -2639,9 +2649,9 @@ ipcMain.handle('post:suggestKeywords', async (event, { topic }) => {
 다음 JSON 형식으로만 응답하세요:
 { "keywords": ["키워드1", "키워드2", "키워드3", ...] }`;
 
-    // Groq 8B 우선 (빠르고 RPD 여유) → 키 없으면 현재 provider 폴백
+    // Groq GPT-OSS 20B 우선 (무료 플랜에서도 사용 가능, 빠르고 저비용) → 키 없으면 현재 provider 폴백
     const result = groqKey
-      ? await callGroq(groqKey, prompt, 'llama-3.1-8b-instant', 512)
+      ? await callGroq(groqKey, prompt, 'openai/gpt-oss-20b', 512)
       : await callAI(prompt, 512);
 
     const keywords = (result?.keywords || [])

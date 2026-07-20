@@ -14,9 +14,9 @@ const DEFAULTS = {
   editorFont: '바른히피',
   aiProvider: 'gemini',
   geminiModel: 'gemini-3.1-flash-lite',
-  groqModel: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+  groqModel: 'openai/gpt-oss-120b',
   openaiModel: 'gpt-4o',
-  claudeModel: 'claude-sonnet-4-6',
+  claudeModel: 'claude-sonnet-5',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
 };
@@ -970,10 +970,14 @@ export default function Settings() {
           <div className="form-group">
             <label>Gemini 모델</label>
             <select className="input" value={form.geminiModel} onChange={e => set('geminiModel', e.target.value)}>
-              <option value="gemini-3.5-flash">Gemini 3.5 Flash — 최신 고품질 (무료)</option>
+              <option value="gemini-3.5-flash">Gemini 3.5 Flash — 최고지능, 에이전틱·코딩 특화 (무료)</option>
               <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite — 절약·빠름 (무료)</option>
-              <option value="gemini-3.1-flash">Gemini 3.1 Flash — 균형 (무료)</option>
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash — 구버전 (유료 전환)</option>
+              <option value="gemini-3-flash-preview">Gemini 3 Flash — 신형 균형 (무료)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash — 구세대 안정적 가성비 (무료)</option>
+              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite — 구세대 초저가·최고속 (무료)</option>
+              <option disabled>── 유료 전용 모델 ──</option>
+              <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro — 최고급 추론·에이전틱 코딩 (유료 전용)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro — 구세대 최상위 추론 (유료 전용)</option>
             </select>
           </div>
         </>)}
@@ -1001,10 +1005,11 @@ export default function Settings() {
           <div className="form-group">
             <label>Groq 모델</label>
             <select className="input" value={form.groqModel} onChange={e => set('groqModel', e.target.value)}>
-              <option value="meta-llama/llama-4-maverick-17b-128e-instruct">Llama 4 Maverick 17B — 최신 최고품질</option>
-              <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B — 최신 균형 (빠름)</option>
-              <option value="llama-3.3-70b-versatile">Llama 3.3 70B — 안정적 고품질 (1,000 RPD)</option>
-              <option value="llama-3.1-70b-versatile">Llama 3.1 70B — 구버전</option>
+              <option value="openai/gpt-oss-120b">GPT-OSS 120B — 최신 플래그십, 웹검색·코드실행 내장 (권장)</option>
+              <option value="openai/gpt-oss-20b">GPT-OSS 20B — 초경량·초고속</option>
+              <option value="groq/compound">Compound — 에이전트 시스템 (웹검색·코드실행 자동판단)</option>
+              <option disabled>── 프리미엄(고비용) 모델 ──</option>
+              <option value="qwen/qwen3.6-27b">Qwen3.6 27B — Groq 내 최고지능 추론 (Preview)</option>
             </select>
           </div>
         </>)}
@@ -1035,9 +1040,12 @@ export default function Settings() {
           <div className="form-group">
             <label>OpenAI 모델</label>
             <select className="input" value={form.openaiModel} onChange={e => set('openaiModel', e.target.value)}>
-              <option value="gpt-4o">GPT-4o — 최신 고품질 (한국어 우수)</option>
+              <option value="gpt-5.6-luna">GPT-5.6 Luna — 최신 경량·저비용</option>
+              <option value="gpt-5.6-terra">GPT-5.6 Terra — 최신 균형 (권장)</option>
+              <option value="gpt-4o">GPT-4o — 안정적 고품질 (한국어 우수)</option>
               <option value="gpt-4o-mini">GPT-4o Mini — 빠름·저렴</option>
-              <option value="gpt-4-turbo">GPT-4 Turbo — 구버전 고품질</option>
+              <option disabled>── 프리미엄(고비용) 모델 ──</option>
+              <option value="gpt-5.6-sol">GPT-5.6 Sol — 최고 성능 플래그십</option>
             </select>
           </div>
         </>)}
@@ -1068,9 +1076,11 @@ export default function Settings() {
           <div className="form-group">
             <label>Claude 모델</label>
             <select className="input" value={form.claudeModel} onChange={e => set('claudeModel', e.target.value)}>
-              <option value="claude-opus-4-8">Claude Opus 4 — 최고품질 (느림·고비용)</option>
-              <option value="claude-sonnet-4-6">Claude Sonnet 4 — 균형 (권장)</option>
-              <option value="claude-haiku-4-5-20251001">Claude Haiku 4 — 빠름·저렴</option>
+              <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — 빠름·저렴</option>
+              <option value="claude-sonnet-5">Claude Sonnet 5 — 균형 (권장)</option>
+              <option disabled>── 프리미엄(고비용) 모델 ──</option>
+              <option value="claude-opus-4-8">Claude Opus 4.8 — 최고품질 (느림·고비용)</option>
+              <option value="claude-fable-5">Claude Fable 5 — 최상위 플래그십 (최고비용)</option>
             </select>
           </div>
         </>)}
