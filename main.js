@@ -1412,6 +1412,10 @@ app.whenReady().then(() => {
   startScheduler();
   // 앱 시작 화면이 먼저 뜨도록 약간 지연 후 업데이트 확인
   setTimeout(checkForAppUpdates, 3000);
+  // 2026-07-22 신규: 등록된 계정들의 네이버 세션이 실제로 살아있는지
+  // 앱 시작 후 백그라운드에서 순차 확인(사용자 요청) — 화면 뜨는 속도에
+  // 영향 안 주도록 5초 지연 후 시작, await 없이 fire-and-forget.
+  setTimeout(() => { runStartupSessionCheck(); }, 5000);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -7171,6 +7175,128 @@ ipcMain.handle('post:deleteReview', (event, { id }) => {
     return { success: false, error: err.message };
   }
 });
+
+// ── 계정 세션 라이브 체크 (2026-07-22 신규) ───────────────────────
+// 배경: 계정 관리 화면에 활성/만료/오류 상태 배지는 이미 있었지만, 이를
+// 갱신하는 account:checkStatus 핸들러가 preload.js/렌더러 어디에서도 호출
+// 되지 않아 실제로는 한 번도 동작한 적이 없었음(사용자 실사용 중 발견).
+// 게다가 그 핸들러는 로컬에 저장된 NID_AUT 쿠키의 "달력상 만료 날짜"만
+// 계산하는 방식이라, 쿠키 날짜는 안 지났는데 네이버 서버가 보안상 세션을
+// 거부하는 이번 실제 사례(카테고리 로드가 로그인 페이지로 리다이렉트)는
+// 애초에 잡아낼 수 없는 구조였음. 그래서 "로컬 계산"이 아니라 매번 실제로
+// 네이버에 라이브로 물어보는 방식으로 교체 — blog:getCategories가 이미
+// 쓰고 있는 "로그인 페이지로 리다이렉트되는지" 판별 로직을 재사용하되,
+// SE2 에디터가 다 뜨기를 기다리지 않고 페이지 로드 직후 URL만 확인해
+// 훨씬 가볍고 빠르게 만듦(카테고리 추출이 목적이 아니라 세션 생존 여부만
+// 확인하면 되므로).
+async function checkAccountSessionLive(accountId) {
+  const { getDB } = require('./src/db');
+  const db = getDB();
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+  if (!account?.cookies_encrypted || !account.naver_id) return null;
+
+  const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+  const naverId = account.naver_id;
+  const partition = `sesschk-${accountId}-${Date.now()}`;
+  const ses = electronSession.fromPartition(partition);
+  for (const cookie of cookies) {
+    try {
+      const urlBase = cookie.domain?.startsWith('.')
+        ? `https://www${cookie.domain}`
+        : `https://${cookie.domain || 'naver.com'}`;
+      await ses.cookies.set({
+        url: urlBase, name: cookie.name, value: cookie.value,
+        domain: cookie.domain, path: cookie.path || '/',
+        secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+        expirationDate: cookie.expirationDate,
+      });
+    } catch {}
+  }
+
+  const chkWin = new BrowserWindow({
+    width: 1200, height: 800, show: false,
+    webPreferences: { session: ses, nodeIntegration: false, contextIsolation: true },
+  });
+  chkWin.setMenuBarVisibility(false);
+
+  const isLoginPage = (title, url) => /nid\.naver\.com|NAVER 로그인/.test(`${title} ${url}`);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (status) => {
+      if (settled) return;
+      settled = true;
+      if (!chkWin.isDestroyed()) chkWin.destroy();
+      resolve(status);
+    };
+
+    // 카테고리 로드(45초)와 달리 SE2 에디터 로딩을 기다릴 필요가 없어
+    // 전체 타임아웃을 20초로 짧게 둠 — 그래도 판단이 안 서면(네트워크
+    // 지연 등) 상태를 함부로 바꾸지 않고 null(판단 보류) 반환.
+    const globalTimeout = setTimeout(() => {
+      writeLog('WARN', 'SESSION_CHECK', `세션 확인 타임아웃 — 상태 유지`, `accountId=${accountId}`);
+      done(null);
+    }, 20000);
+
+    chkWin.webContents.once('did-finish-load', async () => {
+      // 네이버 쪽 클라이언트 자바스크립트 리다이렉트가 로드 직후 바로
+      // 일어나지 않을 수 있어 짧게 한 번 더 대기 후 최종 URL을 확인.
+      await new Promise(r => setTimeout(r, 1500));
+      if (settled) return;
+      try {
+        const title = chkWin.webContents.getTitle();
+        const url = chkWin.webContents.getURL();
+        clearTimeout(globalTimeout);
+        if (isLoginPage(title, url)) {
+          writeLog('WARN', 'SESSION_CHECK', `세션 만료 감지 — 로그인 페이지로 리다이렉트`, `accountId=${accountId}, naverId=${naverId}`);
+          done('expired');
+        } else {
+          writeLog('INFO', 'SESSION_CHECK', `세션 정상`, `accountId=${accountId}, naverId=${naverId}`);
+          done('active');
+        }
+      } catch (e) {
+        clearTimeout(globalTimeout);
+        done(null);
+      }
+    });
+
+    chkWin.webContents.on('did-fail-load', () => {
+      clearTimeout(globalTimeout);
+      done(null);
+    });
+
+    chkWin.loadURL(`https://blog.naver.com/PostWriteForm.naver?blogId=${naverId}`).catch(() => {
+      clearTimeout(globalTimeout);
+      done(null);
+    });
+  });
+}
+
+// 앱 시작 시 등록된 계정을 하나씩(동시 실행 아님) 순차적으로 확인 — 여러
+// 계정을 동시에 열면 네이버 쪽에 부담을 주거나 서로 다른 세션 파티션이
+// 리소스를 한꺼번에 잡아먹을 수 있어 순서대로 처리(사용자 요청,
+// 2026-07-22). 계정당 간격을 살짝 두어 연속 요청처럼 보이지 않게 함.
+async function runStartupSessionCheck() {
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    // status='error'(아이디 불일치 등 세션과 무관한 별개 문제로 이미 표시된
+    // 계정)는 이 세션 확인 대상에서 제외 — 세션이 살아있다고 나와도 그
+    // 문제가 해결된 게 아니므로 함부로 'active'로 덮어쓰면 안 됨.
+    const accounts = db.prepare("SELECT id FROM accounts WHERE status IS NOT 'error'").all();
+    writeLog('INFO', 'SESSION_CHECK', `앱 시작 세션 확인 시작 — 계정 ${accounts.length}개`);
+    for (const { id } of accounts) {
+      const status = await checkAccountSessionLive(id);
+      if (status === 'expired' || status === 'active') {
+        db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run(status, id);
+      }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    writeLog('INFO', 'SESSION_CHECK', `앱 시작 세션 확인 완료`);
+  } catch (e) {
+    writeLog('WARN', 'SESSION_CHECK', '앱 시작 세션 확인 실패', e.message);
+  }
+}
 
 // ── IPC: blog:getCategories ───────────────────────────────────
 // 방식: BrowserWindow로 SE2 에디터 → 발행 버튼 클릭 → 카테고리 드롭다운 container-li 추출
