@@ -890,15 +890,13 @@ export default function PostCreate() {
                 {/* 2026-07-08 신규: 썸네일 이미지에 들어가는 별도 문구 —
                     제목과 동일한 편집/재생성 UX(SectionCard)를 그대로 재사용.
                     핵심 키워드 포함 18~20자, AI가 제목과 별개로 생성. */}
-                {tierLimits.thumbnail && (
-                  <SectionCard
-                    label="썸네일 문구" content={result.thumbText} section="thumbText"
-                    onRegen={handleRegenSection} regenSection={regenSection}
-                    editMode={editMode}
-                    onEdit={v => setResult(p => ({ ...p, thumbText: v }))}
-                    isTitle
-                  />
-                )}
+                <SectionCard
+                  label="썸네일 문구" content={result.thumbText} section="thumbText"
+                  onRegen={handleRegenSection} regenSection={regenSection}
+                  editMode={editMode}
+                  onEdit={v => setResult(p => ({ ...p, thumbText: v }))}
+                  isTitle
+                />
                 <SectionCard
                   label="도입부" content={result.intro} section="intro"
                   onRegen={handleRegenSection} regenSection={regenSection}
