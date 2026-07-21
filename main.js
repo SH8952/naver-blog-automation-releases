@@ -1199,6 +1199,80 @@ async function openNaverLogin() {
         writeLog('WARN', 'LOGIN', '버튼 주입 실패', e.message);
       }
 
+      // 2026-07-22 신규: "로그인 상태 유지" 체크박스 강조 + 안내 문구.
+      // 배경 — 계정 세션이 예상보다 빨리 만료되는 사례가 실사용으로 확인
+      // 됐고(카테고리 로드 실패 → 계정관리에서 재로그인 필요), 로그인 시
+      // "로그인 상태 유지"를 체크해두면 도움이 될 수 있다는 사용자 판단.
+      // 고정 좌표가 아니라 "로그인 상태 유지" 텍스트를 페이지에서 직접
+      // 찾아 그 옆에 표시 — 이 텍스트가 있는 페이지(실제 로그인 폼)에서만
+      // 자연스럽게 동작하고, 다른 페이지(QR·2FA 등)에서는 못 찾으면 조용히
+      // 아무 것도 안 함(우리 페이지가 아니라 네이버 페이지라 클릭 강제는
+      // 불가능, 안내만 가능).
+      try {
+        await loginWin.webContents.executeJavaScript(`
+          (function() {
+            if (document.getElementById('__nba_keep_login_style__')) return;
+            var all = document.querySelectorAll('body *');
+            var target = null;
+            for (var i = 0; i < all.length; i++) {
+              var el = all[i];
+              if (el.children.length === 0 && el.textContent &&
+                  el.textContent.replace(/\\s/g, '') === '로그인상태유지') {
+                target = el;
+                break;
+              }
+            }
+            if (!target) return;
+            var container = target.closest('label') || target.parentElement || target;
+
+            var styleTag = document.createElement('style');
+            styleTag.id = '__nba_keep_login_style__';
+            styleTag.textContent =
+              '@keyframes nba_pulse { 0%,100%{ box-shadow:0 0 0 0 rgba(239,68,68,0.55);} 50%{ box-shadow:0 0 0 7px rgba(239,68,68,0);} }';
+            document.head.appendChild(styleTag);
+
+            container.style.outline = '3px solid #ef4444';
+            container.style.outlineOffset = '5px';
+            container.style.borderRadius = '6px';
+            container.style.animation = 'nba_pulse 1.3s ease-in-out infinite';
+
+            if (!document.getElementById('__nba_keep_login_text__')) {
+              var hint = document.createElement('span');
+              hint.id = '__nba_keep_login_text__';
+              // 2026-07-22 수정: 한 줄로 두면 옆의 "로그인 상태 유지" 라벨이
+              // 폭이 좁아져 두 줄로 밀리는 문제가 실제 화면에서 확인됨 —
+              // 안내문구 자체를 2줄로 나눠 폭을 줄임.
+              // 2026-07-22 재수정: <br>만 쓰면 두 번째 줄이 브라우저 기본
+              // 동작으로 왼쪽 끝(테두리 쪽)까지 붙어버려 첫 줄과 시작
+              // 위치가 안 맞는 문제가 실사용으로 확인됨 — 각 줄을
+              // display:block인 별도 span으로 만들어 부모(hint)의
+              // margin-left 기준으로 둘 다 같은 시작 위치에서 시작하게 함.
+              // 2026-07-22 3차 수정: block으로 나눠도 1번째 줄은 "←" 화살표
+              // 만큼 "반드시" 글자가 뒤로 밀려있어, 2번째 줄("(세션...")과
+              // 시작점이 여전히 안 맞는 문제가 실사용으로 재확인됨 — 화살표
+              // 자리를 고정폭 스페이서로 만들어 2번째 줄에도 똑같이 넣어서
+              // "반드시"와 "(세션"의 시작 x좌표를 맞춤.
+              hint.innerHTML =
+                '<span style="display:block;">' +
+                  '<span style="display:inline-block;width:16px;">←</span>반드시 체크해 주세요' +
+                '</span>' +
+                '<span style="display:block;">' +
+                  '<span style="display:inline-block;width:16px;"></span>(세션 유지에 도움됩니다)' +
+                '</span>';
+              hint.style.cssText = [
+                'color:#ef4444', 'font-weight:700', 'font-size:12px',
+                'margin-left:10px', 'line-height:1.35',
+                'font-family:-apple-system,sans-serif'
+              ].join(';');
+              var parent = container.parentElement;
+              if (parent) parent.insertBefore(hint, container.nextSibling);
+            }
+          })();
+        `);
+      } catch(e) {
+        writeLog('WARN', 'LOGIN', '로그인 상태 유지 강조 주입 실패', e.message);
+      }
+
       const isPostLogin =
         url.startsWith('https://www.naver.com') ||
         url.startsWith('https://m.naver.com') ||

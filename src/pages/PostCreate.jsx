@@ -184,6 +184,10 @@ export default function PostCreate() {
   const [publishVisibility, setPublishVisibility] = useState('public'); // 'public'|'private'
   const [blogCategories, setBlogCategories] = useState([]);          // 실제 블로그 카테고리 목록
   const [categoriesLoading, setCategoriesLoading] = useState(false); // 카테고리 로딩 중
+  // 2026-07-22 신규: 카테고리 로드 실패 표시. 지금까지 확인된 실패 사례가
+  // 전부 네이버 세션 만료였어서(계정 세션 라이브 체크 기능과 같은 원인),
+  // 조용히 빈 칸으로 남기지 않고 원인을 바로 안내 — 사용자 피드백 반영.
+  const [categoryError, setCategoryError] = useState(false);
 
   // 2026-07-07 신규: 발행 전 미리보기 — 수동/반자동 전용. 체크박스가 켜져
   // 있으면 즉시발행/예약발행 클릭 시 실제 자동화 전에 먼저 썸네일/본문
@@ -241,10 +245,12 @@ export default function PostCreate() {
     if (!accountId) {
       setBlogCategories([]);
       setPublishCategory('');
+      setCategoryError(false);
       return;
     }
     setCategoriesLoading(true);
     setBlogCategories([]);
+    setCategoryError(false);
     // 2026-07-07: 검수 대기에서 넘어온 카테고리가 대기 중이면(pendingCategoryRef)
     // 빈 값 대신 그 값으로 초기화 — 아래 카테고리 목록 로딩 완료 후 한 번 더
     // 확정 적용한다.
@@ -253,12 +259,18 @@ export default function PostCreate() {
       setCategoriesLoading(false);
       if (res.success && res.categories && res.categories.length > 0) {
         setBlogCategories(res.categories);
+      } else if (!res.success) {
+        // 2026-07-22 신규: 로드 실패는 지금까지 전부 세션 만료가 원인이었음
+        setCategoryError(true);
       }
       if (pendingCategoryRef.current) {
         setPublishCategory(pendingCategoryRef.current);
         pendingCategoryRef.current = null;
       }
-    }).catch(() => setCategoriesLoading(false));
+    }).catch(() => {
+      setCategoriesLoading(false);
+      setCategoryError(true);
+    });
   }, [accountId]);
 
   // 2026-07-07 신규: 검수 대기 화면에서 "글 생성으로 이동"으로 넘어온 글
@@ -1071,6 +1083,9 @@ export default function PostCreate() {
               <label className="panel-label">
                 카테고리
                 {categoriesLoading && <span className="category-loading-dot"> ·</span>}
+                {categoryError && !categoriesLoading && (
+                  <span style={{ color: '#ef4444', fontWeight: 500 }}> — 계정관리 - 세션 만료 확인</span>
+                )}
               </label>
               {blogCategories.length > 0 ? (
                 <select
