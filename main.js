@@ -2149,15 +2149,40 @@ const structureCountRule = `
       방법" 형태 — 단순 주제어 나열이 아니라 키워드가 포함된 문장형으로 작성)
   · [중요] 대분류(##)/중분류(###)/소분류(####) 제목은 절대로 내용 없이
     다음 제목으로 바로 넘어가지 말 것 — 제목만 덩그러니 있고 그 아래
-    아무 내용 없이 다음 제목이 시작되는 구조는 금지`;
+    아무 내용 없이 다음 제목이 시작되는 구조는 금지
+  · [정보 밀도 강화 - 필수, 2026-07-22 신규] 본문 안에 최소 1곳 이상,
+    ▪ 불릿을 활용한 "단계별 절차"(예: "▪ 1단계: ...", "▪ 2단계: ...") 또는
+    "항목별 비교"(예: "▪ A 방법 — 장점: ..., 단점: ...", "▪ B 방법 — 장점:
+    ..., 단점: ...")를 반드시 포함해 정보를 구조화할 것. 실제 표(table)
+    형식은 사용하지 말 것 — 대신 ▪ 불릿을 줄 단위로 나열하는 방식으로
+    비교/절차를 표현할 것(표는 발행 시 정상적으로 렌더링되지 않음).
+    "이러면 좋고 저러면 좋습니다"처럼 막연하고 겉도는 서술로 뭉뚱그리지
+    말고, 독자가 바로 실행할 수 있는 구체적인 절차나 명확한 비교 기준으로
+    제시할 것.`;
 
 // ── Gemini 프롬프트 빌더 ─────────────────────────────────────
-function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax, section, currentResult }) {
+function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax, section, currentResult, referenceItems }) {
   const toneMap    = { info: '정보형(객관적 사실 중심)', daily: '일상형(친근하고 편안한 말투)', review: '리뷰형(장단점 분석)', emotional: '감성형(감정 표현 풍부)' };
   const styleMap   = { auto: '구어체와 문어체를 자연스럽게 혼합', colloquial: '구어체 위주(~했어요, ~인데요)', formal: '문어체 위주(~합니다, ~됩니다)' };
   const expMap     = { auto: '자연스럽게 적당히 삽입', many: '많이 삽입(리뷰 느낌)', few: '최소한으로 삽입', none: '경험담 없이 순수 정보 중심' };
   const sentMap    = { auto: '짧은 문장과 긴 문장을 랜덤하게 혼합', short: '짧은 문장 위주로 템포감 있게', long: '긴 문장 위주로 상세하게' };
   const kwStr      = keywords && keywords.length ? keywords.join(', ') : '없음';
+
+  // 2026-07-22 신규: "글감 수집" 기능이 실제로 수집해둔 실제 블로그 글
+  // 제목/요약을 참고 자료로 활용 — 지금까지는 자동화 루프가 keyword_text
+  // (검색 키워드 문자열)만 주제로 넘기고, 같이 저장된 실제 수집 내용은
+  // 버려지고 있었음(사용자 지적으로 발견). generatePostContent()가
+  // research_items에서 topic과 일치하는 항목을 조회해 여기로 전달하면,
+  // AI가 완전히 빈손으로 지어내는 대신 실제 존재하는 글을 참고하도록 함.
+  const referenceContext = (referenceItems && referenceItems.length)
+    ? `- [참고 자료 - 실제 검색된 관련 글] 아래는 "${topic}"에 대해 실제로 존재하는
+  블로그 글의 제목과 요약입니다. 이 내용을 참고해서 더 구체적이고 사실에
+  가까운 정보를 담되, 아래 내용을 그대로 베끼지 말고 자신의 글로 새로
+  풀어써서 작성할 것. 아래에 없는 세부 수치・업체명・가격은 확신 없이
+  지어내지 말 것.
+${referenceItems.map((r, i) => `  ${i + 1}. ${r.title}${r.summary ? ` — ${r.summary}` : ''}`).join('\n')}
+`
+    : '';
 
   const commonInstructions = `
 - [언어 규칙 - 절대 최우선 준수, 위반 시 전체 거부]
@@ -2188,7 +2213,13 @@ function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenc
 - [마무리 작성 규칙 - SEO] 마무리(conclusion) 문단에는 핵심 키워드를 다시 한 번
   자연스럽게 언급하고, 마지막 문장은 독자의 댓글・공감을 유도하는 질문형
   문장으로 마무리할 것
-${AI_CLICHE_BAN}
+- [사실 정확성 - 절대 준수, 2026-07-22 신규] 지금 당장의 정확한 가격,
+  특정 업체·플랫폼명, 오늘 기준 수치처럼 검증되지 않은 구체적 사실을
+  확신 있게 단정하지 말 것. 그런 내용이 필요하면 "보통", "일반적으로",
+  "~하는 경향이 있다"처럼 안정적이고 시간이 지나도 잘 변하지 않는
+  일반 원칙 위주로 구체적으로 서술할 것 — 확실하지 않은 것을 그럴듯하게
+  지어내는 것보다, 검증된 원칙을 명확하게 설명하는 것이 우선이다.
+${referenceContext}${AI_CLICHE_BAN}
 - JSON 형식으로만 응답할 것`;
 
   // 본문(body)의 3단계 구조 개수 고정 규칙은 모듈 레벨 structureCountRule
@@ -3065,7 +3096,26 @@ async function generatePostContent(params) {
       return text.replace(/\s/g, '').length;
     };
 
-    const prompt = buildPrompt(params);
+    // 2026-07-22 신규: "글감 수집"에서 이미 모아둔 실제 블로그 글(title/
+    // summary)을 참고 자료로 조회 — keyword_text가 정확히 params.topic과
+    // 일치하는 항목만 사용(자동화 루프는 item.keyword_text를 그대로
+    // params.topic으로 넘기므로 항상 일치; 수동 글 생성도 사용자가 글감
+    // 수집에 등록한 것과 같은 문구를 주제로 입력하면 자동으로 활용됨).
+    let referenceItems = [];
+    try {
+      const { getDB } = require('./src/db');
+      referenceItems = getDB()
+        .prepare('SELECT title, summary FROM research_items WHERE keyword_text = ? ORDER BY collected_at DESC LIMIT 3')
+        .all(params.topic)
+        .filter(r => r.title);
+      if (referenceItems.length) {
+        writeLog('INFO', 'AI', `글감 수집 참고 자료 ${referenceItems.length}건 활용`, params.topic);
+      }
+    } catch (e) {
+      writeLog('WARN', 'AI', '글감 수집 참고 자료 조회 실패 — 참고 자료 없이 진행', e.message);
+    }
+
+    const prompt = buildPrompt({ ...params, referenceItems });
     let result = await callAI(prompt);
 
     // 후처리
@@ -3136,6 +3186,49 @@ ${structureCountRule}
         }
       } catch (e) {
         writeLog('WARN', 'AI', '구조 보정 재시도 실패', e.message);
+      }
+    }
+
+    // 2026-07-22 신규: "경험담 삽입"이 none이 아닌데도 실제로는 1인칭
+    // 경험 표현이 하나도 없는 겉도는 글이 실사용으로 확인됨(사용자 지적).
+    // 프롬프트 지시("자연스럽게 삽입")만으로는 보장이 안 되어 코드 단
+    // 검증 추가 — intro+body에 흔한 1인칭 경험 표현이 있는지 확인하고,
+    // 없으면 body에 구체적인 경험 문장을 추가하도록 1회 보정 재시도.
+    // 구조 보정 다음, 글자수 보완 재시도보다는 반드시 먼저 실행 —
+    // [[body-structure-fixed-counts]] 순서 규칙과 동일한 이유로, 글자수
+    // 보완이 항상 맨 마지막에 최종 글자수를 보장해야 하기 때문.
+    const hasPersonalExperience = (text) =>
+      /제가|저는|제\s?경험|직접\s?(가|먹|써|해|다녀)[본봤]|해봤|가봤|써봤|다녀왔|느꼈|배웠|겪었/.test(text || '');
+
+    if (params.personalExp !== 'none') {
+      const combinedText = `${result.intro || ''} ${result.body || ''}`;
+      if (!hasPersonalExperience(combinedText)) {
+        writeLog('WARN', 'AI', '경험담 삽입 설정인데 1인칭 경험 표현 없음 — 본문 보정 재시도');
+        const expPrompt = `${AI_PERSONA}
+아래는 "${params.topic}"에 대해 작성된 블로그 글의 본문(body)입니다.
+개인 경험담이 포함되어야 하는데 실제로는 1인칭 경험 문장이 전혀 없습니다.
+
+[현재 본문]
+${result.body}
+
+위 본문의 기존 내용과 구조(##/###/####/▪)를 최대한 유지하면서, 자연스러운
+위치에 구체적인 1인칭 경험 문장(예: "제가 직접 ~해봤을 때", "저는 ~하면서
+~을 느꼈습니다")을 최소 1곳 이상 추가하세요. 겉도는 뭉뚱그린 감상이 아니라
+구체적인 상황・행동・느낀 점이 드러나야 합니다.
+- 순수 한국어(한글)만 사용
+- JSON 형식으로만 응답: {"body": "경험담이 추가된 전체 본문"}`;
+        try {
+          const withExp = await callAI(expPrompt);
+          if (withExp && withExp.body && hasPersonalExperience(withExp.body)) {
+            result.body = normalizeBodyHeadingLevels(stripForeignChars(stripCJK(withExp.body)));
+            chars = countChars(result);
+            writeLog('INFO', 'AI', `경험담 보정 재시도 완료 — ${chars}자`);
+          } else {
+            writeLog('WARN', 'AI', '경험담 보정 재시도 결과도 미포함 — 원본 유지');
+          }
+        } catch (e) {
+          writeLog('WARN', 'AI', '경험담 보정 재시도 실패', e.message);
+        }
       }
     }
 
