@@ -997,6 +997,18 @@
   text-align: center;
 }
 
+/* ── 본문 서식 구조 패널: 가로 6열 고정 (2026-07-24, 사용자 확인 — 랜덤+
+   박스형 포함 한 줄에 6개). auto-fill이 아닌 고정 열수로 배치마다 줄
+   맞춰 깔끔하게 채워지도록 함(썸네일 패널의 auto-fill 방식과 차이).
+   패널 폭은 460px — 5열/380px일 때 고정 56px 미리보기 박스가 컬럼폭보다
+   살짝 커서 미세한 가로스크롤이 있었음(overflow-y:auto가 overflow-x도
+   덩달아 auto로 만드는 CSS 특성 때문에 스크롤바로 드러남), 6열 기준
+   여유있게 재계산해 해결. */
+.post-style-panel { width: 500px !important; }
+.post-style-panel-grid {
+  grid-template-columns: repeat(6, 1fr);
+}
+
 /* 2026-07-17: "랜덤" 옵션 미리보기는 이제 RandomDesignPreview 컴포넌트가
    ThumbDesignPreview의 "기본" 분기와 동일한 구조를 인라인 스타일로 직접
    그리므로(다른 22종과 정확히 같은 크기/비율을 위해), 별도 CSS 클래스는

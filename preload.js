@@ -147,6 +147,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 즉시 발행 (네이버 글쓰기 창 자동 열기) */
     now: (params) => ipcRenderer.invoke('publish:now', params),
 
+    /** 테스트 발행 (2026-07-24 신규, 개발자 전용) — 실제 발행 버튼 직전까지만
+     * 자동화하고 멈춘다. 실제로는 게시되지 않는다. */
+    test: (params) => ipcRenderer.invoke('publish:test', params),
+
     /** 예약 발행 등록 */
     schedule: (params) => ipcRenderer.invoke('publish:schedule', params),
 

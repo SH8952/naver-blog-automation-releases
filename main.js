@@ -3483,10 +3483,11 @@ async function composePreviewSections({ title, tone, intro, body, conclusion, li
 // 예약발행을 누르면, 실제 브라우저 자동화 전에 먼저 이 IPC로 미리보기용
 // 썸네일·본문 HTML을 만들어 화면에 보여준다.
 // 여기서 만든 썸네일(thumbTempPath)과 확정한 색상 프리셋 인덱스
-// (resolvedStyleIndex)는, 사용자가 미리보기를 확인하고 실제 발행을
-// 진행할 때 publish:now/schedule → publishToNaver로 그대로 전달되어
-// 재사용된다 — 그래야 미리본 색상/썸네일과 실제 발행 결과가 달라지는
-// 문제(랜덤 프리셋이 두 번 다르게 뽑히는 경우)를 막을 수 있다.
+// (resolvedStyleIndex) + 구조 선택(resolvedLayoutId, 2026-07-24 신규)은,
+// 사용자가 미리보기를 확인하고 실제 발행을 진행할 때 publish:now/schedule
+// → publishToNaver로 그대로 전달되어 재사용된다 — 그래야 미리본 색상·
+// 구조·썸네일과 실제 발행 결과가 달라지는 문제(랜덤이 두 번 다르게
+// 뽑히는 경우)를 막을 수 있다.
 ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl, tone }) => {
   try {
     const editorFont = (getStore().get('settings.editorFont', '') || '').trim();
@@ -3494,7 +3495,9 @@ ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, bo
     const resolvedStyleIndex = (styleSetting >= 0 && styleSetting < POST_STYLE_PRESETS.length)
       ? styleSetting
       : Math.floor(Math.random() * POST_STYLE_PRESETS.length);
-    const stylePreset = POST_STYLE_PRESETS[resolvedStyleIndex];
+    const layoutSetting = getStore().get('settings.postLayout', -1);
+    const resolvedLayoutId = resolvePostLayout(layoutSetting);
+    const stylePreset = { ...(POST_STYLE_PRESETS[resolvedStyleIndex] || POST_STYLE_PRESETS[0]), layout: resolvedLayoutId };
 
     let thumbDataUrl = null;
     let thumbTempPath = null;
@@ -3516,7 +3519,7 @@ ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, bo
 
     const sections = await composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset });
 
-    return { success: true, ...sections, thumbDataUrl, thumbTempPath, resolvedStyleIndex };
+    return { success: true, ...sections, thumbDataUrl, thumbTempPath, resolvedStyleIndex, resolvedLayoutId };
   } catch (err) {
     writeLog('ERROR', 'PREVIEW', '미리보기 생성 실패', err.message);
     return { success: false, error: err.message };
@@ -3815,7 +3818,12 @@ const H2_ICONS = ['✅', '🔥', '💡'];
 // 분리. 각 프리셋 내에서 h2/h3/h4는 서로 다른 색상을 쓰도록 설계(요청:
 // "대분류·중분류·소분류마다 색상이 중복되지 않게"). 환경설정 > 글 설정 >
 // "본문 서식 스타일"에서 특정 스타일 고정 또는 "랜덤"(매 발행마다 무작위)
-// 선택 가능 — settings.postStyle: -1(랜덤) | 0~4(고정 인덱스).
+// 선택 가능 — settings.postStyle: -1(랜덤) | 0~4(고정 인덱스). 색상
+// 팔레트만 담당(구조는 아래 POST_LAYOUT_KINDS가 별도로 담당 — 2026-07-24
+// 사용자 요청으로 색상/구조를 독립된 두 축으로 분리. 애초엔 신규 구조
+// 4종에 색을 하나씩 고정해서 통합 리스트로 만들었으나, 사용자가 "기존
+// 색 버튼은 그대로 유지, 구조는 별도 드롭다운으로, 서로 조합 가능하게"
+// 요청해 이 구조로 변경함. [[post-style-structural-expansion]] 참고).
 const POST_STYLE_PRESETS = [
   { // 0: 그린 (기존 스타일 그대로 유지 — 하위 호환)
     id: 'green', label: '그린',
@@ -3849,14 +3857,39 @@ const POST_STYLE_PRESETS = [
   },
 ];
 
-// settings.postStyle 값(-1 또는 0~4)을 실제 프리셋 객체로 변환. -1이면
-// 매 호출마다 무작위 프리셋 하나를 고른다(발행 1건당 1번 호출해 그 글
-// 전체에 일관되게 적용).
-function resolvePostStyle(postStyleSetting) {
+// settings.postLayout 값(-1(랜덤) | 'box'|'leftbar'|'underline'|'newspaper'
+// |'banner') — 대분류/중분류를 "어떻게 감싸는지"만 담당하는 구조 축.
+// 색상은 여기 관여하지 않고 항상 POST_STYLE_PRESETS(위 5색)에서 옴 —
+// 그래서 예: leftbar + 퍼플 = 보라색 좌측 컬러바 처럼 자유 조합됨.
+// 1차 4종만 추가, 나머지 16종은 추후 4개씩 순차 추가 예정.
+const POST_LAYOUT_KINDS = [
+  { id: 'box', label: '박스형' },
+  { id: 'leftbar', label: '좌측 컬러바형' },
+  { id: 'underline', label: '언더라인형' },
+  { id: 'newspaper', label: '신문기사형' },
+  { id: 'banner', label: '대문자 배너형' },
+];
+
+function resolvePostLayout(postLayoutSetting) {
+  if (postLayoutSetting === -1 || postLayoutSetting == null) {
+    return POST_LAYOUT_KINDS[Math.floor(Math.random() * POST_LAYOUT_KINDS.length)].id;
+  }
+  return POST_LAYOUT_KINDS.find(k => k.id === postLayoutSetting) ? postLayoutSetting : 'box';
+}
+
+// settings.postStyle 값(-1 또는 0~4, 색상)과 settings.postLayout 값(-1
+// 또는 id, 구조)을 각각 해석해 하나의 style 객체로 병합. -1이면 매
+// 호출마다 무작위로 고른다(발행 1건당 1번 호출해 그 글 전체에 일관되게
+// 적용). 반환값의 h2/h3/h4 색상 필드는 색상 팔레트에서, layout 필드는
+// 구조 선택에서 옴 — toNaverHtml/buildIntroHtml/buildConclusionHtml은
+// 이 병합된 객체 하나만 보고 렌더링(색상 출처를 몰라도 됨).
+function resolvePostStyle(postStyleSetting, postLayoutSetting) {
   const idx = (postStyleSetting === -1 || postStyleSetting == null)
     ? Math.floor(Math.random() * POST_STYLE_PRESETS.length)
     : postStyleSetting;
-  return POST_STYLE_PRESETS[idx] || POST_STYLE_PRESETS[0];
+  const colorPreset = POST_STYLE_PRESETS[idx] || POST_STYLE_PRESETS[0];
+  const layout = resolvePostLayout(postLayoutSetting);
+  return { ...colorPreset, layout };
 }
 
 // 대주제(H2) 아이콘 순환자 — 도입부→본문→마무리 전체에서 공유. icons 배열은
@@ -3954,10 +3987,24 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
       continue;
     }
 
-    // ### → 중주제 (스타일 프리셋 박스/심볼, useBox=false면 볼드 텍스트만)
+    // ### → 중주제 (2026-07-24: layout별 분기 추가 — 'box' 계열은 기존과
+    // 동일하게 useBox 플래그를 따르고, 신규 구조 스타일(leftbar/underline/
+    // newspaper/banner)은 useBox와 무관하게 항상 박스 없는 자체 구조로
+    // 렌더링. 각 구조는 border/background-color/font-weight만 사용해 SE3
+    // 붙여넣기에서 걸러질 위험이 있는 속성(그림자/그라데이션/회전/의사요소)
+    // 은 전혀 쓰지 않음.
     if (/^###\s+/.test(tok)) {
       const t = tok.replace(/^###\s+/, '');
-      if (useBox) {
+      const layout = st.layout || 'box';
+      if (layout === 'leftbar') {
+        html += `<div style="border-left:3px solid ${st.h3.border};padding:1px 0 1px 12px;margin:16px 0 8px 0;"><p style="${font}margin:0;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p></div>`;
+      } else if (layout === 'newspaper') {
+        html += `<p style="${font}margin:16px 0 8px 0;font-style:italic;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+      } else if (layout === 'banner') {
+        html += `<p style="${font}margin:16px 0 8px 0;"><span style="color:${st.h3.text};font-size:15px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid ${st.h3.border};padding-bottom:3px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+      } else if (layout === 'underline') {
+        html += `<p style="${font}margin:14px 0 6px 0;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+      } else if (useBox) {
         const inner = `<p style="${font}margin:0;"><span style="color:${st.h3.text};font-size:17px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
         html += tableBox(inner, `border-left:4px solid ${st.h3.border};`, st.h3.bg);
       } else {
@@ -3968,11 +4015,23 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
       continue;
     }
 
-    // ## / # → 대주제 (스타일 프리셋 박스, 아이콘 순환, useBox=false면 볼드 텍스트만)
+    // ## / # → 대주제 (2026-07-24: layout별 분기 추가, 위 ### 처리와 동일한 원칙)
     if (/^#{1,2}\s+/.test(tok)) {
       const t = tok.replace(/^#{1,2}\s+/, '');
       const icon = nextH2Icon();
-      if (useBox) {
+      const layout = st.layout || 'box';
+      const gapTop = (!isFirstLine && !justInsertedHr) ? '26px' : '12px';
+      if (layout === 'leftbar') {
+        html += `<div style="border-left:5px solid ${st.h2.border};padding:2px 0 2px 14px;margin:${gapTop} 0 12px 0;"><p style="${font}margin:0;"><span style="color:${st.h2.text};font-size:19px;"><b>${icon} ${esc(t)}</b></span></p></div>`;
+      } else if (layout === 'newspaper') {
+        html += `<p style="${font}margin:${gapTop} 0 12px 0;border-top:3px solid ${st.h2.border};border-bottom:1px solid ${st.h2.border};padding:8px 0;"><span style="color:${st.h2.text};font-size:19px;"><b>${icon} ${esc(t)}</b></span></p>`;
+      } else if (layout === 'banner' && useBox) {
+        if (!isFirstLine && !justInsertedHr) html += `<hr>`;
+        const inner = `<p style="${font}margin:0;text-transform:uppercase;letter-spacing:1px;"><span style="color:${st.h2.text};font-size:18px;"><b>${icon} ${esc(t)}</b></span></p>`;
+        html += tableBox(inner, `border:none;`, st.h2.bg);
+      } else if (layout === 'underline') {
+        html += `<p style="${font}margin:${gapTop} 0 10px 0;"><span style="color:${st.h2.text};font-size:20px;border-bottom:3px solid ${st.h2.border};padding-bottom:4px;"><b>${icon} ${esc(t)}</b></span></p>`;
+      } else if (useBox) {
         if (!isFirstLine && !justInsertedHr) html += `<hr>`;
         const inner = `<p style="${font}margin:0;"><span style="color:${st.h2.text};font-size:20px;"><b>${icon} ${esc(t)}</b></span></p>`;
         html += tableBox(inner, `border-left:5px solid ${st.h2.border};`, st.h2.bg);
@@ -4016,6 +4075,20 @@ function buildIntroHtml(text, fontName, iconCycler, style) {
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   const label = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;">📋 이 글에서 알아볼 내용</span></p>`;
   const inner = label + toNaverHtml(text, fontName, iconCycler, false, st);
+  // 2026-07-24: layout별 도입부 감싸개 분기. leftbar/underline/newspaper는
+  // 표(table) 박스를 아예 쓰지 않는 게 스타일 정체성이라 div만으로 감쌈.
+  // box/banner는 기존과 동일하게 tableBox 사용(banner는 h2.bg가 짙은
+  // 단색이라 이 기본 처리만으로도 배너 느낌이 그대로 남).
+  const layout = st.layout || 'box';
+  if (layout === 'leftbar') {
+    return `<div style="border-left:5px solid ${st.h2.border};padding:10px 0 10px 16px;margin:0 0 16px 0;">${inner}</div>`;
+  }
+  if (layout === 'newspaper') {
+    return `<div style="border-top:2px solid ${st.h2.border};border-bottom:2px solid ${st.h2.border};padding:14px 0;margin:0 0 16px 0;">${inner}</div>`;
+  }
+  if (layout === 'underline') {
+    return `<div style="border-bottom:2px solid ${st.h2.border};padding:0 0 14px 0;margin:0 0 16px 0;">${inner}</div>`;
+  }
   return `<div style="margin:0 0 16px 0;">` + tableBox(inner, `border:2px solid ${st.h2.border};`, st.h2.bg) + `</div>`;
 }
 function buildBodyHtml(text, fontName, iconCycler, style) {
@@ -4184,6 +4257,17 @@ function buildConclusionHtml(text, fontName, iconCycler, style) {
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   const label = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;">✏️ 마무리</span></p>`;
   const inner = label + toNaverHtml(text, fontName, iconCycler, false, st);
+  // 2026-07-24: buildIntroHtml과 동일한 layout 분기 원칙 적용
+  const layout = st.layout || 'box';
+  if (layout === 'leftbar') {
+    return `<div style="border-left:4px solid ${st.h2.border};padding:8px 0 8px 14px;margin:8px 0 0 0;">${inner}</div>`;
+  }
+  if (layout === 'newspaper') {
+    return `<div style="border-top:1.5px solid ${st.h2.border};border-bottom:1.5px solid ${st.h2.border};padding:12px 0;margin:8px 0 0 0;">${inner}</div>`;
+  }
+  if (layout === 'underline') {
+    return `<div style="border-bottom:1.5px solid ${st.h2.border};padding:0 0 12px 0;margin:8px 0 0 0;">${inner}</div>`;
+  }
   return `<div style="margin:8px 0 0 0;">` + tableBox(inner, `border:1.5px solid ${st.h2.border};`, st.h2.bg) + `</div>`;
 }
 
@@ -5411,7 +5495,12 @@ async function attachLinkToLastImage(publishWin, url) {
   }
 }
 
-async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, thumbBgUrl = null }) {
+async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, forcedLayoutId = null, thumbBgUrl = null, testMode = false }) {
+  // 2026-07-24 신규: 테스트 모드(개발자 전용) — 실제 발행 버튼 클릭 직전까지만
+  // 자동화를 수행하고 멈춘다. 실제 SE3 붙여넣기 결과를 검사(DevTools)로 그대로
+  // 확인할 수 있으면서도 실제로는 아무것도 게시되지 않아 삭제할 필요가 없고
+  // 계정에도 영향이 없다. 테스트 모드는 항상 창을 보이게 강제한다(검사 필요).
+  const effectiveHeadless = testMode ? false : headless;
   // reserveAt: 'YYYY-MM-DDTHH:MM' 형식이 오면, 즉시발행과 동일하게 전체 자동화를
   // 수행하되 최종 발행 직전 네이버 자체 "예약" 기능으로 등록한다(2026-07-03).
   // 이렇게 하면 앱/PC가 꺼져 있어도 네이버 서버가 예약 시각에 알아서 발행한다.
@@ -5478,13 +5567,13 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // — 지연 초기화 여부의 차이로 설명됨). 수동/반자동(headless:false)
   // 발행에는 원래 영향 없던 부분이라 변화가 없다.
   // [진단 마커 2026-07-16] publishToNaver에 실제로 전달된 headless 값 확인
-  writeLog('INFO', 'PUBLISH', '[진단] publishWin 생성 직전 headless 값', JSON.stringify({ headless, willShow: !headless }));
+  writeLog('INFO', 'PUBLISH', '[진단] publishWin 생성 직전 headless 값', JSON.stringify({ headless: effectiveHeadless, testMode, willShow: !effectiveHeadless }));
 
   const publishWin = new BrowserWindow({
     width: 1300,
     height: 860,
-    title: `네이버 블로그 발행 — ${title}`,
-    show: !headless,
+    title: testMode ? `[테스트] 네이버 블로그 발행 — ${title}` : `네이버 블로그 발행 — ${title}`,
+    show: !effectiveHeadless,
     webPreferences: { session: ses, nodeIntegration: false, contextIsolation: true, backgroundThrottling: false },
   });
   publishWin.setMenuBarVisibility(false);
@@ -6159,12 +6248,17 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     }
   }
 
-  // 본문 서식 스타일(색상/아이콘 프리셋) — settings.postStyle(-1=랜덤, 0~4=고정)을
-  // 이번 발행 1건에 대해 한 번만 뽑아 도입부/본문/마무리 전체에 동일하게 적용.
-  // forcedStyleIndex가 있으면(발행 전 미리보기에서 이미 확정된 값) 그걸 그대로 사용.
-  const postStylePreset = (forcedStyleIndex !== null && forcedStyleIndex >= 0 && forcedStyleIndex < POST_STYLE_PRESETS.length)
-    ? POST_STYLE_PRESETS[forcedStyleIndex]
-    : resolvePostStyle(getStore().get('settings.postStyle', -1));
+  // 본문 서식 스타일(색상 프리셋 + 구조) — settings.postStyle(색상,
+  // -1=랜덤/0~4=고정)과 settings.postLayout(구조, -1=랜덤/id=고정)을
+  // 이번 발행 1건에 대해 각각 한 번만 뽑아 병합, 도입부/본문/마무리
+  // 전체에 동일하게 적용. forcedStyleIndex/forcedLayoutId가 있으면
+  // (발행 전 미리보기에서 이미 확정된 값) 그걸 그대로 사용(2026-07-24:
+  // 색상/구조 분리 이후에도 미리보기-실제발행 일치 보장 유지).
+  const resolvedColorIdx = (forcedStyleIndex !== null && forcedStyleIndex >= 0 && forcedStyleIndex < POST_STYLE_PRESETS.length)
+    ? forcedStyleIndex
+    : (getStore().get('settings.postStyle', -1) === -1 ? Math.floor(Math.random() * POST_STYLE_PRESETS.length) : getStore().get('settings.postStyle', -1));
+  const resolvedLayoutId = resolvePostLayout(forcedLayoutId !== null ? forcedLayoutId : getStore().get('settings.postLayout', -1));
+  const postStylePreset = { ...(POST_STYLE_PRESETS[resolvedColorIdx] || POST_STYLE_PRESETS[0]), layout: resolvedLayoutId };
 
   // 대주제(H2) 아이콘 순환자 — 도입부→본문→마무리 전체에서 선택된 프리셋의
   // 아이콘 목록을 공유 순환
@@ -7081,7 +7175,15 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       8, 400
     );
 
-    if (finalPublishBtn) {
+    // 2026-07-24 신규: 테스트 모드는 여기서 멈춘다 — 폰트/카테고리/공개설정/
+    // 태그까지 실제 발행과 완전히 동일하게 자동화하되, 마지막 "발행" 버튼만
+    // 누르지 않는다. 임시저장 버튼을 별도로 찾아 클릭하는 자동화가 필요
+    // 없다는 게 이 방식의 장점 — 그냥 안 누르면 아무것도 게시되지 않는다.
+    // 창도 닫지 않고 그대로 열어둬 개발자가 직접 검사(DevTools)한 뒤
+    // 수동으로 닫을 수 있게 한다.
+    if (testMode) {
+      writeLog('INFO', 'PUBLISH', '[테스트 모드] 발행 버튼 클릭 생략 — 검사를 위해 창을 열어둠', finalPublishBtn ? finalPublishBtn.txt : '(발행 버튼 위치 미확인)');
+    } else if (finalPublishBtn) {
       publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: finalPublishBtn.x, y: finalPublishBtn.y, button: 'left', clickCount: 1 });
       publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: finalPublishBtn.x, y: finalPublishBtn.y, button: 'left', clickCount: 1 });
       writeLog('INFO', 'PUBLISH', '최종 발행 클릭', finalPublishBtn.txt);
@@ -7098,8 +7200,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     }
   }
 
-  // 창이 닫히면 상태 업데이트
-  publishWin.once('closed', () => {
+  // 창이 닫히면 상태 업데이트 (2026-07-24: 테스트 모드는 실제 발행이 아니므로
+  // DB에 손대지 않는다 —애초에 postId가 없거나 검수 대기 원본을 건드리면 안 됨)
+  if (!testMode) publishWin.once('closed', () => {
     try {
       const { getDB: gdb } = require('./src/db');
       const row = gdb().prepare('SELECT status FROM posts WHERE id=?').get(postId);
@@ -7181,12 +7284,48 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       // 그대로 재사용(중복 생성 방지 + 미리보기와 실제 결과 일치 보장)
       preGeneratedThumbPath: tierLimits.thumbnail ? (post.forcedThumbPath || null) : null,
       forcedStyleIndex: post.forcedStyleIndex != null ? post.forcedStyleIndex : null,
+      forcedLayoutId: post.forcedLayoutId != null ? post.forcedLayoutId : null,
       // 2026-07-07: 미리보기 없이 바로 발행한 경우(previewEnabled=false)에도
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
       thumbBgUrl: post.thumbBgUrl || null,
     });
 
     return { success: true, postId, warning: limitCheck.warning || undefined };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ── IPC: 테스트 발행 (2026-07-24 신규, 개발자 전용) ────────────
+// 실제 발행과 완전히 동일한 자동화(폰트/카테고리/공개설정/태그까지)를
+// 수행하되 마지막 "발행" 버튼만 누르지 않고 멈춘다. DB에 posts 행을
+// 만들거나 건드리지 않으며, 일일 발행 한도 체크도 하지 않는다 — 실제
+// 발행이 아니므로 카운트에 포함될 이유가 없다. 검수 대기에 이미 쌓여있는
+// 글을 반복 재사용해 SE3 렌더링 결과만 빠르게 확인하려는 용도.
+// main.js가 배포판(app.isPackaged)에서는 isDev가 항상 false이므로, 이
+// 핸들러는 배포판에서는 무조건 차단된다(프론트 UI 숨김과 별개의 최종 방어선).
+ipcMain.handle('publish:test', async (event, { accountId, post }) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    await publishToNaver({
+      accountId,
+      postId: null,
+      title: post.title,
+      thumbText: post.thumbText || null,
+      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '' },
+      hashtags: post.hashtags || [],
+      images: post.images || [],
+      category: post.category || '',
+      visibility: post.visibility || 'public',
+      autoThumbnail: post.autoThumbnail === true,
+      headless: false,
+      preGeneratedThumbPath: post.forcedThumbPath || null,
+      forcedStyleIndex: post.forcedStyleIndex != null ? post.forcedStyleIndex : null,
+      forcedLayoutId: post.forcedLayoutId != null ? post.forcedLayoutId : null,
+      thumbBgUrl: post.thumbBgUrl || null,
+      testMode: true,
+    });
+    return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -7302,6 +7441,7 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       // 그대로 재사용(중복 생성 방지 + 미리보기와 실제 결과 일치 보장)
       preGeneratedThumbPath: tierLimits.thumbnail ? (post.forcedThumbPath || null) : null,
       forcedStyleIndex: post.forcedStyleIndex != null ? post.forcedStyleIndex : null,
+      forcedLayoutId: post.forcedLayoutId != null ? post.forcedLayoutId : null,
       // 2026-07-07: 미리보기 없이 바로 발행한 경우(previewEnabled=false)에도
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
       thumbBgUrl: post.thumbBgUrl || null,

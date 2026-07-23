@@ -11,6 +11,7 @@ const DEFAULTS = {
   licenseKey: '',
   customThumbnail: true, thumbnailStyle: -1, thumbnailDesign: 'default',
   postStyle: -1,
+  postLayout: -1,
   editorFont: '바른히피',
   aiProvider: 'gemini',
   geminiModel: 'gemini-3.1-flash-lite',
@@ -299,6 +300,154 @@ function ThumbDesignPicker({ value, onChange }) {
         </span>
         <span className="thumb-design-picker-label">{displayLabel}</span>
         <span className="naver-cat-picker-arrow">{open ? '\u25b2' : '\u25bc'}</span>
+      </button>
+      {panel}
+    </div>
+  );
+}
+
+// ── 본문 서식 "구조" 선택 (2026-07-24 신규, 색상과 분리) ──────────
+// main.js POST_LAYOUT_KINDS와 id를 1:1로 맞춰야 함(둘 다 바꾸면 함께
+// 바꿀 것). 처음엔 색상+구조를 하나의 리스트로 합쳤었는데, 사용자가
+// "기존 색상 버튼은 그대로 두고, 구조만 고르는 드롭다운을 아래에 별도로
+// 추가, 서로 자유롭게 조합되게" 요청해 색상(기존 버튼형, 아래 그대로
+// 유지)과 구조(이 드롭다운)를 완전히 독립된 두 축으로 분리함. 이 드롭다운
+// 은 색상을 전혀 다루지 않고(미리보기도 중립 회색으로만 표시) 구조만
+// 담당 — 실제 색은 위쪽 색상 버튼에서 고른 값이 그대로 적용됨. 1차로
+// SE3에서 살아남을 확률이 높은 4종(그림자/그라데이션/회전/의사요소/
+// 웹폰트 없음)만 추가, 나머지 16종은 추후 4개씩 순차 추가 예정. 가로
+// 5개 고정 그리드로 20개까지 채워지도록 설계(사용자 확인 2026-07-24).
+const POST_LAYOUT_OPTIONS = [
+  { id: 'box', label: '박스형' },
+  { id: 'leftbar', label: '좌측 컬러바형' },
+  { id: 'underline', label: '언더라인형' },
+  { id: 'newspaper', label: '신문기사형' },
+  { id: 'banner', label: '대문자 배너형' },
+];
+const POST_LAYOUT_PREVIEW_ACCENT = '#888888';
+const POST_LAYOUT_PREVIEW_TEXT = '#333333';
+
+// 56x56 박스 안에 "제목" 텍스트로 구조 처리를 축소 렌더링(중립 회색만
+// 사용 — 실제 색은 색상 버튼에서 따로 결정됨). 실제 발행 렌더링(main.js
+// toNaverHtml)과 완전히 같은 코드는 아니지만(React vs 순수 HTML 문자열
+// 이라 중복 구현), 같은 시각 언어로 축소 렌더링함.
+function PostLayoutPreview({ layout }) {
+  if (!layout) {
+    return (
+      <div style={{ width:'100%', height:'100%', borderRadius:'6px', background:'#fff',
+        display:'flex', alignItems:'center', justifyContent:'center', fontSize:'16px' }}>
+        🎲
+      </div>
+    );
+  }
+  const accent = POST_LAYOUT_PREVIEW_ACCENT;
+  const text = POST_LAYOUT_PREVIEW_TEXT;
+  let inner = null;
+  if (layout === 'leftbar') {
+    inner = (
+      <div style={{ borderLeft:`3px solid ${accent}`, paddingLeft:'6px', fontSize:'9px', fontWeight:700, color:text }}>제목</div>
+    );
+  } else if (layout === 'underline') {
+    inner = (
+      <div style={{ borderBottom:`2px solid ${accent}`, paddingBottom:'3px', fontSize:'9px', fontWeight:700, color:text, display:'inline-block' }}>제목</div>
+    );
+  } else if (layout === 'newspaper') {
+    inner = (
+      <div style={{ borderTop:`2px solid ${accent}`, borderBottom:`1px solid ${accent}`, padding:'3px 6px', fontSize:'9px', fontWeight:700, color:text }}>제목</div>
+    );
+  } else if (layout === 'banner') {
+    inner = (
+      <div style={{ background:accent, color:'#fff', padding:'4px 10px', fontSize:'8px', fontWeight:700, letterSpacing:'0.5px', textTransform:'uppercase', borderRadius:'2px' }}>제목</div>
+    );
+  } else {
+    inner = (
+      <div style={{ border:`1.5px solid ${accent}`, background:'#f2f2f2', color:text, padding:'4px 8px', fontSize:'9px', fontWeight:700, borderRadius:'2px' }}>제목</div>
+    );
+  }
+  return (
+    <div style={{ width:'100%', height:'100%', borderRadius:'6px', background:'#fff',
+      display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+      {inner}
+    </div>
+  );
+}
+
+// 2026-07-24: 가로 6열(랜덤+박스형 포함)로 변경 — 5열용 380px 폭으로는
+// 미세한 가로스크롤이 생겨(고정폭 56px 미리보기 박스가 grid 컬럼폭보다
+// 살짝 커서 overflow) 6열 기준으로 넉넉하게 재계산한 폭으로 확장.
+const POST_LAYOUT_PANEL_WIDTH = 500;
+function PostLayoutPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: POST_LAYOUT_PANEL_WIDTH });
+  const btnRef = useRef(null);
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const updateCoords = () => {
+      if (!btnRef.current) return;
+      const r = btnRef.current.getBoundingClientRect();
+      const cardEl = btnRef.current.closest('.card');
+      const rightBoundary = cardEl
+        ? cardEl.getBoundingClientRect().right - 8
+        : window.innerWidth - 8;
+      const maxAllowedWidth = Math.max(240, rightBoundary - SIDEBAR_MIN_LEFT);
+      const width = Math.min(POST_LAYOUT_PANEL_WIDTH, maxAllowedWidth);
+      let left = r.left;
+      if (left + width > rightBoundary) left = rightBoundary - width;
+      if (left < SIDEBAR_MIN_LEFT) left = SIDEBAR_MIN_LEFT;
+      setCoords({ top: r.bottom + 4, left, width });
+    };
+    updateCoords();
+    const handleOutside = (e) => {
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      if (panelRef.current && panelRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('resize', updateCoords);
+    window.addEventListener('scroll', updateCoords, true);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('resize', updateCoords);
+      window.removeEventListener('scroll', updateCoords, true);
+    };
+  }, [open]);
+
+  const isRandom = (value ?? -1) === -1;
+  const selected = !isRandom ? POST_LAYOUT_OPTIONS.find(o => o.id === value) : null;
+  const displayLabel = isRandom ? '🎲 랜덤 (매번 다른 구조)' : (selected ? selected.label : '박스형');
+
+  const panel = open ? createPortal(
+    <div className="thumb-design-panel post-style-panel" ref={panelRef} style={{ top: coords.top, left: coords.left, width: coords.width }}>
+      <div className="thumb-design-panel-grid post-style-panel-grid">
+        <button type="button"
+          className={`thumb-design-panel-item${isRandom ? ' selected' : ''}`}
+          onClick={() => { onChange(-1); setOpen(false); }}>
+          <div className="thumb-design-panel-preview"><PostLayoutPreview layout={null} /></div>
+          <span className="thumb-design-panel-label">랜덤</span>
+        </button>
+        {POST_LAYOUT_OPTIONS.map((opt) => (
+          <button key={opt.id} type="button"
+            className={`thumb-design-panel-item${value === opt.id ? ' selected' : ''}`}
+            onClick={() => { onChange(opt.id); setOpen(false); }}>
+            <div className="thumb-design-panel-preview"><PostLayoutPreview layout={opt.id} /></div>
+            <span className="thumb-design-panel-label">{opt.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="thumb-design-picker">
+      <button type="button" ref={btnRef} className="thumb-design-picker-btn" onClick={() => setOpen(o => !o)}>
+        <span className="thumb-design-picker-preview">
+          {isRandom ? <PostLayoutPreview layout={null} /> : <PostLayoutPreview layout={selected?.id} />}
+        </span>
+        <span className="thumb-design-picker-label">{displayLabel}</span>
+        <span className="naver-cat-picker-arrow">{open ? '▲' : '▼'}</span>
       </button>
       {panel}
     </div>
@@ -1258,7 +1407,7 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* ── 본문 서식 스타일 (2026-07-07 신규) ─────────────────── */}
+      {/* ── 본문 서식 스타일 (2026-07-07 색상 신규, 2026-07-24 구조 축 분리) ── */}
       <div className="card settings-section">
         <h2 className="settings-section-title">본문 서식 스타일</h2>
         <div className="settings-grid">
@@ -1289,6 +1438,15 @@ export default function Settings() {
             </div>
             <p style={{ fontSize:'11px', color:'var(--text-secondary)', marginTop:'8px', lineHeight:1.6 }}>
               발행 글의 제목 박스 색상·아이콘 조합입니다 · 랜덤 선택 시 매 발행마다 5가지 중 하나가 자동으로 적용되어 계정마다 다른 느낌을 줍니다
+            </p>
+          </div>
+          <div className="form-group" style={{ gridColumn:'1/-1' }}>
+            <label>대분류·중분류 서식 구조 (2026-07-24 신규)</label>
+            <div style={{ marginTop:'8px' }}>
+              <PostLayoutPicker value={form.postLayout ?? -1} onChange={(id) => set('postLayout', id)} />
+            </div>
+            <p style={{ fontSize:'11px', color:'var(--text-secondary)', marginTop:'8px', lineHeight:1.6 }}>
+              제목을 감싸는 구조(박스/좌측 컬러바/언더라인 등)입니다 · 위 색상과 자유롭게 조합됩니다 · 랜덤 선택 시 매 발행마다 하나가 자동으로 적용됩니다
             </p>
           </div>
         </div>

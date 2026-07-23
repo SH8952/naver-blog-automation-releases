@@ -67,6 +67,39 @@ export default function ReviewQueue() {
     try { return JSON.parse(post.content_json || '{}'); } catch { return {}; }
   };
 
+  // 2026-07-24 신규(개발자 전용): 검수 대기 글을 삭제하지 않고 그대로 둔 채
+  // "글 생성" 화면으로 프리필해서 여는 버전 — 제미나이 재생성 없이 이미
+  // 만들어진 글로 미리보기→테스트(발행 안 함)를 반복 수행하기 위함.
+  // handleMoveToEditor와 로직은 같지만 deleteReview 호출이 없어 검수 대기
+  // 목록에 원본이 계속 남는다는 점만 다름.
+  const buildReviewPostPayload = (post) => {
+    const content = parseContent(post);
+    let images = [];
+    try { images = JSON.parse(post.images_json || '[]'); } catch { /* 무시 */ }
+    let hashtags = [];
+    try { hashtags = JSON.parse(post.hashtags || '[]'); } catch { /* 무시 */ }
+    return {
+      title: post.title,
+      thumbText: content.thumbText || '',
+      intro: content.intro || '',
+      body: content.body || '',
+      conclusion: content.conclusion || '',
+      links: content.links || [],
+      hashtags,
+      images,
+      accountId: post.account_id,
+      category: post.category || '',
+      visibility: post.visibility || 'public',
+      autoThumbnail: !!post.auto_thumbnail,
+      memo: post.memo || '',
+      tone: content.tone || '',
+    };
+  };
+
+  const handleTestOpen = (post) => {
+    navigate('/post-create', { state: { reviewPost: buildReviewPostPayload(post) } });
+  };
+
   // 2026-07-07 신규: 검수 대기 글을 "글 생성" 화면으로 옮겨서 사용자가 직접
   // 수정한 뒤 즉시발행/예약발행을 할 수 있게 함(완전자동 누락 항목 회부 기능과
   // 함께 도입) — 옮기면 원본은 검수 대기 목록에서 삭제(사용자 확정 설계).
@@ -157,6 +190,19 @@ export default function ReviewQueue() {
                 )}
 
                 <div className="review-item-actions">
+                  {/* 2026-07-24 신규(개발자 전용): 원본을 검수 대기에 남긴 채 "글 생성"
+                      화면으로 프리필해서 열기 — 제미나이 재생성 없이 같은 글로
+                      미리보기→테스트(발행 안 함)를 반복할 때 사용. 배포판에서는
+                      process.env.NODE_ENV가 'development'가 아니라 이 버튼 자체가 노출되지 않음. */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => handleTestOpen(post)}
+                      disabled={deletingId === post.id || publishingId === post.id || movingId === post.id}
+                    >
+                      🧪 테스트로 열기
+                    </button>
+                  )}
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => handleDelete(post)}

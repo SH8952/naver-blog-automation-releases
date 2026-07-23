@@ -172,6 +172,7 @@ export default function PostCreate() {
   // 발행 관련
   const [publishing, setPublishing]       = useState(false);
   const [scheduling, setScheduling]       = useState(false); // 예약 등록 중(네이버 에디터 자동화 진행 중)
+  const [testing, setTesting]             = useState(false); // 2026-07-24 신규: 테스트 발행 진행 중(개발자 전용, 실제 발행 안 함)
   const [publishMsg, setPublishMsg]       = useState('');    // 성공/오류 메시지
   const [headlessMode, setHeadlessMode]   = useState(true);  // true=백그라운드 발행
   const [autoThumbnail, setAutoThumbnail] = useState(true);  // 커스텀 썸네일 자동 생성 (settings.customThumbnail)
@@ -275,10 +276,18 @@ export default function PostCreate() {
   }, [accountId]);
 
   // 2026-07-07 신규: 검수 대기 화면에서 "글 생성으로 이동"으로 넘어온 글
-  // 프리필 — location.state.reviewPost가 있으면 최초 1회만 각 입력값을
-  // 채운다(재실행 방지를 위해 의존성 배열을 비워둠 — 이 화면에 진입할 때
-  // 딱 한 번만 반영하면 되는 값이라 accountId 등 다른 상태 변경으로 인한
-  // 재실행이 필요 없음).
+  // 프리필 — location.state.reviewPost가 있으면 각 입력값을 채운다.
+  // 2026-07-24 수정: "글 생성" 화면은 다른 페이지로 이동해도 입력 중이던
+  // 내용이 사라지지 않도록 항상 마운트 상태를 유지하고 CSS로만 보이기/
+  // 숨기기 한다(MainLayout.jsx). 원래는 의존성 배열을 비워 "이 컴포넌트가
+  // 처음 마운트될 때 딱 한 번만" 실행했는데, 컴포넌트가 항상 마운트돼
+  // 있다 보니 앱 켠 뒤 "글 생성" 화면을 한 번이라도 거쳐가면 그 다음부터는
+  // 검수 대기에서 넘어와도 이 effect가 다시 실행되지 않아 빈 화면으로
+  // 보이는 문제가 있었음(테스트로 열기를 반복 사용하며 발견). state를
+  // 의존성으로 추가해 "새로운 reviewPost를 담아 navigate할 때마다"
+  // 다시 채우도록 수정 — reviewPost가 없는 일반적인 화면 전환(사이드바
+  // 클릭 등)은 rp가 없어 그대로 가드에서 걸러지므로 입력 중이던 내용은
+  // 여전히 보존된다.
   useEffect(() => {
     const rp = state?.reviewPost;
     if (!rp) return;
@@ -312,7 +321,7 @@ export default function PostCreate() {
 
     if (rp.category) pendingCategoryRef.current = rp.category;
     if (rp.accountId) setAccountId(String(rp.accountId));
-  }, []);
+  }, [state]);
 
   // 전체 글 텍스트
   const fullText = result
@@ -515,12 +524,66 @@ export default function PostCreate() {
   const confirmPreviewAndPublish = async () => {
     const forcedThumbPath = previewData?.thumbTempPath || null;
     const forcedStyleIndex = previewData?.resolvedStyleIndex != null ? previewData.resolvedStyleIndex : null;
+    // 2026-07-24 신규: 색상(forcedStyleIndex)과 별도로 구조(forcedLayoutId)도
+    // 미리보기에서 확정된 값을 그대로 재사용해 실제 발행 결과가 미리보기와
+    // 어긋나지 않도록 함.
+    const forcedLayoutId = previewData?.resolvedLayoutId != null ? previewData.resolvedLayoutId : null;
     const action = previewPendingAction;
     setPreviewModalOpen(false);
     setPreviewData(null);
     setPreviewPendingAction(null);
-    if (action === 'schedule') await doScheduleSubmit(forcedThumbPath, forcedStyleIndex);
-    else await doPublishNow(forcedThumbPath, forcedStyleIndex);
+    if (action === 'schedule') await doScheduleSubmit(forcedThumbPath, forcedStyleIndex, forcedLayoutId);
+    else await doPublishNow(forcedThumbPath, forcedStyleIndex, forcedLayoutId);
+  };
+
+  // 2026-07-24 신규(개발자 전용): 미리보기 모달에서 "테스트" — 실제 발행과
+  // 완전히 동일하게 네이버 에디터 자동화를 끝까지 수행하되 마지막 "발행"
+  // 버튼만 누르지 않고 멈춘다. 실제로 게시되지 않으므로 삭제할 필요가
+  // 없고, 반복해서 눌러도 계정에 영향이 없다.
+  const confirmPreviewAndTest = async () => {
+    const forcedThumbPath = previewData?.thumbTempPath || null;
+    const forcedStyleIndex = previewData?.resolvedStyleIndex != null ? previewData.resolvedStyleIndex : null;
+    const forcedLayoutId = previewData?.resolvedLayoutId != null ? previewData.resolvedLayoutId : null;
+    setPreviewModalOpen(false);
+    setPreviewData(null);
+    setPreviewPendingAction(null);
+    await doTestPublish(forcedThumbPath, forcedStyleIndex, forcedLayoutId);
+  };
+
+  const doTestPublish = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId) => {
+    setTesting(true);
+    setPublishMsg('');
+    try {
+      const res = await window.electronAPI.publish.test({
+        accountId: Number(accountId),
+        post: {
+          title: result.title,
+          thumbText: result.thumbText || '',
+          intro: result.intro,
+          body: result.body,
+          conclusion: result.conclusion,
+          links: Array.isArray(result.links) ? result.links : [],
+          hashtags: hashtagList,
+          images: images.map(img => ({ url: img.url, alt: img.alt })),
+          category: publishCategory.trim(),
+          visibility: publishVisibility,
+          autoThumbnail: autoThumbnail,
+          forcedThumbPath: forcedThumbPath || undefined,
+          forcedStyleIndex: forcedStyleIndex != null ? forcedStyleIndex : undefined,
+          forcedLayoutId: forcedLayoutId != null ? forcedLayoutId : undefined,
+          thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
+          tone,
+        },
+      });
+      if (res.success) {
+        setPublishMsg('🧪 테스트 창이 열렸습니다 — 발행 버튼은 누르지 않았습니다. 검사(우클릭→검사)로 확인 후 창을 직접 닫아주세요.');
+      } else {
+        setPublishMsg(`⚠️ ${res.error || '테스트 오류'}`);
+      }
+    } finally {
+      setTesting(false);
+      setTimeout(() => setPublishMsg(''), 8000);
+    }
   };
 
   // ── 즉시 발행 ─────────────────────────────────────────────
@@ -528,10 +591,10 @@ export default function PostCreate() {
     if (!accountId) { setPublishMsg('⚠️ 발행 계정을 선택해주세요.'); setTimeout(() => setPublishMsg(''), 3000); return; }
     if (!result) return;
     if (previewEnabled) { await requestPreview('now'); return; }
-    await doPublishNow(null, null);
+    await doPublishNow(null, null, null);
   };
 
-  const doPublishNow = async (forcedThumbPath, forcedStyleIndex) => {
+  const doPublishNow = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId) => {
     setPublishing(true);
     setPublishMsg('');
     try {
@@ -553,6 +616,7 @@ export default function PostCreate() {
           autoThumbnail: autoThumbnail,
           forcedThumbPath: forcedThumbPath || undefined,
           forcedStyleIndex: forcedStyleIndex != null ? forcedStyleIndex : undefined,
+          forcedLayoutId: forcedLayoutId != null ? forcedLayoutId : undefined,
           // 2026-07-07: 미리보기 없이 바로 발행(previewEnabled=false)한 경우에도
           // 선택한 썸네일 배경이 반영되도록 전달
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
@@ -623,10 +687,10 @@ export default function PostCreate() {
       await requestPreview('schedule');
       return;
     }
-    await doScheduleSubmit(null, null);
+    await doScheduleSubmit(null, null, null);
   };
 
-  const doScheduleSubmit = async (forcedThumbPath, forcedStyleIndex) => {
+  const doScheduleSubmit = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId) => {
     const scheduledAt = `${scheduleDate}T${scheduleTime}`;
     setScheduling(true);
     try {
@@ -648,6 +712,7 @@ export default function PostCreate() {
           autoThumbnail: autoThumbnail,
           forcedThumbPath: forcedThumbPath || undefined,
           forcedStyleIndex: forcedStyleIndex != null ? forcedStyleIndex : undefined,
+          forcedLayoutId: forcedLayoutId != null ? forcedLayoutId : undefined,
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
           // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
           tone,
@@ -1395,8 +1460,17 @@ export default function PostCreate() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => { setPreviewModalOpen(false); setPreviewData(null); setPreviewPendingAction(null); }} disabled={publishing || scheduling}>취소</button>
-              <button className="btn btn-primary" onClick={confirmPreviewAndPublish} disabled={publishing || scheduling}>
+              <button className="btn btn-ghost" onClick={() => { setPreviewModalOpen(false); setPreviewData(null); setPreviewPendingAction(null); }} disabled={publishing || scheduling || testing}>취소</button>
+              {/* 2026-07-24 신규(개발자 전용): 실제 발행 버튼만 안 누르고 나머지는
+                  전부 동일하게 자동화 — 반복 테스트해도 계정에 영향 없음.
+                  process.env.NODE_ENV==='development'는 기존 개발자 등급 토글(Sidebar.jsx)과
+                  동일한 판정 방식이며, main.js의 publish:test 핸들러도 isDev로 이중 차단한다. */}
+              {process.env.NODE_ENV === 'development' && (
+                <button className="btn btn-ghost" onClick={confirmPreviewAndTest} disabled={publishing || scheduling || testing}>
+                  {testing ? <><span className="spinner-sm" />테스트 중…</> : '🧪 테스트(발행 안 함)'}
+                </button>
+              )}
+              <button className="btn btn-primary" onClick={confirmPreviewAndPublish} disabled={publishing || scheduling || testing}>
                 {(publishing || scheduling)
                   ? <><span className="spinner-sm" />발행 중…</>
                   : previewPendingAction === 'schedule' ? '이대로 예약 발행' : '이대로 즉시 발행'}
