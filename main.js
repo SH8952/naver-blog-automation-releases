@@ -1906,6 +1906,14 @@ const SETTINGS_DEFAULTS = {
   // settings.autoShowPublishWindow로 저장하면, 반자동/완전자동 경로도
   // 이 값을 그대로 따르게 된다(기본값 false = 기존과 동일하게 숨김).
   autoShowPublishWindow: false,
+  // 2026-07-23 신규: 제휴 광고(쿠팡파트너스/알리익스프레스) — 사용자 확인
+  // 완료된 설계: 글 톤이 "리뷰형"일 때만 동작, 삽입 위치는 아래에서 선택.
+  // [[naver-se3-publish-fixes]] 참고 — iframe 위젯 대신 실제 상품 1개를
+  // 검색해 이미지+텍스트로 삽입(기존 이미지 삽입 방식과 동일하게 안전).
+  affiliatePlatform: 'coupang', // 'coupang' | 'aliexpress' (라디오, 하나만 활성)
+  coupangAccessKey: '', coupangSecretKey: '',
+  aliAppKey: '', aliAppSecret: '',
+  affiliateAdPosition: 'body', // 'none' | 'intro' | 'body' | 'both' — 기본값 "본문 아래"(사용자 확인 2026-07-23)
 };
 
 ipcMain.handle('settings:get', () => {
@@ -3383,7 +3391,7 @@ ${structureCountRule}
 // 자동화 없이 텍스트 섹션 HTML만 만들어 돌려준다. 이미지 자체는 렌더러가
 // 이미 갖고 있는 이미지 URL로 <img> 태그를 직접 배치하므로, 여기서는
 // 섹션 HTML과 각 조각의 존재 여부만 알려주면 충분하다.
-function composePreviewSections({ intro, body, conclusion, links, editorFont, stylePreset }) {
+async function composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset }) {
   const iconCycler = makeIconCycler(stylePreset.h2.icons);
   const introHtml = buildIntroHtml(intro, editorFont, iconCycler, stylePreset);
 
@@ -3397,11 +3405,24 @@ function composePreviewSections({ intro, body, conclusion, links, editorFont, st
   const bodyPart4Html = buildBodyHtml(part4, editorFont, iconCycler, stylePreset);
 
   const conclusionHtml = buildConclusionHtml(conclusion, editorFont, iconCycler, stylePreset);
-  const linksHtml = buildLinksHtml(links, editorFont);
+  // 2026-07-23 신규: 게시 직전과 동일하게 미리보기에서도 실제 접속 가능한
+  // 링크만 남기고 나머지는 제외(발행 결과와 어긋나지 않도록)
+  const verifiedLinks = await filterReachableLinks(links);
+  const linksHtml = buildLinksHtml(verifiedLinks, editorFont);
+
+  // 2026-07-23 신규: 제휴 광고 — publishToNaver와 동일하게 resolveAffiliateAd로
+  // 게이팅(리뷰형 톤 + 위치설정 + 키등록)한 뒤 미리보기에도 반영해, 실제
+  // 발행 결과와 미리보기가 어긋나지 않도록 한다.
+  const adResult = await resolveAffiliateAd((title || '').trim(), tone);
+  const adHtml = adResult ? buildAffiliateAdHtml(adResult.product, adResult.platform, editorFont) : '';
+  const adProductImage = adResult ? adResult.product.image : null;
+  const adPosition = adResult ? adResult.position : 'none';
+
   return {
     introHtml, bodyPart1Html, bodyPart2Html, bodyPart3Html, bodyPart4Html,
     conclusionHtml, linksHtml,
     hasPart1: !!part1, hasPart2: !!part2, hasPart3: !!part3,
+    adHtml, adProductImage, adPosition,
   };
 }
 
@@ -3417,7 +3438,7 @@ function composePreviewSections({ intro, body, conclusion, links, editorFont, st
 // 진행할 때 publish:now/schedule → publishToNaver로 그대로 전달되어
 // 재사용된다 — 그래야 미리본 색상/썸네일과 실제 발행 결과가 달라지는
 // 문제(랜덤 프리셋이 두 번 다르게 뽑히는 경우)를 막을 수 있다.
-ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl }) => {
+ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl, tone }) => {
   try {
     const editorFont = (getStore().get('settings.editorFont', '') || '').trim();
     const styleSetting = getStore().get('settings.postStyle', -1);
@@ -3444,7 +3465,7 @@ ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, bo
       }
     }
 
-    const sections = composePreviewSections({ intro, body, conclusion, links, editorFont, stylePreset });
+    const sections = await composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset });
 
     return { success: true, ...sections, thumbDataUrl, thumbTempPath, resolvedStyleIndex };
   } catch (err) {
@@ -4078,21 +4099,239 @@ function buildConclusionHtml(text, fontName, iconCycler, style) {
   return `<div style="margin:8px 0 0 0;">` + tableBox(inner, `border:1.5px solid ${st.h2.border};`, st.h2.bg) + `</div>`;
 }
 
+// ── 관련 사이트 URL 실존 여부 검증 (2026-07-23 신규) ──────────────
+// AI가 그럴듯하지만 실제로는 존재하지 않는 주소를 만들어내는 경우가
+// 실사용 테스트로 확인됨(예: 404/차단 페이지로 연결). 게시 직전에 각
+// 주소가 실제로 열리는지 확인해, 안 열리는 주소는 목록에서 제외한다.
+async function checkUrlReachable(url) {
+  const tryFetch = async (method) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(url, {
+        method,
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      });
+      return res.ok;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  try {
+    const okHead = await tryFetch('HEAD');
+    if (okHead) return true;
+    // 일부 사이트는 HEAD 요청 자체를 막아두므로(403/405 등) GET으로 재확인
+    return await tryFetch('GET');
+  } catch (e) {
+    return false;
+  }
+}
+
+// links 배열 중 실제로 열리는 주소만 남겨서 반환(형식 보정: 프로토콜 없으면 https:// 자동 추가)
+async function filterReachableLinks(links) {
+  if (!Array.isArray(links) || links.length === 0) return [];
+  const checked = await Promise.all(links.map(async (link) => {
+    const rawUrl = String(link?.url || '').trim();
+    if (!rawUrl) return null;
+    const safeUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const ok = await checkUrlReachable(safeUrl);
+    if (!ok) {
+      writeLog('WARN', 'LINKS', '관련 사이트 접속 불가 — 게시 목록에서 제외', safeUrl);
+      return null;
+    }
+    return { ...link, url: safeUrl };
+  }));
+  return checked.filter(Boolean);
+}
+
 // ── 관련 사이트 링크 섹션 HTML ───────────────────────────────
+// 2026-07-23 수정: 지금까지는 URL을 클릭 안 되는 색깔 텍스트로만 보여주고
+// 있어 실사용 테스트에서 "링크가 하나도 안 눌린다"는 문제가 확인됨 —
+// 실제 <a href> 하이퍼링크로 감싸 클릭 시 해당 페이지로 이동하도록 수정.
+// (SE3가 붙여넣기 시 <a> 태그의 href를 제거하는지는 아직 실사용 미검증 —
+// 다음 발행 테스트에서 우선 확인할 것.)
 function buildLinksHtml(links, fontName) {
   if (!Array.isArray(links) || links.length === 0) return '';
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   let inner = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;"><b>🔗 관련 사이트</b></span></p>`;
   for (const link of links) {
     const name = String(link.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const url  = String(link.url  || '').replace(/"/g,'&quot;');
-    if (!url) continue;
+    const rawUrl = String(link.url || '').trim();
+    if (!rawUrl) continue;
+    const safeUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const hrefEscaped = safeUrl.replace(/"/g, '&quot;');
+    const urlDisplay = rawUrl.replace(/</g,'&lt;').replace(/>/g,'&gt;');
     inner += `<p style="${font}margin:0;">`
       + `<span style="color:rgb(51,51,51);">${name} : </span>`
-      + `<span style="color:rgb(3,199,90);">${url}</span>`
+      + `<a href="${hrefEscaped}" target="_blank" rel="noopener noreferrer" style="color:rgb(3,199,90);text-decoration:underline;">${urlDisplay}</a>`
       + `</p>`;
   }
   return `<div style="margin:20px 0 8px 0;">` + tableBox(inner, 'border:1.5px solid rgb(208,240,216);', 'rgb(249,255,251)') + `</div>`;
+}
+
+// ── 제휴 광고(쿠팡파트너스/알리익스프레스) — 2026-07-23 신규 ──────────
+// 사용자와 협의된 안전장치 3중: (1) 글 톤이 "리뷰형"일 때만 동작 —
+// 무분별한 삽입을 막기 위한 핵심 게이트. (2) 환경설정에서 API 키를
+// 직접 등록해야만 동작(등록 안 하면 완전히 비활성). (3) 삽입 위치를
+// 없음/도입부 아래/본문 아래/모두 중 선택(기본값 "본문 아래" — 독자가
+// 본문을 다 읽어 관심이 가장 높아진 시점에 배치하는 것이 전환에도
+// 유리하고, 두 곳 모두보다 광고 밀도가 낮아 저품질 리스크도 낮다는
+// 판단, 사용자 확인 완료). iframe 위젯은 쓰지 않음 — 네이버 SE3가
+// iframe/중첩표 등 구조를 붙여넣기 시 제거하는 전례가 있어([[naver-se3-publish-fixes]]),
+// 실제 상품 1개를 API로 검색해 이미지(insertImgSection과 동일한 clipboard
+// 붙여넣기 방식)+텍스트 박스(pasteHtml)로 삽입한다 — 기존에 이미 검증된
+// 방식만 재사용해 리스크를 최소화.
+
+// 쿠팡파트너스 Open API HMAC 서명 생성 (공식 문서 방식: signed-date+method+
+// path+query를 secretKey로 HMAC-SHA256, 헤더는 "CEA algorithm=..." 형식)
+function coupangHmacAuth(method, pathWithQuery, secretKey, accessKey) {
+  const [path, query = ''] = pathWithQuery.split('?');
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const signedDate = `${pad(now.getUTCFullYear() % 100)}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+  const message = signedDate + method + path + query;
+  const signature = crypto.createHmac('sha256', secretKey).update(message).digest('hex');
+  return `CEA algorithm=HmacSHA256, access-key=${accessKey}, signed-date=${signedDate}, signature=${signature}`;
+}
+
+// 쿠팡파트너스 상품검색 API — 키워드로 상위 1개 상품 반환(null이면 결과 없음/실패)
+async function searchCoupangProduct(keyword, accessKey, secretKey) {
+  const path = '/v2/providers/affiliate_open_api/apis/openapi/products/search';
+  const query = `keyword=${encodeURIComponent(keyword)}&limit=5`;
+  const auth = coupangHmacAuth('GET', `${path}?${query}`, secretKey, accessKey);
+  const res = await fetch(`https://api-gateway.coupang.com${path}?${query}`, {
+    headers: { Authorization: auth, 'Content-Type': 'application/json;charset=UTF-8' },
+  });
+  if (!res.ok) throw new Error(`쿠팡파트너스 API 응답 오류 (${res.status})`);
+  const json = await res.json();
+  const list = json?.data?.productData || json?.rData?.productData || [];
+  if (!list.length) return null;
+  const p = list[0];
+  return { name: p.productName, price: p.productPrice, image: p.productImage, url: p.productUrl };
+}
+
+// 알리익스프레스 Open Platform(TOP) 표준 서명: 파라미터를 key 기준 정렬 후
+// "secret+정렬된key값나열+secret"을 MD5(대문자 hex)
+// 2026-07-23: 실사용 미검증 — AliExpress Open Platform 문서/게이트웨이가
+// 자주 개정되므로, 최초 실제 테스트에서 오류가 나면 이 함수(엔드포인트/
+// 파라미터명)부터 재확인할 것.
+function aliexpressSign(params, appSecret) {
+  const sortedKeys = Object.keys(params).sort();
+  const concat = sortedKeys.reduce((acc, k) => acc + k + params[k], '');
+  const raw = appSecret + concat + appSecret;
+  return crypto.createHash('md5').update(raw, 'utf8').digest('hex').toUpperCase();
+}
+
+// 알리익스프레스 어필리에이트 상품검색 API — 키워드로 상위 1개 상품 반환
+async function searchAliexpressProduct(keyword, appKey, appSecret) {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  // TOP 표준은 상하이(UTC+8) 기준 'yyyy-MM-dd HH:mm:ss' 타임스탬프 필요
+  const shanghai = new Date(now.getTime() + 8 * 3600 * 1000);
+  const timestamp = `${shanghai.getUTCFullYear()}-${pad(shanghai.getUTCMonth() + 1)}-${pad(shanghai.getUTCDate())} ${pad(shanghai.getUTCHours())}:${pad(shanghai.getUTCMinutes())}:${pad(shanghai.getUTCSeconds())}`;
+  const params = {
+    method: 'aliexpress.affiliate.product.query',
+    app_key: appKey,
+    sign_method: 'md5',
+    timestamp,
+    format: 'json',
+    v: '2.0',
+    keywords: keyword,
+    page_size: '5',
+    target_currency: 'KRW',
+    target_language: 'KO',
+  };
+  const sign = aliexpressSign(params, appSecret);
+  const body = new URLSearchParams({ ...params, sign }).toString();
+  const res = await fetch('https://api-sg.aliexpress.com/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+    body,
+  });
+  if (!res.ok) throw new Error(`알리익스프레스 API 응답 오류 (${res.status})`);
+  const json = await res.json();
+  const result = json?.aliexpress_affiliate_product_query_response?.resp_result?.result;
+  const list = result?.products?.product || [];
+  if (!list.length) return null;
+  const p = list[0];
+  return {
+    name: p.product_title,
+    price: p.target_sale_price || p.sale_price,
+    image: p.product_main_image_url,
+    url: p.promotion_link || p.product_detail_url,
+  };
+}
+
+// 톤/설정/키 등록 여부를 검사해 조건이 맞을 때만 실제 상품을 검색해 반환.
+// 실패해도 예외를 던지지 않고 null 반환 — 광고는 부가 기능이므로, 검색
+// 실패가 발행 전체를 막아서는 안 됨(로그만 남기고 조용히 스킵).
+async function resolveAffiliateAd(keyword, tone) {
+  try {
+    if (tone !== 'review') return null;
+    const s = getStore().get('settings', {});
+    const position = s.affiliateAdPosition || 'body';
+    if (position === 'none' || !keyword) return null;
+    const platform = s.affiliatePlatform || 'coupang';
+    let product = null;
+    if (platform === 'coupang') {
+      if (!s.coupangAccessKey || !s.coupangSecretKey) return null;
+      product = await searchCoupangProduct(keyword, s.coupangAccessKey, s.coupangSecretKey);
+    } else {
+      if (!s.aliAppKey || !s.aliAppSecret) return null;
+      product = await searchAliexpressProduct(keyword, s.aliAppKey, s.aliAppSecret);
+    }
+    if (!product) return null;
+    return { product, platform, position };
+  } catch (e) {
+    writeLog('WARN', 'AD', '제휴 광고 상품 검색 실패 — 광고 없이 계속 진행', e.message);
+    return null;
+  }
+}
+
+// 검색된 상품을 텍스트 박스 HTML로(상품 이미지는 별도로 insertImgSection을
+// 통해 삽입 — buildLinksHtml과 동일하게 이 박스 자체엔 <img>를 넣지 않음).
+// 쿠팡파트너스/알리익스프레스 각각의 법정 고지문구를 박스 하단에 항상 포함.
+function buildAffiliateAdHtml(product, platform, fontName) {
+  if (!product) return '';
+  const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
+  const label = platform === 'aliexpress' ? '알리익스프레스' : '쿠팡';
+  const btnColor = platform === 'aliexpress' ? 'rgb(230,63,63)' : 'rgb(224,58,58)';
+  const disclosure = platform === 'aliexpress'
+    ? '이 포스팅은 알리익스프레스 어필리에이트 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받을 수 있습니다.'
+    : '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.';
+  const name = String(product.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const priceNum = Number(product.price);
+  const price = priceNum ? `${priceNum.toLocaleString('ko-KR')}원` : '';
+  // 2026-07-23(2차 수정, 실사용 테스트 반영):
+  // - rel에서 noreferrer 제거 — 쿠팡파트너스는 사전에 등록한 사이트/앱에서만
+  //   광고를 게시하도록 정책상 강제하며(마이페이지 "내 정보 관리" 참고),
+  //   noreferrer로 리퍼러 정보를 아예 안 보내면 정상 클릭/수익으로 인정받지
+  //   못할 가능성이 높음(실제 클릭 시 "사용권한이 없습니다" 오류 확인됨).
+  //   noopener만 유지(팝업 보안은 그대로 확보, 리퍼러는 정상 전달).
+  // - 버튼 글자가 너무 작아 안 보인다는 문제 확인 — 글자 크기/패딩 확대,
+  //   <b> 대신 인라인 font-weight로 중복 지정(SE3가 일부 스타일만 남기는
+  //   경우에 대비), 버튼을 중앙정렬.
+  const hrefEscaped = String(product.url || '').trim().replace(/"/g, '&quot;');
+  let inner = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;"><b>🛒 ${label} 추천 상품</b></span></p>`;
+  inner += `<p style="${font}margin:0 0 2px 0;"><span style="color:rgb(51,51,51);"><b>${name}</b></span></p>`;
+  if (price) inner += `<p style="${font}margin:0 0 6px 0;"><span style="color:rgb(224,58,58);">${price}</span></p>`;
+  if (hrefEscaped) {
+    // 2026-07-23(3차 수정): 실사용 테스트에서 미리보기엔 버튼이 정상
+    // 표시되지만, 실제 네이버 에디터를 거쳐 발행하면 SE3가 <a> 태그 자체의
+    // 인라인 스타일(배경/패딩/둥근 테두리)을 무시하고 자체 기본 링크
+    // 스타일(빨간 밑줄 텍스트)로 덮어써서 버튼처럼 안 보이는 문제 확인.
+    // <span>/<table> 등 다른 태그의 인라인 스타일은 계속 잘 유지되는 걸로
+    // 확인돼왔으므로, 버튼 모양(배경/패딩/둥근테두리)을 <a> 자체가 아니라
+    // 그 안에 감싸는 <span>에 입혀 SE3가 <a>만 덮어써도 안쪽 span 스타일은
+    // 살아남는지 시도 — 다음 발행 테스트에서 확인 필요.
+    inner += `<p style="${font}margin:10px 0 0 0;"><a href="${hrefEscaped}" target="_blank" rel="noopener" style="text-decoration:none;">`
+      + `<span style="display:inline-block;color:#ffffff;background:${btnColor};padding:10px 22px;border-radius:6px;font-size:15px;font-weight:700;">${label}에서 보기 →</span>`
+      + `</a></p>`;
+  }
+  inner += `<p style="${font}margin:8px 0 0 0;"><span style="color:rgb(153,153,153);font-size:11px;">${disclosure}</span></p>`;
+  return `<div style="margin:20px 0 8px 0;">` + tableBox(inner, 'border:1.5px solid rgb(255,214,214);', 'rgb(255,250,250)') + `</div>`;
 }
 
 // ── 썸네일 생성 (offscreen BrowserWindow → PNG 파일) ──────────
@@ -5402,10 +5641,28 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 아이콘 목록을 공유 순환
   const iconCycler = makeIconCycler(postStylePreset.h2.icons);
 
+  // 2026-07-23 신규: 제휴 광고(쿠팡파트너스/알리익스프레스) — 글 톤이
+  // "리뷰형"이고 환경설정에 API 키가 등록되어 있을 때만 동작(무분별한
+  // 삽입 방지, 사용자 확인 완료). 검색 실패해도 발행 전체를 막지 않도록
+  // resolveAffiliateAd 내부에서 예외를 흡수해 null을 반환한다.
+  const affiliateAd = await resolveAffiliateAd((title || '').trim(), content.tone);
+  const affiliateAdHtml = affiliateAd ? buildAffiliateAdHtml(affiliateAd.product, affiliateAd.platform, editorFont) : '';
+  const insertAffiliateAd = async (label) => {
+    if (!affiliateAd) return;
+    if (affiliateAd.product.image) {
+      await insertImgSection({ url: affiliateAd.product.image }, `${label} 상품이미지`);
+    }
+    await pasteHtml(affiliateAdHtml, `${label} 상품정보`);
+  };
+
   // 도입부 (HTML 빌더 — 폰트 포함)
   await pasteHtml(buildIntroHtml(content.intro, editorFont, iconCycler, postStylePreset), '도입부');
   // 이미지 1 (도입부 아래, 본문 시작 전)
   await insertImgSection(imgs[0], '이미지1');
+  // 제휴 광고 — 도입부 아래(위치 설정 'intro'|'both'일 때만)
+  if (affiliateAd && (affiliateAd.position === 'intro' || affiliateAd.position === 'both')) {
+    await insertAffiliateAd('제휴 광고(도입부 아래)');
+  }
 
   // 본문 — 2026-07-07: 이미지 3장 → 5장 확대에 따라 본문을 4조각으로
   // 나눠 대분류1 도입문장 뒤 / 중분류1→2 경계 / 대분류2 시작 지점에도
@@ -5438,14 +5695,21 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     await insertImgSection(imgs[3], '이미지4');
   }
 
+  // 제휴 광고 — 본문 아래(위치 설정 'body'|'both'일 때만, 기본값)
+  if (affiliateAd && (affiliateAd.position === 'body' || affiliateAd.position === 'both')) {
+    await insertAffiliateAd('제휴 광고(본문 아래)');
+  }
+
   // 이미지 5 (마무리 시작 지점 — 2026-07-07: 기존엔 마무리 "뒤"였으나
   // 마무리를 읽는 도중 시각적 전환을 주도록 마무리 "시작 지점"으로 변경)
   await insertImgSection(imgs[4], '이미지5');
   // 마무리
   await pasteHtml(buildConclusionHtml(content.conclusion, editorFont, iconCycler, postStylePreset), '마무리');
-  // 관련 사이트 링크 섹션 (links가 있을 때만)
-  if (content.links && content.links.length > 0) {
-    await pasteHtml(buildLinksHtml(content.links, editorFont), '관련 사이트');
+  // 관련 사이트 링크 섹션 — 2026-07-23: 게시 직전 실제 접속 가능한
+  // 주소만 검증해 남기고(존재하지 않는 사이트는 자동 제외), 남은 게 있을 때만 삽입
+  const verifiedLinks = await filterReachableLinks(content.links);
+  if (verifiedLinks.length > 0) {
+    await pasteHtml(buildLinksHtml(verifiedLinks, editorFont), '관련 사이트');
   }
 
   // ── 에디터 폰트 적용 (본문 전체 선택 후 상단 서식 툴바에서 실제 클릭) ──
@@ -6345,7 +6609,8 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       acc?.naver_id || '',
       post.title,
       // 2026-07-08: thumbText(썸네일 전용 문구)도 함께 저장
-      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '' }),
+      // 2026-07-23: tone도 함께 저장 — 발행 이력 등에서 재발행할 때도 제휴 광고 게이팅 유지
+      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '', tone: post.tone || '' }),
       JSON.stringify(post.hashtags || []),
       JSON.stringify(post.images || [])
     );
@@ -6357,7 +6622,8 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       title: post.title,
       // 2026-07-08: 썸네일 전용 문구 — 있으면 제목 대신 썸네일에 사용
       thumbText: post.thumbText || null,
-      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [] },
+      // 2026-07-23: tone — 제휴 광고가 "리뷰형" 톤에서만 동작하도록 게이팅하는 데 사용
+      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '' },
       hashtags: post.hashtags || [],
       images: post.images || [],
       category: post.category || '',
@@ -6462,7 +6728,8 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       acc?.naver_id || '',
       post.title,
       // 2026-07-08: thumbText(썸네일 전용 문구)도 함께 저장
-      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '' }),
+      // 2026-07-23: tone도 함께 저장 — 발행 이력 등에서 재발행할 때도 제휴 광고 게이팅 유지
+      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '', tone: post.tone || '' }),
       JSON.stringify(post.hashtags || []),
       JSON.stringify(post.images || []),
       scheduledAt
@@ -6475,7 +6742,8 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       title: post.title,
       // 2026-07-08: 썸네일 전용 문구 — 있으면 제목 대신 썸네일에 사용
       thumbText: post.thumbText || null,
-      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [] },
+      // 2026-07-23: tone — 제휴 광고가 "리뷰형" 톤에서만 동작하도록 게이팅하는 데 사용
+      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '' },
       hashtags: post.hashtags || [],
       images: post.images || [],
       category: post.category || '',
@@ -7176,7 +7444,9 @@ async function processLoopStep() {
 
   // 2026-07-08: thumbText(썸네일 전용 문구)도 함께 저장해 반자동 검수
   // 대기 → "글 생성으로 이동" 왕복 시 유실되지 않도록 함.
-  const contentObj = { intro: result.intro, body: result.body, conclusion: result.conclusion, links: result.links || [], thumbText: result.thumbText || '' };
+  // 2026-07-23: tone도 함께 저장 — 완전자동 루프도 환경설정 기본 글 톤이
+  // "리뷰형"이면 수동 발행과 동일하게 제휴 광고 게이팅이 적용되어야 함.
+  const contentObj = { intro: result.intro, body: result.body, conclusion: result.conclusion, links: result.links || [], thumbText: result.thumbText || '', tone: genParams.tone };
   const autoThumbnail = store.get('settings.customThumbnail', true) !== false;
   // 2026-07-06: 네이버 블로그 발행 카테고리 — 이번 사이클에 실제로 사용된
   // 쌍(usedPair)의 naver_category를 사용(다중 쌍 파일럿). 쌍이 1개뿐인

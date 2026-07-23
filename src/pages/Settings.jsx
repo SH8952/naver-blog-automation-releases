@@ -19,6 +19,11 @@ const DEFAULTS = {
   claudeModel: 'claude-sonnet-5',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
+  // 2026-07-23 신규: 제휴 광고(쿠팡파트너스/알리익스프레스)
+  affiliatePlatform: 'coupang', coupangAccessKey: '', coupangSecretKey: '',
+  aliAppKey: '', aliAppSecret: '', affiliateAdPosition: 'body',
+  // 2026-07-23 신규: 완전자동/예약 발행 전용 브라우저 표시 설정(자동화 루프 탭으로 이동)
+  autoShowPublishWindow: false,
 };
 
 // ── 썸네일 디자인 22종 미리보기 옵션 (2026-07-13) ──────────────
@@ -467,6 +472,9 @@ export default function Settings() {
   const [showAdApiKey, setShowAdApiKey]         = useState(false);
   const [showAdSecretKey, setShowAdSecretKey]   = useState(false);
   const [searchAdStatus, setSearchAdStatus]     = useState(null);
+  // 2026-07-23 신규: 제휴 광고(쿠팡파트너스/알리익스프레스) 시크릿키 마스킹
+  const [showCoupangSecret, setShowCoupangSecret] = useState(false);
+  const [showAliSecret, setShowAliSecret]         = useState(false);
   const [geminiStatus, setGeminiStatus]     = useState(null);
   const [groqStatus, setGroqStatus]         = useState(null);
   const [openaiStatus, setOpenaiStatus]     = useState(null);
@@ -913,6 +921,7 @@ export default function Settings() {
         <button className={`settings-tab${activeTab === 'api' ? ' active' : ''}`} onClick={() => setActiveTab('api')}>API 설정</button>
         <button className={`settings-tab${activeTab === 'post' ? ' active' : ''}`} onClick={() => setActiveTab('post')}>글 설정</button>
         <button className={`settings-tab${activeTab === 'loop' ? ' active' : ''}`} onClick={() => setActiveTab('loop')}>자동화 루프</button>
+        <button className={`settings-tab${activeTab === 'ad' ? ' active' : ''}`} onClick={() => setActiveTab('ad')}>광고</button>
         <button className={`settings-tab${activeTab === 'system' ? ' active' : ''}`} onClick={() => setActiveTab('system')}>시스템</button>
       </div>
 
@@ -1615,10 +1624,127 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* 2026-07-23 신규: 기존엔 "글 생성" 화면의 "브라우저 표시" 체크박스가
+          이 값(settings.autoShowPublishWindow)을 직접 읽고 쓰고 있었는데,
+          그러면 수동 발행 한 번 할 때마다 완전자동 루프의 브라우저 표시
+          설정까지 조용히 바뀌어버리는 문제가 있었음. 사용자 확인(2026-07-23):
+          수동 발행 화면의 체크박스는 매번 기본값(해제)으로 초기화되는
+          "그때그때 쓰는" 토글로 분리하고, 완전자동/예약 발행이 쓰는 이
+          설정은 여기 자동화 루프 탭에서 별도로 관리하도록 변경. */}
+      <div className="card settings-section">
+        <h2 className="settings-section-title">발행 옵션</h2>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label style={{ display:'flex', alignItems:'center', gap:'10px', cursor:'pointer' }}>
+            <input type="checkbox" checked={!!form.autoShowPublishWindow}
+              onChange={e => set('autoShowPublishWindow', e.target.checked)}
+              style={{ width:'16px', height:'16px', accentColor:'var(--accent)' }} />
+            <span>완전자동 · 예약 발행 시 브라우저 창 표시</span>
+          </label>
+          <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'6px', lineHeight:1.6}}>
+            "글 생성" 화면의 수동 발행 시 브라우저 표시 여부는 이 설정과 별개로, 발행할 때마다 직접 선택합니다(기본값 해제).
+          </p>
+        </div>
+      </div>
+
       </div>
       </div>
 
       </div>}
+
+      {/* ── 광고 탭 — 제휴 광고(쿠팡파트너스/알리익스프레스, 2026-07-23 신규) ──
+          사용자와 협의된 설계: 무분별한 광고 삽입으로 블로그 품질이
+          저하될 것을 우려해 (1) 글 톤이 "리뷰형"일 때만 자동 삽입,
+          (2) API 키를 직접 등록해야만 동작, (3) 삽입 위치를 직접 선택
+          (기본값 "본문 아래") — 3중 게이팅으로 설계함. */}
+      {activeTab === 'ad' && <>
+      <div className="card settings-section">
+        <h2 className="settings-section-title">제휴 광고 안내</h2>
+        <p style={{fontSize:'12px', color:'var(--text-secondary)', lineHeight:1.7, margin:0}}>
+          글 톤을 <b>"리뷰형"</b>으로 설정한 글에만 자동으로 삽입됩니다(그 외 톤에는 삽입되지 않습니다).
+          아래에 API 키를 등록해야 실제로 동작하며, 삽입 위치도 직접 선택할 수 있습니다.
+        </p>
+      </div>
+
+      <div className="card settings-section">
+        <h2 className="settings-section-title">광고 업체 선택</h2>
+        <div className="form-group">
+          <div className="loop-radio-row">
+            <label className="loop-radio">
+              <input type="radio" name="affiliatePlatform" checked={form.affiliatePlatform === 'coupang'}
+                onChange={() => set('affiliatePlatform', 'coupang')} />
+              쿠팡파트너스
+            </label>
+            <label className="loop-radio">
+              <input type="radio" name="affiliatePlatform" checked={form.affiliatePlatform === 'aliexpress'}
+                onChange={() => set('affiliatePlatform', 'aliexpress')} />
+              알리익스프레스 어필리에이트
+            </label>
+          </div>
+        </div>
+
+        {form.affiliatePlatform === 'coupang' ? (
+          <>
+            <div className="form-group">
+              <label>쿠팡파트너스 Access Key</label>
+              <input className="input" type="text" value={form.coupangAccessKey}
+                onChange={e => set('coupangAccessKey', e.target.value)} placeholder="Access Key" />
+            </div>
+            <div className="form-group">
+              <label>쿠팡파트너스 Secret Key</label>
+              <div className="license-input-row">
+                <input className="input" type={showCoupangSecret ? 'text' : 'password'} value={form.coupangSecretKey}
+                  onChange={e => set('coupangSecretKey', e.target.value)} placeholder="Secret Key" />
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowCoupangSecret(v => !v)}>
+                  {showCoupangSecret ? '숨기기' : '표시'}
+                </button>
+              </div>
+            </div>
+            <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'-4px'}}>
+              <a href="https://partners.coupang.com/" target="_blank" rel="noreferrer">쿠팡파트너스 바로가기 →</a>
+              {' '}(가입 후 "API 사용 설정" 메뉴에서 Access Key / Secret Key 발급)
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="form-group">
+              <label>알리익스프레스 App Key</label>
+              <input className="input" type="text" value={form.aliAppKey}
+                onChange={e => set('aliAppKey', e.target.value)} placeholder="App Key" />
+            </div>
+            <div className="form-group">
+              <label>알리익스프레스 App Secret</label>
+              <div className="license-input-row">
+                <input className="input" type={showAliSecret ? 'text' : 'password'} value={form.aliAppSecret}
+                  onChange={e => set('aliAppSecret', e.target.value)} placeholder="App Secret" />
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAliSecret(v => !v)}>
+                  {showAliSecret ? '숨기기' : '표시'}
+                </button>
+              </div>
+            </div>
+            <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'-4px'}}>
+              <a href="https://portals.aliexpress.com/" target="_blank" rel="noreferrer">알리익스프레스 어필리에이트 바로가기 →</a>
+              {' '}(가입 후 Open Platform 메뉴에서 App Key / App Secret 발급)
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="card settings-section">
+        <h2 className="settings-section-title">삽입 위치</h2>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <select className="input" value={form.affiliateAdPosition}
+            onChange={e => set('affiliateAdPosition', e.target.value)}>
+            <option value="none">없음 (광고 삽입 안 함)</option>
+            <option value="intro">도입부 아래</option>
+            <option value="body">본문 아래 (기본값 · 추천)</option>
+            <option value="both">모두 (도입부 아래 + 본문 아래)</option>
+          </select>
+          <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'6px', lineHeight:1.6}}>
+            "본문 아래"는 독자가 본문을 다 읽어 관심이 가장 높아진 시점에 배치되어 전환에 유리하고, 광고 밀도도 낮아 권장합니다.
+          </p>
+        </div>
+      </div>
+      </>}
 
       {/* ── 시스템 탭 — 라이선스 (2026-07-04 신규) ───────────────── */}
       {activeTab === 'system' && <div className="card settings-section">

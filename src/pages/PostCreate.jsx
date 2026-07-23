@@ -219,14 +219,15 @@ export default function PostCreate() {
         if (s.sentenceStyle) setSentenceStyle(s.sentenceStyle);
         // 환경설정의 customThumbnail 값으로 초기화 (기본 true)
         setAutoThumbnail(s.customThumbnail !== false);
-        // 2026-07-16 추가: "브라우저 표시" 체크박스도 저장된 전역 설정
-        // (settings.autoShowPublishWindow)으로 초기화 — 지금까지는 이
-        // 화면을 새로 열 때마다 항상 꺼짐(headlessMode=true)으로
-        // 리셋되고, 이 값이 반자동/완전자동 루프에는 전혀 반영되지
-        // 않았음. 이제 main.js도 같은 키(settings.autoShowPublishWindow)를
-        // 읽어 완전자동/예약 발행에 반영하므로, 이 화면과 자동화가 같은
-        // 설정값을 공유하게 된다.
-        setHeadlessMode(!s.autoShowPublishWindow);
+        // 2026-07-16에 "브라우저 표시" 체크박스를 전역 설정
+        // (settings.autoShowPublishWindow)과 연동했었으나, 그러면 이
+        // 화면에서 수동 발행을 한 번만 해도 완전자동 루프의 브라우저
+        // 표시 설정까지 조용히 바뀌어버리는 문제가 있어 2026-07-23에
+        // 분리함. 완전자동/예약 발행이 쓰는 전역 설정은 이제 환경설정 →
+        // 자동화 루프 탭에서 별도로 관리하고, 이 화면의 체크박스는 항상
+        // 기본값(해제=headlessMode true)에서 시작해 발행할 때마다 직접
+        // 선택하는 방식으로 동작(발행 성공 시 다시 기본값으로 리셋 —
+        // doPublishNow/doScheduleSubmit 참고).
       }
     });
   }, []);
@@ -492,6 +493,8 @@ export default function PostCreate() {
         // 2026-07-07: 이미지 카드를 클릭해 썸네일 배경을 직접 선택한 경우 전달
         // — 선택 안 했으면 undefined로 넘어가 기존 자동 검색 그대로 사용
         thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
+        // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 미리보기에도 반영되도록 전달
+        tone,
       });
       if (res.success) {
         setPreviewData(res);
@@ -553,10 +556,16 @@ export default function PostCreate() {
           // 2026-07-07: 미리보기 없이 바로 발행(previewEnabled=false)한 경우에도
           // 선택한 썸네일 배경이 반영되도록 전달
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
+          // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
+          tone,
         },
       });
       if (res.success) {
         setPublishMsg('✓ 발행이 완료되었습니다.');
+        // 2026-07-23 신규: 발행 성공 시 공개 설정·브라우저 표시를 기본값으로
+        // 리셋(사용자 요청) — 다음 글에는 매번 새로 선택하도록 함.
+        setPublishVisibility('public');
+        setHeadlessMode(true);
       } else {
         setPublishMsg(`⚠️ ${res.error || '발행 오류'}`);
       }
@@ -640,6 +649,8 @@ export default function PostCreate() {
           forcedThumbPath: forcedThumbPath || undefined,
           forcedStyleIndex: forcedStyleIndex != null ? forcedStyleIndex : undefined,
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
+          // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
+          tone,
         },
         scheduledAt,
       });
@@ -647,6 +658,10 @@ export default function PostCreate() {
         setShowScheduleModal(false);
         setPublishMsg(`✓ ${scheduleDate} ${scheduleTime} 네이버 예약 등록 완료`);
         setTimeout(() => setPublishMsg(''), 5000);
+        // 2026-07-23 신규: 예약 등록도 발행과 동일하게 즉시 브라우저 자동화가
+        // 실행되므로(설계상 "1회 발행"과 동일) 공개 설정·브라우저 표시를 기본값으로 리셋
+        setPublishVisibility('public');
+        setHeadlessMode(true);
       } else {
         // 오류 시 모달을 다시 열어 사용자가 시각 수정 후 재시도할 수 있도록
         setShowScheduleModal(true);
@@ -1010,28 +1025,16 @@ export default function PostCreate() {
                   </button>
                 </div>
                 <div className="kw-label-right">
-                  <label className="toggle-label" title="발행 중 브라우저 창을 표시/숨기기">
+                  <label className="toggle-label" title="이번 발행에서만 브라우저 창을 표시/숨기기 — 발행 후 다시 기본값(해제)으로 돌아갑니다. 완전자동/예약 발행의 브라우저 표시는 환경설정 → 자동화 루프에서 별도로 설정합니다.">
                     <input
                       type="checkbox"
                       checked={!headlessMode}
                       onChange={e => {
-                        const showBrowser = e.target.checked;
-                        setHeadlessMode(!showBrowser);
-                        // 2026-07-16 추가: 이 체크박스 상태를 전역 설정
-                        // (settings.autoShowPublishWindow)에도 저장해,
-                        // 반자동(예약 발행)·완전자동 루프도 같은 값을
-                        // 따르도록 함. settings:set은 전체 settings 객체를
-                        // 통째로 교체하므로, 최신 설정을 먼저 읽어와
-                        // 병합한 뒤 저장한다(다른 설정값이 지워지지
-                        // 않도록).
-                        window.electronAPI.settings.get().then(res => {
-                          if (res.success && res.settings) {
-                            window.electronAPI.settings.set({
-                              ...res.settings,
-                              autoShowPublishWindow: showBrowser,
-                            });
-                          }
-                        });
+                        // 2026-07-23: 전역 설정(settings.autoShowPublishWindow)과
+                        // 분리 — 이 화면의 체크박스는 이제 로컬 상태만 바꾸고,
+                        // 완전자동 루프가 쓰는 전역 설정에는 더 이상 영향을
+                        // 주지 않는다(환경설정 → 자동화 루프 탭에서 별도 관리).
+                        setHeadlessMode(!e.target.checked);
                       }}
                     />
                     <span className="toggle-text">🖥️ 브라우저 표시</span>
@@ -1320,6 +1323,13 @@ export default function PostCreate() {
                     예외 상황) 이미지2~4를 대분류2 뒤에 몰아서 표시. */}
                 <div dangerouslySetInnerHTML={{ __html: previewData?.introHtml || '' }} />
                 {images[0]?.url && <img src={images[0].url} alt={images[0].alt || ''} className="preview-body-img" />}
+                {/* 2026-07-23 신규: 제휴 광고 — 도입부 아래(위치설정 'intro'|'both') */}
+                {(previewData?.adPosition === 'intro' || previewData?.adPosition === 'both') && previewData?.adHtml && (
+                  <>
+                    {previewData?.adProductImage && <img src={previewData.adProductImage} alt="제휴 광고 상품" className="preview-body-img" />}
+                    <div dangerouslySetInnerHTML={{ __html: previewData.adHtml }} />
+                  </>
+                )}
                 {previewData?.hasPart1 && (
                   <>
                     <div dangerouslySetInnerHTML={{ __html: previewData?.bodyPart1Html || '' }} />
@@ -1339,6 +1349,13 @@ export default function PostCreate() {
                   </>
                 )}
                 <div dangerouslySetInnerHTML={{ __html: previewData?.bodyPart4Html || '' }} />
+                {/* 2026-07-23 신규: 제휴 광고 — 본문 아래(위치설정 'body'|'both', 기본값) */}
+                {(previewData?.adPosition === 'body' || previewData?.adPosition === 'both') && previewData?.adHtml && (
+                  <>
+                    {previewData?.adProductImage && <img src={previewData.adProductImage} alt="제휴 광고 상품" className="preview-body-img" />}
+                    <div dangerouslySetInnerHTML={{ __html: previewData.adHtml }} />
+                  </>
+                )}
                 {!(previewData?.hasPart1 || previewData?.hasPart2 || previewData?.hasPart3) && (
                   <>
                     {images[1]?.url && <img src={images[1].url} alt={images[1].alt || ''} className="preview-body-img" />}
