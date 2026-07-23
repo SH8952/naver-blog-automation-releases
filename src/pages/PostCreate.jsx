@@ -1326,18 +1326,21 @@ export default function PostCreate() {
                 {/* 2026-07-23 신규: 제휴 광고 — 도입부 아래(위치설정 'intro'|'both') */}
                 {(previewData?.adPosition === 'intro' || previewData?.adPosition === 'both') && previewData?.adHtml && (
                   <>
-                    {/* 2026-07-23 재구성: [버튼 이미지 → (실제 발행 시 SE3가 자동
-                        생성하는 링크 미리보기 카드 — 미리보기 화면에서는 재현 불가) →
-                        상품 정보 박스] 순서로 변경, 별도 상품 이미지는 삭제(사용자
-                        요청 — SE3 카드가 이미지 역할을 대신함) */}
-                    {previewData?.adPlatform && (
+                    {/* 2026-07-23(5차 수정 — 원래 방식으로 복귀): 버튼 이미지+SE3
+                        "링크" 카드 방식 폐기(원치 않는 카드 생성 + 클릭 시 "사용권한이
+                        없습니다" 오류로 확인됨). 상품 이미지 + 박스(안에 텍스트 링크
+                        포함)로 복귀 */}
+                    {/* 2026-07-23: 실제 발행은 상품 이미지를 70%로 축소+가운데 정렬해서
+                        넣으므로 미리보기도 동일하게 표시(본문 이미지는 영향 없음) */}
+                    {previewData?.adProductImage && (
                       <img
-                        src={`/ad-buttons/${previewData.adPlatform === 'aliexpress' ? 'aliexpress' : 'coupang'}.png`}
-                        alt="추천 상품 보기"
-                        style={{ display: 'block', maxWidth: '220px', margin: '0 auto' }}
+                        src={previewData.adProductImage}
+                        alt="제휴 광고 상품"
+                        className="preview-body-img"
+                        style={{ display: 'block', width: '70%', margin: '0 auto' }}
                       />
                     )}
-                    <div style={{ marginTop: '10px' }} dangerouslySetInnerHTML={{ __html: previewData.adHtml }} />
+                    <div dangerouslySetInnerHTML={{ __html: previewData.adHtml }} />
                   </>
                 )}
                 {previewData?.hasPart1 && (
@@ -1362,18 +1365,21 @@ export default function PostCreate() {
                 {/* 2026-07-23 신규: 제휴 광고 — 본문 아래(위치설정 'body'|'both', 기본값) */}
                 {(previewData?.adPosition === 'body' || previewData?.adPosition === 'both') && previewData?.adHtml && (
                   <>
-                    {/* 2026-07-23 재구성: [버튼 이미지 → (실제 발행 시 SE3가 자동
-                        생성하는 링크 미리보기 카드 — 미리보기 화면에서는 재현 불가) →
-                        상품 정보 박스] 순서로 변경, 별도 상품 이미지는 삭제(사용자
-                        요청 — SE3 카드가 이미지 역할을 대신함) */}
-                    {previewData?.adPlatform && (
+                    {/* 2026-07-23(5차 수정 — 원래 방식으로 복귀): 버튼 이미지+SE3
+                        "링크" 카드 방식 폐기(원치 않는 카드 생성 + 클릭 시 "사용권한이
+                        없습니다" 오류로 확인됨). 상품 이미지 + 박스(안에 텍스트 링크
+                        포함)로 복귀 */}
+                    {/* 2026-07-23: 실제 발행은 상품 이미지를 70%로 축소+가운데 정렬해서
+                        넣으므로 미리보기도 동일하게 표시(본문 이미지는 영향 없음) */}
+                    {previewData?.adProductImage && (
                       <img
-                        src={`/ad-buttons/${previewData.adPlatform === 'aliexpress' ? 'aliexpress' : 'coupang'}.png`}
-                        alt="추천 상품 보기"
-                        style={{ display: 'block', maxWidth: '220px', margin: '0 auto' }}
+                        src={previewData.adProductImage}
+                        alt="제휴 광고 상품"
+                        className="preview-body-img"
+                        style={{ display: 'block', width: '70%', margin: '0 auto' }}
                       />
                     )}
-                    <div style={{ marginTop: '10px' }} dangerouslySetInnerHTML={{ __html: previewData.adHtml }} />
+                    <div dangerouslySetInnerHTML={{ __html: previewData.adHtml }} />
                   </>
                 )}
                 {!(previewData?.hasPart1 || previewData?.hasPart2 || previewData?.hasPart3) && (

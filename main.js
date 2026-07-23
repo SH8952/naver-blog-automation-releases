@@ -3730,7 +3730,13 @@ async function downloadImageBuffer(imageUrl) {
 
 // ── 이미지 클립보드 붙여넣기 방식 삽입 ────────────────────────
 // 사진 버튼/다이얼로그 없이: 다운로드 → nativeImage → clipboard.writeImage → paste()
-async function insertImageViaClipboard(publishWin, imageUrl) {
+// scale(2026-07-23 신규, 기본 1=원본 크기 유지): 1보다 작으면 Electron
+// nativeImage.resize()로 붙여넣기 전에 실제 픽셀 크기 자체를 줄인다 —
+// SE3 자체 크기조절 UI를 자동화하는 대신(버튼 이미지 축소 때와 동일한
+// 방식) 소스 자체를 작게 만들어 넣는 방식이라 별도 리사이즈 자동화가
+// 필요 없다. 기존 본문 이미지 호출부는 scale을 안 넘기므로 전부 그대로
+// 원본 크기 유지(제휴 광고 상품 이미지에만 이 옵션을 사용).
+async function insertImageViaClipboard(publishWin, imageUrl, scale = 1, fixedSize = null) {
   if (!imageUrl || imageUrl.startsWith('data:') || publishWin.isDestroyed()) return false;
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -3741,10 +3747,43 @@ async function insertImageViaClipboard(publishWin, imageUrl) {
     const buf = await downloadImageBuffer(imageUrl);
     writeLog('INFO', 'PUBLISH', '이미지 다운로드 완료', `${buf.length} bytes`);
 
-    const img = nativeImage.createFromBuffer(buf);
+    let img = nativeImage.createFromBuffer(buf);
     if (img.isEmpty()) {
       writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty)', `buf=${buf.length}`);
       return false;
+    }
+
+    // 2026-07-23: "원본 대비 %" 축소는 원본이 크면(예: 1200x1200 → 70%=840x840)
+    // 네이버 블로그 본문 폭(약 650~700px)보다 여전히 커서 브라우저가 자동으로
+    // 100% 폭에 맞춰버려 시각적으로 축소 효과가 없는 문제 확인(실사용 테스트).
+    // fixedSize가 지정되면 원본 크기와 무관하게 "긴 쪽 기준 고정 픽셀"로
+    // 비율 유지하며 축소/확대(정사각형이면 fixedSize x fixedSize 그대로,
+    // 비정사각형이면 찌그러짐 없이 비율 유지).
+    if (fixedSize && fixedSize > 0) {
+      const orig = img.getSize();
+      const ratio = fixedSize / Math.max(orig.width, orig.height);
+      const resized = img.resize({
+        width: Math.max(1, Math.round(orig.width * ratio)),
+        height: Math.max(1, Math.round(orig.height * ratio)),
+      });
+      if (!resized.isEmpty()) {
+        img = resized;
+        writeLog('INFO', 'PUBLISH', '이미지 고정크기 축소', `${orig.width}x${orig.height} → ${img.getSize().width}x${img.getSize().height} (기준 ${fixedSize}px)`);
+      } else {
+        writeLog('WARN', 'PUBLISH', '이미지 고정크기 축소 실패 — 원본 크기로 진행');
+      }
+    } else if (scale && scale > 0 && scale < 1) {
+      const orig = img.getSize();
+      const resized = img.resize({
+        width: Math.max(1, Math.round(orig.width * scale)),
+        height: Math.max(1, Math.round(orig.height * scale)),
+      });
+      if (!resized.isEmpty()) {
+        img = resized;
+        writeLog('INFO', 'PUBLISH', '이미지 축소', `${orig.width}x${orig.height} → ${img.getSize().width}x${img.getSize().height} (${Math.round(scale*100)}%)`);
+      } else {
+        writeLog('WARN', 'PUBLISH', '이미지 축소 실패 — 원본 크기로 진행');
+      }
     }
 
     clipboard.writeImage(img);
@@ -4352,20 +4391,28 @@ function buildAffiliateAdHtml(product, platform, fontName) {
   const name = String(product.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const priceNum = Number(product.price);
   const price = priceNum ? `${priceNum.toLocaleString('ko-KR')}원` : '';
-  // 2026-07-23(4차 수정): <a> 태그(직접 스타일/span으로 감싸기 모두)가
-  // SE3에서 스타일이 살아남지 않는 것을 실사용으로 2차례 확인 — CTA
-  // 버튼은 이제 이 텍스트 박스에 넣지 않고, publishToNaver()에서 별도로
-  // "상품 보기" 버튼 이미지를 삽입 + 네이버 자체 링크 기능으로 연결한다
-  // (insertLocalImageViaClipboard/attachLinkToLastImage 참고). 이 박스는
-  // 이름/가격/고지문구만 담당.
+  // 2026-07-23(5차 수정 — 이미지버튼+SE3링크 방식 전면 폐기, 원래
+  // 방식으로 복귀): 이미지 버튼+SE3 "링크" 기능 조합은 (1) "링크" 기능이
+  // 실제로는 href 부착이 아니라 별도의 og 미리보기 카드를 만드는
+  // 기능이라 원치 않는 카드가 추가로 생기고 (2) 그 카드 자체도 실사용
+  // 발행 후 "사용권한이 없습니다" 오류로 클릭이 안 되는 것으로
+  // 확인됨(네이버가 만드는 카드라 저희가 rel 속성을 손댈 수 없음).
+  // 반면 이 박스 안에 직접 넣는 <a href rel="noopener"> 링크는 예전에
+  // 실제 발행 후 클릭 이동이 정상 작동한 전례가 있어 다시 이 방식으로
+  // 복귀. 단, 링크가 "혼자만 있는 문단"이면 SE3가 이것도 자동으로 og
+  // 카드를 만들어버리는 것을 확인해(2026-07-23), 이 박스(표) 안의 다른
+  // 텍스트와 같은 칸에 나란히 넣어 그 자동카드 생성을 피한다. 스타일은
+  // <a> 자체가 아니라 감싸는 <p>(글자크기)·<span>(색상)·<b>(굵게)에
+  // 걸어 <a> 고유 스타일이 지워져도 최대한 보이는 모양이 유지되게 함.
+  const safeUrl = String(product.url || '').replace(/"/g, '&quot;');
   let inner = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;"><b>🛒 ${label} 추천 상품</b></span></p>`;
   inner += `<p style="${font}margin:0 0 2px 0;"><span style="color:rgb(51,51,51);"><b>${name}</b></span></p>`;
   if (price) inner += `<p style="${font}margin:0 0 6px 0;"><span style="color:rgb(224,58,58);">${price}</span></p>`;
+  if (safeUrl) {
+    inner += `<p style="${font}margin:8px 0 6px 0;font-size:17px;"><a href="${safeUrl}" target="_blank" rel="noopener"><span style="color:rgb(224,58,58);"><b>▶ 추천 상품 보기</b></span></a></p>`;
+  }
   inner += `<p style="${font}margin:8px 0 0 0;"><span style="color:rgb(153,153,153);font-size:11px;">${disclosure}</span></p>`;
-  // 2026-07-23: 위 여백을 20px→6px로 축소 — 바로 위 oglink 미리보기
-  // 카드와의 간격이 너무 벌어져 보인다는 지적에 따라 좀 더 붙여서
-  // 일체감 있게 보이도록 함.
-  return `<div style="margin:6px 0 8px 0;">` + tableBox(inner, 'border:1.5px solid rgb(255,214,214);', 'rgb(255,250,250)') + `</div>`;
+  return `<div style="margin:20px 0 8px 0;">` + tableBox(inner, 'border:1.5px solid rgb(255,214,214);', 'rgb(255,250,250)') + `</div>`;
 }
 
 // ── 썸네일 생성 (offscreen BrowserWindow → PNG 파일) ──────────
@@ -5845,16 +5892,92 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   };
 
   // 헬퍼: 이미지 클립보드 삽입 (사진 버튼 불필요)
-  const insertImgSection = async (img, label) => {
+  // opts.scale(2026-07-23 신규, 기본 1)/opts.center(기본 false): 제휴 광고
+  // 상품 이미지에만 사용 — 본문 이미지 5장 호출부는 opts를 안 넘기므로
+  // 기존과 동일하게 동작.
+  const insertImgSection = async (img, label, opts = {}) => {
     if (!img || !img.url) return;
+    const { scale = 1, center = false, fixedSize = null } = opts;
     // 이미지 앞 줄바꿈
     publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Return' });
     await sleep(200);
-    const ok = await insertImageViaClipboard(publishWin, img.url);
+    const ok = await insertImageViaClipboard(publishWin, img.url, scale, fixedSize);
     writeLog('INFO', 'PUBLISH', label + ' 이미지 삽입', ok ? 'OK' : 'FAIL/SKIP');
-    // 이미지 뒤 줄바꿈 (다음 섹션을 위해)
     await sleep(300);
+
+    if (ok && center) {
+      // 2026-07-23 실사용 테스트로 발견/수정: 삽입된 이미지가 화면
+      // 아래쪽(뷰포트 밖)에 있으면 정렬 토글 컨테이너 자체가 렌더링되지
+      // 않아(container_not_found) 정렬이 안 먹는 문제 확인. 썸네일
+      // 정렬 때처럼 정렬 버튼을 찾기 전에 반드시 먼저 스크롤해서 이미지를
+      // 화면에 보이게 해야 함.
+      await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
+          (function() {
+            var imgs = document.querySelectorAll('.se-section-image');
+            if (!imgs.length) return 'img_not_found';
+            imgs[imgs.length - 1].scrollIntoView({ block: 'center', inline: 'nearest' });
+            return 'scrolled';
+          })()
+        `).catch((e) => 'scroll_err:' + e.message),
+        (v) => v === 'scrolled', 6, 500
+      );
+      await sleep(400);
+
+      // 썸네일 가운데 정렬 때 검증된 것과 동일한 방식(선택 → 정렬 토글
+      // 버튼 클릭) 재사용. 방금 삽입된 이미지는 SE3가 자동으로 선택
+      // 상태로 두므로, 별도 클릭 없이 바로 정렬 버튼을 찾아 클릭한다.
+      const centerAlignResult = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
+          (function() {
+            var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
+            if (!container) return { found:false, reason:'container_not_found' };
+            var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            if (!btn) return { found:false, reason:'no_visible_button' };
+            var r = btn.getBoundingClientRect();
+            return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+          })()
+        `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+        (v) => v && v.found, 6, 500
+      );
+      writeLog('INFO', 'PUBLISH', label + ' 정렬 버튼 조회', JSON.stringify(centerAlignResult));
+      // 썸네일 정렬 때와 동일한 보정: 이미지가 문서 맨 위쪽에 가까우면
+      // 정렬 버튼이 상단 고정 발행 툴바와 겹쳐 클릭이 무반응일 수 있음.
+      let finalCenterAlign = centerAlignResult;
+      if (finalCenterAlign && finalCenterAlign.found && finalCenterAlign.y < 60) {
+        writeLog('WARN', 'PUBLISH', label + ' 정렬 버튼이 상단 고정 툴바와 겹침 — 보정 스크롤', JSON.stringify(finalCenterAlign));
+        await publishWin.webContents.executeJavaScript(`window.scrollBy(0, -120);`).catch(() => {});
+        await sleep(300);
+        finalCenterAlign = await publishWin.webContents.executeJavaScript(`
+          (function() {
+            var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
+            if (!container) return { found:false, reason:'container_not_found_after_correction' };
+            var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            if (!btn) return { found:false, reason:'no_visible_button_after_correction' };
+            var r = btn.getBoundingClientRect();
+            return { found:true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+          })()
+        `).catch((e) => ({ found:false, reason:'js_err_after_correction:' + e.message }));
+        writeLog('INFO', 'PUBLISH', label + ' 정렬 버튼 보정 후 재조회', JSON.stringify(finalCenterAlign));
+      }
+      if (finalCenterAlign && finalCenterAlign.found) {
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: finalCenterAlign.x, y: finalCenterAlign.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: finalCenterAlign.x, y: finalCenterAlign.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', label + ' 가운데 정렬 클릭', JSON.stringify(finalCenterAlign));
+        await sleep(300);
+      } else {
+        writeLog('WARN', 'PUBLISH', label + ' 정렬 버튼 찾기 실패 — 좌측 정렬 상태로 유지됨');
+      }
+    }
+
+    // 이미지 뒤 줄바꿈 (다음 섹션을 위해)
     publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Return' });
     await sleep(200);
@@ -6055,26 +6178,23 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   const affiliateAdHtml = affiliateAd ? buildAffiliateAdHtml(affiliateAd.product, affiliateAd.platform, editorFont) : '';
   const insertAffiliateAd = async (label) => {
     if (!affiliateAd) return;
-    // 2026-07-23 재구성: 순서를 [버튼 이미지 → (SE3 자동 생성) 링크 미리보기
-    // 카드 → 상품 정보 박스]로 변경, 별도로 다운로드해 넣던 큰 상품
-    // 이미지는 삭제(사용자 요청). SE3의 "링크" 기능은 단순히 기존 요소에
-    // href를 붙이는 게 아니라 그 자체로 og:image/title 미리보기 카드를
-    // 새로 삽입하는 기능임이 실사용 테스트로 확인됨 — 이 카드가 사실상
-    // 상품 이미지 역할을 대신해주므로, 중복되던 수동 상품 이미지 삽입을
-    // 없애 더 깔끔하게 정리.
-    if (affiliateAd.product.url) {
-      const btnPath = resolveAdButtonImagePath(affiliateAd.platform);
-      const btnInserted = await insertLocalImageViaClipboard(publishWin, btnPath);
-      writeLog('INFO', 'PUBLISH', `${label} 버튼이미지 삽입`, btnInserted ? 'OK' : 'FAIL/SKIP');
-      if (btnInserted) {
-        const linked = await attachLinkToLastImage(publishWin, affiliateAd.product.url);
-        writeLog('INFO', 'PUBLISH', `${label} 버튼이미지 링크연결(미리보기 카드 생성)`, linked ? 'OK' : 'FAIL — 이미지는 삽입됨, 카드만 실패');
-        // 2026-07-23: 카드는 이미 블록 요소라 삽입 후 커서가 자동으로
-        // 다음 줄에 위치함 — 여기서 Enter를 추가로 누르면 카드와 아래
-        // 상품 박스 사이에 불필요한 빈 줄이 생겨 간격이 벌어짐(사용자
-        // 지적으로 확인). Enter 키 입력 제거, 짧은 대기만 유지.
-        await new Promise(r => setTimeout(r, 200));
-      }
+    // 2026-07-23(5차 수정 — 원래 방식으로 복귀): 버튼 이미지+SE3 "링크"
+    // 자동화(이전 버전 참고: insertLocalImageViaClipboard/
+    // attachLinkToLastImage)는 (1) 원치 않는 og 미리보기 카드가 추가로
+    // 생기고 (2) 그 카드 자체도 클릭이 "사용권한이 없습니다" 오류로
+    // 막히는 것이 실사용 테스트로 확인되어 전면 폐기. 원래 방식(상품
+    // 이미지 + 박스 안 텍스트 링크)으로 복귀 — 이 방식은 예전에 실제
+    // 발행 후 클릭 이동이 정상 작동한 전례가 있음. 상품 보기 링크는
+    // buildAffiliateAdHtml()이 박스 안에 이미 포함해서 만들어준다.
+    if (affiliateAd.product.image) {
+      // 2026-07-23: 상품 이미지가 너무 크게 보인다는 지적으로 "원본 대비
+      // 70%" 축소 적용했으나, 원본이 크면(1200x1200 등) 축소해도 네이버
+      // 블로그 본문 폭(약 650~700px)보다 여전히 커서 브라우저가 자동으로
+      // 100% 폭에 맞춰버려 시각적 축소 효과가 없는 문제 확인(실사용
+      // 테스트). 원본 크기와 무관하게 항상 고정 560px(긴 쪽 기준, 비율
+      // 유지)로 축소하는 방식으로 교체(본문 이미지 5장에는 영향 없음,
+      // 이 호출부만 적용).
+      await insertImgSection({ url: affiliateAd.product.image }, `${label} 상품이미지`, { fixedSize: 560, center: true });
     }
     await pasteHtml(affiliateAdHtml, `${label} 상품정보`);
   };
