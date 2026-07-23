@@ -924,3 +924,41 @@
   font-size: 11px;
   color: var(--text-muted, #888);
 }
+
+/* ── 관련 사이트 수동 편집 (2026-07-22 신규) ─────────────────── */
+.links-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.links-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.links-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.links-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.links-row-check {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.links-name-input {
+  flex: 0 0 180px;
+}
+.links-url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}

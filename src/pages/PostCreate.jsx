@@ -966,6 +966,16 @@ export default function PostCreate() {
                 thumbBgIndex={thumbBgIndex}
                 onSelectThumbBg={handleSelectThumbBg}
               />
+
+              {/* 2026-07-22 신규: 관련 사이트 수동 편집 — AI가 자동 생성한
+                  result.links(이름+주소 배열)를 그대로 노출/편집. 백엔드는
+                  손대지 않음 — renderPreview/publish.now/publish.schedule이
+                  이미 result.links를 그대로 사용하고 있어 이 배열만
+                  갱신하면 자동 반영됨. */}
+              <LinksSection
+                links={result.links}
+                onChange={(next) => setResult(p => ({ ...p, links: next }))}
+              />
             </>
           )}
         </div>
@@ -1536,6 +1546,111 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
 
       {!hasAny && !allLoading && (
         <p className="image-hint">Unsplash API 키를 환경설정에서 입력하면 자동으로 이미지가 추천됩니다.</p>
+      )}
+    </div>
+  );
+}
+
+// ── 관련 사이트 수동 편집 (2026-07-22 신규) ────────────────────
+// 계정 관리 화면의 "선택 삭제" 패턴(휴지통 버튼 → 체크박스 → 일괄삭제)과
+// 동일한 UX를 재사용 — 줄마다 +/- 버튼을 두지 않고 섹션 제목 옆에 작은
+// 버튼 2개만 두어 공간을 절약한다(사용자 요청).
+function LinksSection({ links, onChange }) {
+  const list = Array.isArray(links) ? links : [];
+  const [bulkMode, setBulkMode] = React.useState(false);
+  const [selectedIdx, setSelectedIdx] = React.useState(new Set());
+
+  const handleAdd = () => {
+    onChange([...list, { name: '', url: '' }]);
+  };
+
+  const toggleBulkMode = () => {
+    setBulkMode(v => !v);
+    setSelectedIdx(new Set());
+  };
+
+  const toggleSelect = (idx) => {
+    setSelectedIdx(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedIdx.size === 0) return;
+    onChange(list.filter((_, idx) => !selectedIdx.has(idx)));
+    setSelectedIdx(new Set());
+    setBulkMode(false);
+  };
+
+  const updateField = (idx, field, value) => {
+    const next = list.slice();
+    next[idx] = { ...next[idx], [field]: value };
+    onChange(next);
+  };
+
+  return (
+    <div className="card links-section">
+      <div className="links-section-header">
+        <span className="section-label" style={{ whiteSpace: 'nowrap' }}>관련 사이트</span>
+        <div className="links-header-right">
+          {bulkMode ? (
+            <>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={handleBulkDelete}
+                disabled={selectedIdx.size === 0}
+              >
+                선택 삭제 ({selectedIdx.size})
+              </button>
+              <button className="btn btn-ghost btn-xs" onClick={toggleBulkMode}>취소</button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-ghost btn-xs" onClick={handleAdd} title="줄 추가">+ 추가</button>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={toggleBulkMode}
+                disabled={list.length === 0}
+                title="줄 삭제"
+              >
+                − 삭제
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {list.length === 0 ? (
+        <p className="image-hint">등록된 관련 사이트가 없습니다. "+ 추가"를 눌러 등록하세요.</p>
+      ) : (
+        <div className="links-rows">
+          {list.map((link, idx) => (
+            <div key={idx} className="links-row">
+              {bulkMode && (
+                <input
+                  type="checkbox"
+                  className="links-row-check"
+                  checked={selectedIdx.has(idx)}
+                  onChange={() => toggleSelect(idx)}
+                />
+              )}
+              <input
+                className="input links-name-input"
+                placeholder="사이트 이름"
+                value={link.name || ''}
+                onChange={e => updateField(idx, 'name', e.target.value)}
+              />
+              <input
+                className="input links-url-input"
+                placeholder="https://..."
+                value={link.url || ''}
+                onChange={e => updateField(idx, 'url', e.target.value)}
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
