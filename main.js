@@ -427,6 +427,51 @@ function computeMaxDailyPosts(isPremium, store) {
   return Number.isFinite(n) && n > 0 ? n : Infinity;
 }
 
+// ── 일일 최대 발행 체크 — 계정별 + 3단계 정책 (2026-07-23 재설계) ──
+// 이전에는 프로그램 전체(모든 계정 합산) 기준으로 카운트했으나, 사용자
+// 요청으로 "계정 1개당" 별도로 카운트하도록 변경(accountId로 필터).
+// 정책도 3단으로 정리:
+//  - 스탠다드: 초과 시 실제로 차단(기존 동작 유지, "지금 뜨는 차단 기능은
+//    스탠다드에서만 작동해야 한다"는 요청)
+//  - 프리미엄: 초과해도 차단하지 않고 경고 메시지만 반환 — 본인이 직접
+//    설정한 숫자이므로 강제로 막을 필요는 없다는 사용자 판단.
+//  - 개발자 버전: 등급 판정 결과(tierLimits.isPremium)에 기대지 않고
+//    isDev 플래그를 직접 확인해 무조건 통과시킨다 — "개발" 토글이 선택된
+//    상태에서도 실제로 표준 10회 제한에 걸리는 사고가 있었는데, 정확한
+//    원인을 100% 특정하지 못했으므로 등급 계산 결과와 무관하게 확실히
+//    뚫려있도록 독립적인 안전장치로 둔다.
+async function checkDailyPostLimit(accountId, tierLimits) {
+  const { getDB } = require('./src/db');
+  const db = getDB();
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const maxDailyPosts = tierLimits.maxDailyPosts;
+  const todayCount = db.prepare(
+    "SELECT COUNT(*) as cnt FROM posts WHERE status IN ('publishing','published') AND DATE(published_at) = ? AND account_id = ?"
+  ).get(todayStr, accountId)?.cnt || 0;
+  if (todayCount < maxDailyPosts) {
+    return { blocked: false, warning: null, todayCount, maxDailyPosts };
+  }
+  if (isDev) {
+    return {
+      blocked: false,
+      warning: `오늘 발행 가능 횟수를 초과했습니다 (${todayCount}/${maxDailyPosts}회) — 개발자 모드라 계속 진행합니다.`,
+      todayCount, maxDailyPosts,
+    };
+  }
+  if (tierLimits.isPremium) {
+    return {
+      blocked: false,
+      warning: `오늘 설정하신 최대 발행 횟수를 초과했습니다 (${todayCount}/${maxDailyPosts}회). 계속 발행합니다.`,
+      todayCount, maxDailyPosts,
+    };
+  }
+  return {
+    blocked: true,
+    warning: `오늘 발행 가능 횟수를 초과했습니다 (${todayCount}/${maxDailyPosts}회)`,
+    todayCount, maxDailyPosts,
+  };
+}
+
 async function getTierLimits(forceRefresh = false) {
   const now = Date.now();
   if (!forceRefresh && _tierLimitsCache.value && (now - _tierLimitsCache.ts) < TIER_LIMITS_CACHE_TTL_MS) {
@@ -3417,12 +3462,16 @@ async function composePreviewSections({ title, tone, intro, body, conclusion, li
   const adHtml = adResult ? buildAffiliateAdHtml(adResult.product, adResult.platform, editorFont) : '';
   const adProductImage = adResult ? adResult.product.image : null;
   const adPosition = adResult ? adResult.position : 'none';
+  // 2026-07-23 신규: 실제 발행은 CTA를 "상품 보기" 버튼 이미지로 삽입하므로
+  // (텍스트+CSS 방식은 SE3에서 스타일 유지 실패 확인), 미리보기에서도
+  // 같은 로컬 버튼 이미지를 보여줄 수 있도록 플랫폼 값을 함께 반환
+  const adPlatform = adResult ? adResult.platform : null;
 
   return {
     introHtml, bodyPart1Html, bodyPart2Html, bodyPart3Html, bodyPart4Html,
     conclusionHtml, linksHtml,
     hasPart1: !!part1, hasPart2: !!part2, hasPart3: !!part3,
-    adHtml, adProductImage, adPosition,
+    adHtml, adProductImage, adPosition, adPlatform,
   };
 }
 
@@ -4297,41 +4346,26 @@ function buildAffiliateAdHtml(product, platform, fontName) {
   if (!product) return '';
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   const label = platform === 'aliexpress' ? '알리익스프레스' : '쿠팡';
-  const btnColor = platform === 'aliexpress' ? 'rgb(230,63,63)' : 'rgb(224,58,58)';
   const disclosure = platform === 'aliexpress'
     ? '이 포스팅은 알리익스프레스 어필리에이트 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받을 수 있습니다.'
     : '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.';
   const name = String(product.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const priceNum = Number(product.price);
   const price = priceNum ? `${priceNum.toLocaleString('ko-KR')}원` : '';
-  // 2026-07-23(2차 수정, 실사용 테스트 반영):
-  // - rel에서 noreferrer 제거 — 쿠팡파트너스는 사전에 등록한 사이트/앱에서만
-  //   광고를 게시하도록 정책상 강제하며(마이페이지 "내 정보 관리" 참고),
-  //   noreferrer로 리퍼러 정보를 아예 안 보내면 정상 클릭/수익으로 인정받지
-  //   못할 가능성이 높음(실제 클릭 시 "사용권한이 없습니다" 오류 확인됨).
-  //   noopener만 유지(팝업 보안은 그대로 확보, 리퍼러는 정상 전달).
-  // - 버튼 글자가 너무 작아 안 보인다는 문제 확인 — 글자 크기/패딩 확대,
-  //   <b> 대신 인라인 font-weight로 중복 지정(SE3가 일부 스타일만 남기는
-  //   경우에 대비), 버튼을 중앙정렬.
-  const hrefEscaped = String(product.url || '').trim().replace(/"/g, '&quot;');
+  // 2026-07-23(4차 수정): <a> 태그(직접 스타일/span으로 감싸기 모두)가
+  // SE3에서 스타일이 살아남지 않는 것을 실사용으로 2차례 확인 — CTA
+  // 버튼은 이제 이 텍스트 박스에 넣지 않고, publishToNaver()에서 별도로
+  // "상품 보기" 버튼 이미지를 삽입 + 네이버 자체 링크 기능으로 연결한다
+  // (insertLocalImageViaClipboard/attachLinkToLastImage 참고). 이 박스는
+  // 이름/가격/고지문구만 담당.
   let inner = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;"><b>🛒 ${label} 추천 상품</b></span></p>`;
   inner += `<p style="${font}margin:0 0 2px 0;"><span style="color:rgb(51,51,51);"><b>${name}</b></span></p>`;
   if (price) inner += `<p style="${font}margin:0 0 6px 0;"><span style="color:rgb(224,58,58);">${price}</span></p>`;
-  if (hrefEscaped) {
-    // 2026-07-23(3차 수정): 실사용 테스트에서 미리보기엔 버튼이 정상
-    // 표시되지만, 실제 네이버 에디터를 거쳐 발행하면 SE3가 <a> 태그 자체의
-    // 인라인 스타일(배경/패딩/둥근 테두리)을 무시하고 자체 기본 링크
-    // 스타일(빨간 밑줄 텍스트)로 덮어써서 버튼처럼 안 보이는 문제 확인.
-    // <span>/<table> 등 다른 태그의 인라인 스타일은 계속 잘 유지되는 걸로
-    // 확인돼왔으므로, 버튼 모양(배경/패딩/둥근테두리)을 <a> 자체가 아니라
-    // 그 안에 감싸는 <span>에 입혀 SE3가 <a>만 덮어써도 안쪽 span 스타일은
-    // 살아남는지 시도 — 다음 발행 테스트에서 확인 필요.
-    inner += `<p style="${font}margin:10px 0 0 0;"><a href="${hrefEscaped}" target="_blank" rel="noopener" style="text-decoration:none;">`
-      + `<span style="display:inline-block;color:#ffffff;background:${btnColor};padding:10px 22px;border-radius:6px;font-size:15px;font-weight:700;">${label}에서 보기 →</span>`
-      + `</a></p>`;
-  }
   inner += `<p style="${font}margin:8px 0 0 0;"><span style="color:rgb(153,153,153);font-size:11px;">${disclosure}</span></p>`;
-  return `<div style="margin:20px 0 8px 0;">` + tableBox(inner, 'border:1.5px solid rgb(255,214,214);', 'rgb(255,250,250)') + `</div>`;
+  // 2026-07-23: 위 여백을 20px→6px로 축소 — 바로 위 oglink 미리보기
+  // 카드와의 간격이 너무 벌어져 보인다는 지적에 따라 좀 더 붙여서
+  // 일체감 있게 보이도록 함.
+  return `<div style="margin:6px 0 8px 0;">` + tableBox(inner, 'border:1.5px solid rgb(255,214,214);', 'rgb(255,250,250)') + `</div>`;
 }
 
 // ── 썸네일 생성 (offscreen BrowserWindow → PNG 파일) ──────────
@@ -4956,6 +4990,378 @@ async function retryUntilFound(queryFn, isFound, attempts = 6, intervalMs = 350)
     if (i < attempts - 1) await new Promise(r => setTimeout(r, intervalMs));
   }
   return result;
+}
+
+// ── 제휴 광고 "상품 보기" 버튼 이미지 + 네이버 자체 링크 기능 연결
+// (2026-07-23 신규) ─────────────────────────────────────────────
+// 배경: <a> 태그에 CSS로 버튼 모양을 입혀 붙여넣는 방식을 두 차례(직접
+// 스타일, 감싸는 span 스타일) 시도했으나 실사용 테스트 결과 SE3가 <a>
+// 태그 내용의 스타일을 계속 무시하고 자체 기본 링크 스타일(밑줄 텍스트)로
+// 덮어씀을 확인. 대신 완성된 버튼 "이미지"(public/ad-buttons/*.png, 미리
+// 디자인해 앱에 내장)를 다른 본문 사진과 동일한 클립보드 붙여넣기 방식으로
+// 삽입한 뒤, 네이버 에디터 자체의 "링크" 기능(사용자가 실제 DOM에서 확인:
+// 상단 툴바 .se-oglink-toolbar-button)으로 그 이미지에 하이퍼링크를 연결.
+// 팝업의 정확한 입력창/확인버튼 구조는 실사용으로 검증된 적이 없어 방어적
+// (여러 후보 텍스트/속성 시도)으로 작성하고, 실패해도 로그를 상세히 남겨
+// 다음 라운드에서 바로 고칠 수 있게 한다 — 이미지 자체는 이미 삽입돼
+// 있으므로 링크 연결만 실패해도 발행 전체를 막지 않는다.
+
+function resolveAdButtonImagePath(platform) {
+  const file = platform === 'aliexpress' ? 'aliexpress.png' : 'coupang.png';
+  const buildPath = path.join(__dirname, 'build', 'ad-buttons', file);
+  const publicPath = path.join(__dirname, 'public', 'ad-buttons', file);
+  return fs.existsSync(buildPath) ? buildPath : publicPath;
+}
+
+// 로컬 PNG 파일을 클립보드로 붙여넣기(네트워크 다운로드 없이, 썸네일 삽입과 동일한 방식)
+async function insertLocalImageViaClipboard(publishWin, localFilePath) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  try {
+    if (!fs.existsSync(localFilePath)) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 버튼 이미지 파일 없음', localFilePath);
+      return false;
+    }
+    const { nativeImage } = require('electron');
+    const buf = fs.readFileSync(localFilePath);
+    const img = nativeImage.createFromBuffer(buf);
+    if (img.isEmpty()) return false;
+    clipboard.writeImage(img);
+    await sleep(200);
+    publishWin.webContents.paste();
+    await sleep(800);
+    return true;
+  } catch (e) {
+    writeLog('WARN', 'PUBLISH', '제휴 광고 버튼 이미지 삽입 실패', e.message);
+    return false;
+  }
+}
+
+// 방금 삽입된(문서 맨 마지막) 이미지를 선택 → 상단 "링크" 버튼 클릭 →
+// 팝업의 URL 입력창에 주소 입력 → 확인.
+async function attachLinkToLastImage(publishWin, url) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // 링크 연결에 실패했을 때 팝업을 열어둔 채로 두면 이후 본문/이미지/
+  // 관련 사이트 삽입이 전부 이 팝업 위에서 진행되며 꼬이는 문제가
+  // 2026-07-23 실사용 테스트에서 확인됨 — 실패하는 모든 경로에서 반드시
+  // 이 함수로 팝업을 닫고 나가도록 한다.
+  const closeLinkPopup = async () => {
+    try {
+      const closeBtn = await publishWin.webContents.executeJavaScript(`
+        (function() {
+          var btn = document.querySelector('.se-popup-close-button');
+          if (!btn) return null;
+          var r = btn.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return null;
+          return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch(() => null);
+      if (closeBtn) {
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: closeBtn.x, y: closeBtn.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: closeBtn.x, y: closeBtn.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 팝업 닫기(닫기 버튼)', JSON.stringify(closeBtn));
+      } else {
+        publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+        publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Escape' });
+        writeLog('WARN', 'PUBLISH', '제휴 광고 - 링크 팝업 닫기 버튼 못 찾음, Esc로 대체');
+      }
+      await sleep(300);
+    } catch (e) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 - 링크 팝업 닫기 실패', e.message);
+    }
+  };
+  try {
+    // 1) 문서에서 마지막 .se-section-image를 스크롤+클릭해서 선택
+    const scrollResult = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var imgs = document.querySelectorAll('.se-section-image');
+          if (!imgs.length) return 'img_not_found';
+          var img = imgs[imgs.length - 1];
+          img.scrollIntoView({ block: 'center', inline: 'nearest' });
+          return 'scrolled';
+        })()
+      `).catch((e) => 'scroll_err:' + e.message),
+      (v) => v === 'scrolled', 3, 300
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 버튼 이미지 스크롤', String(scrollResult));
+    await sleep(400);
+
+    const imgClickPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var imgs = document.querySelectorAll('.se-section-image');
+          if (!imgs.length) return null;
+          var img = imgs[imgs.length - 1];
+          var r = img.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return null;
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        })()
+      `).catch(() => null),
+      (v) => !!v, 3, 300
+    );
+    if (!imgClickPos) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 버튼 이미지 좌표 획득 실패 — 링크 연결 생략');
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: imgClickPos.x, y: imgClickPos.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: imgClickPos.x, y: imgClickPos.y, button: 'left', clickCount: 1 });
+    writeLog('INFO', 'PUBLISH', '제휴 광고 버튼 이미지 클릭(선택)', JSON.stringify(imgClickPos));
+    await sleep(400);
+
+    // 1.5) 가운데 정렬 — 썸네일 가운데 정렬 때 검증된 것과 동일한 방식
+    // (.se-context-toolbar-cycle-toggle-container[data-name="align"] 토글
+    // 버튼 클릭)을 그대로 재사용. 박스 밖에 독립적으로 삽입되는 이미지라
+    // 기본값이 좌측 정렬이므로 여기서 가운데로 바꿔준다(2026-07-23).
+    const btnAlignResult = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
+          if (!container) return { found:false, reason:'container_not_found' };
+          var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
+            var r = b.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          });
+          if (!btn) return { found:false, reason:'no_visible_button' };
+          var r = btn.getBoundingClientRect();
+          return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 3, 300
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 버튼이미지 정렬 버튼 조회', JSON.stringify(btnAlignResult));
+    if (btnAlignResult && btnAlignResult.found) {
+      publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: btnAlignResult.x, y: btnAlignResult.y, button: 'left', clickCount: 1 });
+      publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: btnAlignResult.x, y: btnAlignResult.y, button: 'left', clickCount: 1 });
+      writeLog('INFO', 'PUBLISH', '제휴 광고 버튼이미지 가운데 정렬 클릭', JSON.stringify(btnAlignResult));
+      await sleep(300);
+    } else {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 버튼이미지 정렬 버튼 찾기 실패 — 좌측 정렬 상태로 유지됨');
+    }
+
+    // 2) 상단 "링크" 버튼 클릭 (사용자가 실제 DOM에서 확인해 알려준 선택자)
+    const linkBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var btn = document.querySelector('.se-oglink-toolbar-button');
+          if (!btn) return { found:false, reason:'btn_not_found' };
+          var r = btn.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'btn_zero_size' };
+          return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 4, 300
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 버튼 조회', JSON.stringify(linkBtnPos));
+    if (!linkBtnPos || !linkBtnPos.found) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 - 링크 버튼 못 찾음 — 링크 연결 생략');
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: linkBtnPos.x, y: linkBtnPos.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: linkBtnPos.x, y: linkBtnPos.y, button: 'left', clickCount: 1 });
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 버튼 클릭', JSON.stringify(linkBtnPos));
+    await sleep(600);
+
+    // 3) 팝업의 URL 입력창 탐색 — 사용자가 실제 DOM을 확인해 알려준 정확한
+    // 선택자(input.se-popup-oglink-input, 2026-07-23)를 최우선 사용하고,
+    // 못 찾으면 기존 범용 탐색으로 폴백.
+    const linkInputInfo = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var best = document.querySelector('input.se-popup-oglink-input');
+          if (!best) {
+            var candidates = Array.from(document.querySelectorAll('input[type="text"], input[type="url"], input:not([type])'));
+            var visible = candidates.filter(function(el) {
+              var r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            if (!visible.length) return { found:false, reason:'no_visible_input', totalInputs: candidates.length };
+            best = visible.find(function(el) {
+              var ph = (el.placeholder || '').toLowerCase();
+              return ph.includes('http') || ph.includes('url') || ph.includes('링크') || ph.includes('주소');
+            }) || visible[0];
+          }
+          var r = best.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'input_zero_size' };
+          return { found:true, x: Math.round(r.left + 20), y: Math.round(r.top + r.height/2), placeholder: best.placeholder || '' };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 5, 300
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 입력창 조회', JSON.stringify(linkInputInfo));
+    if (!linkInputInfo || !linkInputInfo.found) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 - 링크 입력창 못 찾음 — 링크 연결 생략(이미지 자체는 정상 삽입됨)');
+      await closeLinkPopup();
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: linkInputInfo.x, y: linkInputInfo.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: linkInputInfo.x, y: linkInputInfo.y, button: 'left', clickCount: 1 });
+    await sleep(300);
+    clipboard.writeText(url);
+    publishWin.webContents.paste();
+    await sleep(300);
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 주소 입력', url.slice(0, 80));
+
+    // 3.5) 신규(2026-07-23, 사용자 실사용 테스트로 확인된 필수 단계): URL을
+    // 붙여넣는 것만으로는 "확인" 버튼이 비활성 상태로 남는다. 입력창 옆
+    // 돋보기(검색) 버튼(button.se-popup-oglink-button, data-log="pog.search")을
+    // 눌러 링크 미리보기 조회를 실행해야 확인 버튼이 활성화됨.
+    const searchBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var btn = document.querySelector('button.se-popup-oglink-button');
+          if (!btn) return { found:false, reason:'search_btn_not_found' };
+          var r = btn.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'search_btn_zero_size' };
+          return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 4, 300
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 검색(돋보기) 버튼 조회', JSON.stringify(searchBtnPos));
+    if (searchBtnPos && searchBtnPos.found) {
+      publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: searchBtnPos.x, y: searchBtnPos.y, button: 'left', clickCount: 1 });
+      publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: searchBtnPos.x, y: searchBtnPos.y, button: 'left', clickCount: 1 });
+      writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 검색(돋보기) 클릭', JSON.stringify(searchBtnPos));
+    } else {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 - 링크 검색(돋보기) 버튼 못 찾음 — 확인 버튼이 비활성 상태로 남을 수 있음');
+    }
+
+    // 미리보기 조회(네트워크 요청)가 끝날 때까지 대기 — 로딩 표시가 사라지거나
+    // 미리보기 내용이 채워지면 완료로 판단(최대 약 4초 재시도).
+    const previewReady = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var loading = document.querySelector('.se-popup-oglink-loading');
+          var loadingVisible = !!(loading && loading.getBoundingClientRect().height > 0 && getComputedStyle(loading).display !== 'none');
+          var preview = document.querySelector('.se-popup-oglink-preview');
+          var previewHasContent = !!(preview && preview.textContent && preview.textContent.trim().length > 0);
+          return { loadingVisible: loadingVisible, previewHasContent: previewHasContent };
+        })()
+      `).catch((e) => ({ loadingVisible: false, previewHasContent: false, err: e.message })),
+      (v) => v && (v.previewHasContent || !v.loadingVisible), 10, 400
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 미리보기 로딩 상태', JSON.stringify(previewReady));
+    await sleep(300);
+
+    // 4) 확인 버튼 — .se-popup-button-container 내부를 우선 탐색하고,
+    // 못 찾으면 기존처럼 라벨 텍스트로 폴백. disabled 상태면(=미리보기가
+    // 아직 준비 안 된 경우) 활성화될 때까지 재시도.
+    const confirmBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var container = document.querySelector('.se-popup-button-container');
+          var best = null;
+          if (container) {
+            best = Array.from(container.querySelectorAll('button')).find(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+          }
+          if (!best) {
+            var btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            var visible = btns.filter(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            var labels = ['확인', '적용', '등록', '삽입', '연결'];
+            best = visible.find(function(b) {
+              var t = (b.textContent || '').trim();
+              return labels.some(function(l){ return t === l || t.includes(l); });
+            });
+          }
+          if (!best) return { found:false, reason:'no_confirm_btn' };
+          var disabled = !!best.disabled || best.getAttribute('aria-disabled') === 'true' || best.classList.contains('disabled');
+          var r = best.getBoundingClientRect();
+          return { found:true, disabled: disabled, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), text: (best.textContent||'').trim() };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found && !v.disabled, 6, 400
+    );
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 확인 버튼 조회', JSON.stringify(confirmBtnPos));
+    if (!confirmBtnPos || !confirmBtnPos.found || confirmBtnPos.disabled) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 - 확인 버튼이 끝내 비활성/미발견 — 링크 연결 포기, 팝업 닫음(이미지 자체는 정상 삽입됨)');
+      await closeLinkPopup();
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: confirmBtnPos.x, y: confirmBtnPos.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: confirmBtnPos.x, y: confirmBtnPos.y, button: 'left', clickCount: 1 });
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 링크 확인 클릭', JSON.stringify(confirmBtnPos));
+    await sleep(400);
+
+    // 4.5) 신규(2026-07-23): 확인 클릭이 "좌표는 정상이고 클릭도 보냈는데
+    // 실제로는 팝업이 그대로 열려있던" 실사용 사고가 확인됨(미리보기
+    // 이미지가 늦게 로드되며 버튼 위치가 클릭 직전에 미세하게 밀렸을
+    // 가능성 등, 정확한 원인은 불확실). 클릭을 보냈다고 바로 성공으로
+    // 믿지 말고, 팝업이 실제로 사라졌는지 재확인 → 남아있으면 좌표를
+    // 새로 다시 재서 1회 더 클릭 → 그래도 남아있으면 닫기 버튼으로
+    // 강제 종료하고 실패 처리(이후 자동화가 팝업 위에서 계속 진행되며
+    // 전체가 막히는 사고를 방지).
+    const popupStillOpen = async () => publishWin.webContents.executeJavaScript(`
+      (function() {
+        var el = document.querySelector('.se-popup-oglink-input-holder, .se-popup-close-button');
+        if (!el) return false;
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      })()
+    `).catch(() => false);
+
+    let stillOpen = await popupStillOpen();
+    writeLog('INFO', 'PUBLISH', '제휴 광고 - 확인 클릭 후 팝업 상태 확인', stillOpen ? '아직 열려있음' : '닫힘(정상)');
+
+    if (stillOpen) {
+      // 좌표를 다시 재서 1회 재시도
+      const retryBtnPos = await publishWin.webContents.executeJavaScript(`
+        (function() {
+          var container = document.querySelector('.se-popup-button-container');
+          var best = null;
+          if (container) {
+            best = Array.from(container.querySelectorAll('button')).find(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+          }
+          if (!best) {
+            var btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            var visible = btns.filter(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            var labels = ['확인', '적용', '등록', '삽입', '연결'];
+            best = visible.find(function(b) {
+              var t = (b.textContent || '').trim();
+              return labels.some(function(l){ return t === l || t.includes(l); });
+            });
+          }
+          if (!best) return { found:false };
+          var disabled = !!best.disabled || best.getAttribute('aria-disabled') === 'true' || best.classList.contains('disabled');
+          var r = best.getBoundingClientRect();
+          return { found:true, disabled: disabled, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message }));
+      writeLog('INFO', 'PUBLISH', '제휴 광고 - 확인 버튼 재조회(2차 시도)', JSON.stringify(retryBtnPos));
+      if (retryBtnPos && retryBtnPos.found && !retryBtnPos.disabled) {
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: retryBtnPos.x, y: retryBtnPos.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: retryBtnPos.x, y: retryBtnPos.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', '제휴 광고 - 확인 재클릭', JSON.stringify(retryBtnPos));
+        await sleep(500);
+        stillOpen = await popupStillOpen();
+        writeLog('INFO', 'PUBLISH', '제휴 광고 - 재클릭 후 팝업 상태 확인', stillOpen ? '아직 열려있음' : '닫힘(정상)');
+      } else {
+        writeLog('WARN', 'PUBLISH', '제휴 광고 - 확인 버튼 재조회 실패');
+      }
+    }
+
+    if (stillOpen) {
+      writeLog('WARN', 'PUBLISH', '제휴 광고 - 재클릭에도 팝업이 안 닫힘 — 링크 연결 포기, 팝업 강제 닫음(이미지 자체는 정상 삽입됨)');
+      await closeLinkPopup();
+      return false;
+    }
+    return true;
+  } catch (e) {
+    writeLog('WARN', 'PUBLISH', '제휴 광고 - 링크 연결 실패', e.message);
+    await closeLinkPopup();
+    return false;
+  }
 }
 
 async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, thumbBgUrl = null }) {
@@ -5649,8 +6055,26 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   const affiliateAdHtml = affiliateAd ? buildAffiliateAdHtml(affiliateAd.product, affiliateAd.platform, editorFont) : '';
   const insertAffiliateAd = async (label) => {
     if (!affiliateAd) return;
-    if (affiliateAd.product.image) {
-      await insertImgSection({ url: affiliateAd.product.image }, `${label} 상품이미지`);
+    // 2026-07-23 재구성: 순서를 [버튼 이미지 → (SE3 자동 생성) 링크 미리보기
+    // 카드 → 상품 정보 박스]로 변경, 별도로 다운로드해 넣던 큰 상품
+    // 이미지는 삭제(사용자 요청). SE3의 "링크" 기능은 단순히 기존 요소에
+    // href를 붙이는 게 아니라 그 자체로 og:image/title 미리보기 카드를
+    // 새로 삽입하는 기능임이 실사용 테스트로 확인됨 — 이 카드가 사실상
+    // 상품 이미지 역할을 대신해주므로, 중복되던 수동 상품 이미지 삽입을
+    // 없애 더 깔끔하게 정리.
+    if (affiliateAd.product.url) {
+      const btnPath = resolveAdButtonImagePath(affiliateAd.platform);
+      const btnInserted = await insertLocalImageViaClipboard(publishWin, btnPath);
+      writeLog('INFO', 'PUBLISH', `${label} 버튼이미지 삽입`, btnInserted ? 'OK' : 'FAIL/SKIP');
+      if (btnInserted) {
+        const linked = await attachLinkToLastImage(publishWin, affiliateAd.product.url);
+        writeLog('INFO', 'PUBLISH', `${label} 버튼이미지 링크연결(미리보기 카드 생성)`, linked ? 'OK' : 'FAIL — 이미지는 삽입됨, 카드만 실패');
+        // 2026-07-23: 카드는 이미 블록 요소라 삽입 후 커서가 자동으로
+        // 다음 줄에 위치함 — 여기서 Enter를 추가로 누르면 카드와 아래
+        // 상품 박스 사이에 불필요한 빈 줄이 생겨 간격이 벌어짐(사용자
+        // 지적으로 확인). Enter 키 입력 제거, 짧은 대기만 유지.
+        await new Promise(r => setTimeout(r, 200));
+      }
     }
     await pasteHtml(affiliateAdHtml, `${label} 상품정보`);
   };
@@ -6584,18 +7008,17 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
     // 프리미엄 기본 무제한)과 썸네일 사용 가능 여부에 함께 사용.
     const tierLimits = await getTierLimits();
 
-    // ── 일일 최대 발행 체크 (2026-07-03, 2026-07-14 등급별 상한 적용) ──
+    // ── 일일 최대 발행 체크 (2026-07-03, 2026-07-14 등급별 상한 적용,
+    // 2026-07-23 계정별 카운트 + 3단계 정책으로 재설계) ──
     // 기존에는 예약 발행 스케줄러(startScheduler)에만 이 체크가 있어서
     // 즉시 발행 버튼은 하루 발행 횟수 제한 없이 계속 발행되던 버그가 있었음.
-    // 스케줄러와 동일하게 전체 계정 합산(글로벌) 기준으로 카운트.
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const maxDailyPosts = tierLimits.maxDailyPosts;
-    const todayCount = db.prepare(
-      "SELECT COUNT(*) as cnt FROM posts WHERE status IN ('publishing','published') AND DATE(published_at) = ?"
-    ).get(todayStr)?.cnt || 0;
-    if (todayCount >= maxDailyPosts) {
-      writeLog('WARN', 'PUBLISH', '일일 최대 발행 초과 — 즉시 발행 차단', `${todayCount}/${maxDailyPosts}`);
-      return { success: false, error: `오늘 발행 가능 횟수를 초과했습니다 (${todayCount}/${maxDailyPosts}회)` };
+    const limitCheck = await checkDailyPostLimit(accountId, tierLimits);
+    if (limitCheck.blocked) {
+      writeLog('WARN', 'PUBLISH', '일일 최대 발행 초과 — 즉시 발행 차단', `${limitCheck.todayCount}/${limitCheck.maxDailyPosts} (계정 ${accountId})`);
+      return { success: false, error: limitCheck.warning };
+    }
+    if (limitCheck.warning) {
+      writeLog('WARN', 'PUBLISH', '일일 최대 발행 초과 — 차단하지 않고 진행', `${limitCheck.warning} (계정 ${accountId})`);
     }
 
     // 계정 naver_id 조회
@@ -6643,7 +7066,7 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       thumbBgUrl: post.thumbBgUrl || null,
     });
 
-    return { success: true, postId };
+    return { success: true, postId, warning: limitCheck.warning || undefined };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -6932,7 +7355,9 @@ function calcTitleSimilarity(a, b) {
 }
 
 // ── 스케줄러 로그 스팸 방지 변수 ─────────────────────────────
-let _maxReachedLogDate = '';
+// 2026-07-23: 일일 한도 로그가 계정별로 남게 되면서 날짜 문자열 하나로는
+// 부족해져 "날짜:계정id" 키를 담는 Set으로 변경(기존엔 문자열 1개).
+let _maxReachedLogKeys = new Set();
 let _intervalLogMin   = -1;
 
 // ── 자동 스케줄러 (30초 주기 — 안전장치 포함) ───────────────
@@ -6947,44 +7372,49 @@ function startScheduler() {
       const todayStr = now.toISOString().slice(0, 10);
       const nowMin = Math.floor(now.getTime() / 60000);
 
-      const maxDailyPosts       = store.get('settings.maxDailyPosts', 3);
       const intervalMin         = store.get('settings.intervalMin', 30);
       const similarityThreshold = store.get('settings.similarityThreshold', 70) / 100;
 
-      // ── 일일 최대 발행 체크 ────────────────────────────────
-      const todayCount = db.prepare(
-        "SELECT COUNT(*) as cnt FROM posts WHERE status IN ('publishing','published') AND DATE(published_at) = ?"
-      ).get(todayStr)?.cnt || 0;
-      if (todayCount >= maxDailyPosts) {
-        if (_maxReachedLogDate !== todayStr) {
-          _maxReachedLogDate = todayStr;
-          writeLog('INFO', 'SCHEDULER', `일일 최대 도달 (${todayCount}/${maxDailyPosts}) — 오늘 발행 중단`);
-        }
-        // 예약 발행은 별도 처리 (아래)
-      } else {
-        // ── 발행 간격 체크 ────────────────────────────────────
-        const lastRow = db.prepare(
-          "SELECT published_at FROM posts WHERE status IN ('publishing','published') AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1"
-        ).get();
-        const lastMs  = lastRow?.published_at ? new Date(lastRow.published_at).getTime() : 0;
-        const diffMin = Math.floor((now.getTime() - lastMs) / 60000);
-        const intervalOk = !lastMs || diffMin >= intervalMin;
-
-        if (!intervalOk) {
-          if (_intervalLogMin !== nowMin) {
-            _intervalLogMin = nowMin;
-            writeLog('INFO', 'SCHEDULER', `발행 간격 대기 (${diffMin}/${intervalMin}분)`);
-          }
+      // ── 발행 간격 로깅(진단용 — 실제로 예약 발행 실행을 막지는 않음,
+      // 예약 발행은 등록 시점에 이미 간격을 검증했기 때문) ──────────
+      const lastRow = db.prepare(
+        "SELECT published_at FROM posts WHERE status IN ('publishing','published') AND published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1"
+      ).get();
+      const lastMs  = lastRow?.published_at ? new Date(lastRow.published_at).getTime() : 0;
+      const diffMin = Math.floor((now.getTime() - lastMs) / 60000);
+      const intervalOk = !lastMs || diffMin >= intervalMin;
+      if (!intervalOk) {
+        if (_intervalLogMin !== nowMin) {
+          _intervalLogMin = nowMin;
+          writeLog('INFO', 'SCHEDULER', `발행 간격 대기 (${diffMin}/${intervalMin}분)`);
         }
       }
 
-      // ── 예약 발행 처리 (간격 체크 무관 — 등록 시 이미 검증됨) ──
+      // ── 예약 발행 처리 ──────────────────────────────────────
       const due = db.prepare(
         "SELECT * FROM posts WHERE status='scheduled' AND scheduled_at <= ?"
       ).all(nowStr + ':59');
 
       for (const post of due) {
         try {
+          // ── 일일 최대 발행 체크(계정별, 2026-07-23 재설계) ──────
+          // 스탠다드는 초과 시 이 건은 건너뛰고(다음 30초 폴링에서 재시도,
+          // 다음날 카운트가 리셋되면 자연히 통과됨), 프리미엄/개발자는
+          // 경고 로그만 남기고 그대로 진행한다.
+          const tierLimits = await getTierLimits();
+          const limitCheck = await checkDailyPostLimit(post.account_id, tierLimits);
+          if (limitCheck.blocked) {
+            const logKey = `${todayStr}:${post.account_id}`;
+            if (!_maxReachedLogKeys.has(logKey)) {
+              _maxReachedLogKeys.add(logKey);
+              writeLog('INFO', 'SCHEDULER', `일일 최대 발행 도달(계정 ${post.account_id}) — 예약 발행 보류`, limitCheck.warning);
+            }
+            continue;
+          }
+          if (limitCheck.warning) {
+            writeLog('WARN', 'SCHEDULER', '일일 최대 발행 초과 — 차단하지 않고 진행', `${limitCheck.warning} (계정 ${post.account_id})`);
+          }
+
           // 중복 제목 유사도 체크
           const recent = db.prepare(
             "SELECT title FROM posts WHERE status IN ('publishing','published') ORDER BY published_at DESC LIMIT 20"
@@ -7296,10 +7726,18 @@ async function processLoopStep() {
   const remaining = loopState.accountQueue.filter(id => !loopState.processedThisCycle.includes(id));
   if (remaining.length === 0) {
     // 사이클 완료 → 다음 사이클로
+    // 2026-07-23: 완전자동 모드는 등록된 계정을 전부 1회씩 발행하고 나면
+    // (일일 한도 도달 여부와 무관하게) 다음 사이클 시작 전 반드시 30분을
+    // 대기해야 한다는 사용자 요청 — 이전에는 일일 한도 체크에 끼워져
+    // 있던 30분 대기가 사실상 이 역할까지 겸했는데, 프리미엄의 일일
+    // 한도 체크를 "경고만, 차단 안 함"으로 바꾸면서 그 부수효과로 사이클
+    // 간 대기가 사라져버릴 뻔했음(3초 만에 바로 다음 사이클 시작). 반자동
+    // 모드는 실제 자동 발행이 없어 위험이 없으므로 기존처럼 짧게 재개.
+    const cycleGapMs = loopState.mode === 'auto' ? 30 * 60000 : 3000;
     loopState.cycleIndex += 1;
     loopState.processedThisCycle = [];
-    writeLog('INFO', 'LOOP', `사이클 ${loopState.cycleIndex} 완료 — 다음 사이클 준비`);
-    scheduleNextLoopStep(3000);
+    writeLog('INFO', 'LOOP', `사이클 ${loopState.cycleIndex} 완료 — 다음 사이클까지 ${loopState.mode === 'auto' ? '30분' : '3초'} 대기`);
+    scheduleNextLoopStep(cycleGapMs);
     return;
   }
 
@@ -7319,19 +7757,18 @@ async function processLoopStep() {
     return;
   }
 
-  // 일일 최대 발행 체크 (기존 예약 스케줄러와 동일한 전역 카운트를 공유)
+  // 일일 최대 발행 체크 (계정별, 2026-07-23 재설계 — 이전엔 전역 합산 카운트)
   // 2026-07-14: 자동화 루프는 시작 시점에 이미 프리미엄 확인을 마쳤으므로
   // (startAutomationLoop 참고) 여기서는 온라인 시간조작 검사가 포함된
   // getTierLimits()를 매 스텝 다시 호출하지 않고, computeMaxDailyPosts만
   // 재사용해 매번 최신 설정값(사용자가 방금 저장한 무제한/숫자 설정)을
-  // 반영하면서도 비용은 store 읽기 수준으로 가볍게 유지한다.
-  const maxDailyPosts = computeMaxDailyPosts(true, store);
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todayCount = db.prepare(
-    "SELECT COUNT(*) as cnt FROM posts WHERE status IN ('publishing','published') AND DATE(published_at) = ?"
-  ).get(todayStr)?.cnt || 0;
-  if (loopState.mode === 'auto' && todayCount >= maxDailyPosts) {
-    writeLog('INFO', 'LOOP', `일일 최대 발행 도달(${todayCount}/${maxDailyPosts}) — 30분 후 재확인`);
+  // 반영하면서도 비용은 store 읽기 수준으로 가볍게 유지한다. 자동화 루프는
+  // 시작 자체가 프리미엄 전용이라 이 시점에는 항상 isPremium=true로 취급—
+  // 개발자 모드는 checkDailyPostLimit 내부에서 isDev 플래그로 별도 처리.
+  const lightTierLimits = { isPremium: true, maxDailyPosts: computeMaxDailyPosts(true, store) };
+  const loopLimitCheck = await checkDailyPostLimit(accountId, lightTierLimits);
+  if (loopState.mode === 'auto' && loopLimitCheck.blocked) {
+    writeLog('INFO', 'LOOP', `일일 최대 발행 도달(계정 ${accountId}, ${loopLimitCheck.todayCount}/${loopLimitCheck.maxDailyPosts}) — 30분 후 재확인`);
     loopState.currentStep = 'waiting';
     scheduleNextLoopStep(30 * 60000);
     return;
