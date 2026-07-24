@@ -3908,6 +3908,95 @@ function tableBox(innerHtml, borderCss, bg) {
        + `</td></tr></tbody></table>`;
 }
 
+// 2026-07-24 신규: 글자 길이와 무관하게 항상 고정된 짧은 폭으로 나오는
+// "포인트 액센트 바" — 언더라인형 전용. tableBox의 border-bottom은 표가
+// width:100%라 본문 전체 폭만큼 선이 그어져 다른 레이아웃의 hr/구분선과
+// 구분이 안 된다는 지적(실사용 확인)에 따라, border 대신 작은 표
+// 셀 자체를 색으로 채운 고정폭 사각형을 별도로 만들어 제목 바로 아래
+// 붙이려 했으나, 실사용 발행 테스트 결과 SE3가 표 셀을 "편집 가능한
+// 콘텐츠 칸"으로 취급해 height:3px/font-size:1px 같은 극단적 축소 지정을
+// 무시하고 자기 기본 줄높이·여백으로 되돌려버려, 얇은 선이 아니라 두꺼운
+// 사각형 블록으로 나오는 버그가 확인됨(2026-07-24 후속 수정). border는
+// (배경색 채우기와 달리) 셀이 아무리 커지더라도 항상 지정한 두께 그대로
+// 얇은 선으로 남으므로, "배경색 채우기" 대신 "좁은 폭 표 + border-bottom"
+// 방식으로 교체 — 셀 높이가 SE3에 의해 커져도 밑줄 자체는 계속 얇게 유지됨.
+// [2026-07-24 후속: 현재 미사용] 이 얇은 선 자체는 문제 없었지만, 제목과
+// 별개의 <table>로 붙이면 SE3가 표마다 자체 앞뒤 여백을 강제 부여해
+// 제목-선 간격이 커 보이는 문제가 확인됨 — 아래 titleWithAccentBar()로
+// 대체(제목+선을 한 표에 병합). 이 함수는 더 이상 호출되지 않지만 문제
+// 해결 이력 보존을 위해 남겨둠.
+function accentBar(widthPx, color, thicknessPx = 3) {
+  return `<table style="width:${widthPx}px;border-collapse:collapse;margin:4px 0 0 0;">`
+       + `<tbody><tr><td style="border-bottom:${thicknessPx}px solid ${color};padding:0;line-height:1px;font-size:1px;">&nbsp;</td></tr></tbody></table>`;
+}
+
+// 2026-07-24 후속 수정(사용자 실사용 지적): accentBar를 제목과 별개의
+// <table>로 붙이면 SE3가 표를 붙여넣을 때마다 자체 기본 앞뒤 여백을
+// 강제로 부여하는 것으로 보여(표 자체가 독립된 블록 컴포넌트로 취급됨),
+// 얇은 선 자체는 고쳤어도 제목과 선 사이 간격이 크게 벌어져 보이는
+// 문제가 실사용으로 확인됨. 1차 시도: 제목+선을 한 표(2행, colspan)로
+// 합쳤으나 — 실사용 재확인 결과 여전히 제목-선 사이 간격이 크게 남음.
+// 원인 재진단: 선을 그리는 2번째 행의 셀이 텍스트 없이 거의 비어있어서
+// (&nbsp;만 존재) SE3가 이번에도 "내용이 거의 없는 셀"로 판단해 자기
+// 기본 최소 높이로 되돌리는 것으로 보임 — 별도 표든 같은 표의 다른 행
+// 이든, "텍스트 콘텐츠가 거의 없는 셀"이라는 조건 자체가 문제였음(이전에
+// 발견한 "셀 높이 강제 축소 무시" 문제와 근본적으로 동일 계열). 추가로
+// 밑줄이 제목 글자 길이와 무관한 고정폭(60px/40px)이라 제목이 길면
+// 밑줄만 눈에 띄게 짧아 보인다는 지적도 함께 받음.
+// 2차 수정(현재): 접근 자체를 바꿔 별도의 "선 전용 행/셀"을 만들지 않고,
+// 제목 텍스트가 들어있는 셀 자체에 border-bottom을 직접 건다. 이 셀은
+// 실제 텍스트(제목)를 담고 있어 "내용 거의 없음" 판정을 받지 않으므로
+// SE3가 높이를 강제로 늘릴 이유가 없고, 표 폭을 지정하지 않아
+// (shrink-to-fit) 밑줄 길이가 자연스럽게 제목 글자 폭 + 약간의 여유
+// (오른쪽 padding)에 맞춰짐. **실사용 미검증** — SE3가 표의 자동폭
+// (고정 width 미지정)을 그대로 유지해주는지가 이번에 처음 검증하는 지점.
+function titleWithAccentBar(titleInnerHtml, color, thicknessPx = 3) {
+  return `<table style="border-collapse:collapse;">`
+       + `<tbody><tr><td style="padding:0 8px 3px 0;border:none;border-bottom:${thicknessPx}px solid ${color};">${titleInnerHtml}</td></tr></tbody></table>`;
+}
+
+// [2026-07-24 3차 수정: 위 titleWithAccentBar 실사용 재확인 결과] shrink-to-fit
+// (width 미지정) 표도 SE3가 붙여넣을 때 결국 폭을 100%로 강제 확장해버려
+// "글자 밑에만"이 아니라 다시 "전체 폭 구분선"으로 돌아가는 것이 확인됨
+// — 표 기반으로는 "글자 폭에만 붙는 밑줄"을 만들 수 없다는 결론.
+// 접근을 표 자체에서 벗어나는 쪽으로 전환: 제목 텍스트를 감싸는 인라인
+// <span>에 border-bottom을 직접 건다. block 요소(div/p/table의 td)의
+// border는 그 블록 전체 폭만큼 그려지지만, inline 요소(span)의 border는
+// 언제나 그 안의 실제 텍스트가 차지하는 폭만큼만 그려진다 — 부모(문단/
+// 표)가 SE3에 의해 아무리 넓게 강제되어도 밑줄은 글자 폭에만 붙는다.
+// 지금까지의 "border가 삭제된다"는 문제는 전부 block 요소(div/p 자체,
+// table의 td)에서 확인된 것이었고, span의 color/font-size 같은 인라인
+// 스타일은 이미 정상적으로 살아남는 것이 확인돼 있으므로(모든 H2/H3
+// 색상 표시가 이 방식), border-bottom도 같은 span 스타일 속성으로서
+// 살아남을 가능성이 높다는 판단. 오른쪽에 약간의 padding을 줘 밑줄이
+// 글자보다 살짝 더 길게 나오도록 함(사용자 요청). **실사용 미검증**.
+// 2026-07-24 후속 수정(사용자 실사용 지적): span border 자체는 SE3에서
+// 살아남는 것을 실사용으로 확인(글자 폭에만 밑줄이 붙음). 다만 (1)
+// 글자와 밑줄이 너무 붙어 보임 — padding-bottom을 2px→3px로 살짝 늘림.
+// (2) H2/H3가 굵기 구분 없이 똑같이 3px라 두 단계 차이가 안 느껴짐 —
+// 호출부에서 H2는 4px, H3는 2px를 명시로 넘기도록 해 확연한 차이를 줌
+// (기본값 3은 혹시 모를 다른 호출 대비 그대로 유지).
+// 2026-07-24 CRITICAL 후속 수정(사용자가 직접 DevTools로 실제 게시글 DOM
+// 확인): span의 border-bottom이 실제로는 전혀 살아남지 않고 있었음 —
+// SE3가 붙여넣기 시 "텍스트에 border-bottom이 걸려있다 = 밑줄 서식"으로
+// 인식해서 우리 커스텀 스타일을 통째로 버리고 자기 내장 밑줄 태그
+// `<u>`로 자동 치환하고 있었음(element.style엔 color만 남고 border-bottom/
+// padding은 완전히 사라짐, DOM에 `<u><b>...</b></u>`만 남아있는 것을
+// 실사용으로 확인). "글자 폭에만 밑줄이 붙는다"는 이전 확인은 사실 이
+// 네이티브 `<u>`의 성질 때문이었고, 두께/간격 조정이 하나도 반영 안 된
+// 것도 `<u>` 태그 자체엔 px 두께 정보를 담을 수 없기 때문이었음(우리
+// border-bottom 값이 변환 과정에서 버려짐).
+// 수정: 처음부터 SE3가 인식하는 그 `<u>` 태그를 직접 만들어서 보낸다 —
+// border-bottom 대신 text-decoration-thickness/text-decoration-color/
+// text-underline-offset(모던 CSS text-decoration 세부 속성)을 `<u>`
+// 자체에 건다. SE3가 이미 자기 태그로 인식되는 `<u>`는 변환 없이 그대로
+// 받아들일 가능성이 있고, 이 속성들은 표준 text-decoration 계열이라
+// 색상(color)처럼 살아남을 수 있다는 판단. **실사용 미검증** — 언더라인형
+// 마지막 검증 라운드.
+function underlineTitleP(font, marginCss, innerLabelHtml, textColor, fontSizePx, borderColor, thicknessPx = 3) {
+  return `<p style="${font}margin:${marginCss};"><span style="color:${textColor};font-size:${fontSizePx}px;"><u style="text-decoration-line:underline;text-decoration-color:${borderColor};text-decoration-thickness:${thicknessPx}px;text-underline-offset:3px;"><b>${innerLabelHtml}</b></u></span></p>`;
+}
+
 // (2026-07-02) 가독성 개선: 줄바꿈 없이 이어진 긴 문단을 문장 단위로 쪼개
 // 짧은 문단 여러 개로 렌더링. AI가 도입부/마무리를 줄바꿈 없는 하나의
 // 덩어리 텍스트로 생성하는 경우가 많아, PC에서도 벽돌처럼 뭉쳐 보이고
@@ -3959,7 +4048,8 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
     .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')
     .replace(/\*(.+?)\*/g,'<em>$1</em>');
 
-  for (const line of lines) {
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
     const raw = line.trimEnd();
     const tok = raw.trimStart();
 
@@ -3978,11 +4068,18 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
     // H1~H6 전부 0으로 검출) <p><span><b> 방식으로 되돌림. 태그만 바꾸는
     // 방식으로는 이 문제를 해결할 수 없음 — 자세한 내용은 memory
     // naver-heading-tags-seo-fix.md 참고.
+    // 2026-07-24 후속 수정: H4 뒤에 항상 <hr>을 붙였던 것을 제거. 지금은
+    // 모든 레이아웃(box/leftbar/underline/newspaper/banner)의 H2가 표
+    // 기반 박스로 감싸져 있어 "여기가 새 대분류 시작"이라는 신호는 이미
+    // 그 박스가 충분히 주고 있는데, H4 바로 뒤에 또 hr을 넣으니 정작
+    // 본문 문단이 H2 섹션 전체보다 H4 쪽 hr에 더 가깝게 붙어 보인다는
+    // 지적(실사용 발행 테스트로 확인) — hr을 빼서 H2→H3→H4→본문이 하나로
+    // 이어지는 느낌을 살림. justInsertedHr은 false로 둬 바로 이어지는
+    // H2가 있을 경우(드묾) box 계열의 자체 구분선 로직이 정상 동작하게 함.
     if (/^####\s+/.test(tok)) {
       const t = tok.replace(/^####\s+/, '');
       html += `<p style="${font}margin:14px 0 4px 0;"><span style="color:${st.h4.text};font-size:14px;"><b>${st.h4.symbol} ${esc(t)}</b></span></p>`;
-      html += `<hr>`;
-      justInsertedHr = true;
+      justInsertedHr = false;
       isFirstLine = false;
       continue;
     }
@@ -3993,22 +4090,64 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
     // 렌더링. 각 구조는 border/background-color/font-weight만 사용해 SE3
     // 붙여넣기에서 걸러질 위험이 있는 속성(그림자/그라데이션/회전/의사요소)
     // 은 전혀 쓰지 않음.
+    // 2026-07-24 후속 수정: leftbar/banner는 border를 순수 div/p에 걸었더니
+    // 실제 발행에서 SE3가 그 border 스타일을 전부 삭제함을 실사용 테스트로
+    // 확인(DevTools로 실제 게시글 DOM 검사 — border 흔적 전혀 없음). 표
+    // (<table>) 기반 border만 SE3에서 안정적으로 살아남는다는 기존 원칙에
+    // 따라 tableBox(bg:'transparent'로 배경은 안 채우고 테두리만) 방식으로
+    // 재작성. newspaper/underline은 원래도 H3에 border를 안 썼으므로(italic
+    // 폰트나 여백만 사용) 그대로 둠 — 이 두 개는 이 버그의 대상이 아니었음.
     if (/^###\s+/.test(tok)) {
       const t = tok.replace(/^###\s+/, '');
       const layout = st.layout || 'box';
+      // 2026-07-24 후속 수정(사용자 실사용 지적): useBox=false는 이 호출이
+      // buildIntroHtml/buildConclusionHtml에서 왔다는 뜻 — 그쪽이 이미
+      // 바깥에서 자기 박스(leftbar/newspaper/underline 등)로 감싼 상태라,
+      // 안에서 leftbar/banner가 또 자기 박스를 만들면 좌측 선이 이중으로
+      // 겹치는 문제가 실사용으로 확인됨. useBox가 false면 레이아웃과
+      // 무관하게 항상 박스 없는 일반 텍스트로만 렌더링.
+      if (!useBox) {
+        // 2026-07-24 후속 수정(사용자 실사용 지적): underline은 애초에
+        // "박스"로 감싸는 레이아웃이 아니라 제목 아래 짧은 액센트 바만
+        // 붙이는 방식이라, useBox=false(도입부/마무리 호출)여도 이중
+        // 박스 위험이 없다. 그런데 이 분기가 무조건 plain 렌더링만 하게
+        // 돼 있어 도입부/마무리에서는 언더라인형의 색/밑줄 포인트가 아예
+        // 안 보이던 문제가 있었음 — underline만 예외로 accentBar 포함
+        // 렌더링을 적용.
+        if (layout === 'underline') {
+          html += underlineTitleP(font, '0', `${st.h3.symbol} ${esc(t)}`, st.h2.border, 16, st.h2.border, 2);
+        } else {
+          html += `<p style="${font}margin:10px 0 4px 0;"><span style="color:${st.h3.text};font-size:17px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+        }
+        justInsertedHr = false;
+        isFirstLine = false;
+        continue;
+      }
       if (layout === 'leftbar') {
-        html += `<div style="border-left:3px solid ${st.h3.border};padding:1px 0 1px 12px;margin:16px 0 8px 0;"><p style="${font}margin:0;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p></div>`;
+        const inner = `<p style="${font}margin:0;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+        html += tableBox(inner, `border-left:3px solid ${st.h3.border};`, 'transparent');
       } else if (layout === 'newspaper') {
         html += `<p style="${font}margin:16px 0 8px 0;font-style:italic;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
       } else if (layout === 'banner') {
-        html += `<p style="${font}margin:16px 0 8px 0;"><span style="color:${st.h3.text};font-size:15px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid ${st.h3.border};padding-bottom:3px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+        const inner = `<p style="${font}margin:0;"><span style="color:${st.h3.text};font-size:15px;text-transform:uppercase;letter-spacing:0.5px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
+        html += tableBox(inner, `border-bottom:2px solid ${st.h3.border};`, 'transparent');
       } else if (layout === 'underline') {
-        html += `<p style="${font}margin:14px 0 6px 0;"><span style="color:${st.h3.text};font-size:16px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
-      } else if (useBox) {
+        // 2026-07-24 후속 수정(사용자 실사용 지적): H3의 기존 h3.text 색은
+        // 회색 박스(box 레이아웃) 안에서 쓰려고 짙은 회색/검정에 가깝게
+        // 잡혀 있었음 — 흰 배경에 바로 노출되는 언더라인형에서는 그냥
+        // 평범한 검정 글씨로 보여서 색·밑줄 포인트가 H2(2곳)에만 보이고
+        // 더 자주 나오는 H3(4곳)는 밋밋해 "언더라인형" 정체성이 잘 안
+        // 느껴진다는 지적. H3도 H2와 같은 포인트 컬러(st.h2.border)로
+        // 텍스트를 칠하고 밑줄을 추가해 같은 계열의 포인트가 이어지도록
+        // 함. 좌측컬러바형/신문기사형은 샘플 자체에 밑줄이 없어 이 변경
+        // 대상 아님(사용자 확인). 2026-07-24 추가 후속 수정: border-bottom
+        // 방식은 tableBox가 width:100%라 본문 폭만큼 선이 그어져 다른
+        // 레이아웃의 구분선(hr)과 안 구분된다는 지적 — 샘플처럼 글자
+        // 길이와 무관한 고정폭 짧은 액센트 바(accentBar)로 교체.
+        html += underlineTitleP(font, '0', `${st.h3.symbol} ${esc(t)}`, st.h2.border, 16, st.h2.border, 2);
+      } else {
         const inner = `<p style="${font}margin:0;"><span style="color:${st.h3.text};font-size:17px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
         html += tableBox(inner, `border-left:4px solid ${st.h3.border};`, st.h3.bg);
-      } else {
-        html += `<p style="${font}margin:10px 0 4px 0;"><span style="color:${st.h3.text};font-size:17px;"><b>${st.h3.symbol} ${esc(t)}</b></span></p>`;
       }
       justInsertedHr = false;
       isFirstLine = false;
@@ -4016,27 +4155,101 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
     }
 
     // ## / # → 대주제 (2026-07-24: layout별 분기 추가, 위 ### 처리와 동일한 원칙)
+    // 2026-07-24 후속 수정: leftbar/newspaper/underline도 border를 순수
+    // div/p에 걸었더니 SE3가 삭제함을 실사용 확인 → tableBox(bg:'transparent')
+    // 방식으로 재작성. 기존에 이 세 레이아웃은 border가 살아있다는 전제로
+    // margin(gapTop)만으로 섹션 간격을 줬는데, 그 margin도 순수 div/p에 건
+    // 스타일이라 함께 삭제될 위험이 있어 신뢰할 수 없음 — box/banner가
+    // 이미 쓰고 있는 검증된 방식(hr로 대분류 사이 구분)을 그대로 따라가도록
+    // 통일. hr은 SE3 자체 컴포넌트라 스타일이 삭제될 일이 없고, 표 구조가
+    // 생기면서 예전에 지적된 "박스 없이 붕 떠 보이는 간격" 문제도 함께
+    // 완화될 것으로 예상.
     if (/^#{1,2}\s+/.test(tok)) {
       const t = tok.replace(/^#{1,2}\s+/, '');
       const icon = nextH2Icon();
       const layout = st.layout || 'box';
-      const gapTop = (!isFirstLine && !justInsertedHr) ? '26px' : '12px';
+
+      // 2026-07-24 후속 수정(사용자 실사용 지적): useBox=false는 이 호출이
+      // buildIntroHtml/buildConclusionHtml에서 왔다는 뜻 — 그쪽이 이미
+      // 바깥에서 자기 박스(leftbar/newspaper/underline 등)로 감싼 상태다.
+      // 그 안의 텍스트에 ## 마커가 있으면 leftbar/newspaper/underline/
+      // banner가 useBox와 무관하게 항상 자기 박스를 또 만들어서, 좌측 선이
+      // 이중으로 겹치고 제목이 라벨과 멀어져 보이는 문제가 실사용으로
+      // 확인됨. useBox가 false면 레이아웃과 무관하게 항상 박스 없는 일반
+      // 텍스트로만 렌더링해 바깥 박스 하나만 남긴다(도입부 문단 병합
+      // lookahead도 이 경우엔 하지 않음 — 어차피 박스가 없으니 이후 줄은
+      // 평소처럼 일반 문단으로 순서대로 렌더링되면 됨).
+      if (!useBox) {
+        // 2026-07-24 후속 수정(사용자 실사용 지적): underline은 박스로
+        // 감싸는 레이아웃이 아니므로 useBox=false(도입부/마무리 호출)여도
+        // 이중 박스 위험이 없다 — 그런데도 이 분기가 무조건 plain
+        // 렌더링만 하도록 돼 있어 도입부/마무리에서 언더라인형 액센트
+        // 바가 아예 안 붙던 문제(대신 buildIntroHtml/buildConclusionHtml
+        // 쪽 바깥 wrapper가 전체 박스 맨 밑에 선을 그려 "밑줄이 맨
+        // 마지막에만 나온다"는 문제로 나타났음)가 있었음 — underline만
+        // 예외로 titleWithAccentBar 렌더링 적용, 바깥 wrapper는 더 이상
+        // 감싸지 않도록 buildIntroHtml/buildConclusionHtml도 함께 수정.
+        if (layout === 'underline') {
+          html += underlineTitleP(font, '10px 0 4px 0', `${icon} ${esc(t)}`, st.h2.text, 20, st.h2.border, 4);
+        } else {
+          html += `<p style="${font}margin:10px 0 4px 0;"><span style="color:${st.h2.text};font-size:20px;"><b>${icon} ${esc(t)}</b></span></p>`;
+        }
+        justInsertedHr = false;
+        isFirstLine = false;
+        continue;
+      }
+
+      // banner는 별도 bannerTitleP를 아래서 만들어 쓰므로 여기서는 그 외
+      // 레이아웃(leftbar/newspaper=19px, underline/box=20px)만 계산.
+      const titleP = `<p style="${font}margin:0;"><span style="color:${st.h2.text};font-size:${(layout === 'leftbar' || layout === 'newspaper') ? 19 : 20}px;"><b>${icon} ${esc(t)}</b></span></p>`;
+
+      // 2026-07-24 후속 수정(사용자 실사용 지적): H2 제목 바로 뒤에 다음
+      // 소제목(###)이 나오기 전까지 이어지는 일반 문단("아래 내용을 통해
+      // 자세히 살펴보겠습니다" 같은 짧은 연결 문장)이 박스 밖으로 빠져나가
+      // 제목과 분리돼 보이던 문제 — 그 문단들을 미리 읽어서(lookahead)
+      // 같은 박스 안에 함께 넣는다. 다음 소제목/목록/구분선 마커를 만나면
+      // 멈추고, 소비한 줄만큼 바깥 for 루프의 li를 앞으로 당긴다.
+      let mergedExtra = '';
+      let lj = li + 1;
+      while (lj < lines.length) {
+        const nt = lines[lj].trim();
+        if (/^#{1,4}\s+/.test(nt) || /^#+$/.test(nt) || /^[▪•\-\*]\s/.test(nt)) break;
+        if (nt) {
+          const sentences = splitIntoSentences(lines[lj].trimEnd());
+          const paraGroups = sentences.length > 1 ? groupSentences(sentences, 2) : [lines[lj].trimEnd()];
+          for (const para of paraGroups) {
+            mergedExtra += `<p style="${font}line-height:1.7;margin:6px 0 0 0;"><span style="color:rgb(51,51,51);font-size:14px;">${inline(para)}</span></p>`;
+          }
+        } else {
+          // 2026-07-24 후속 수정(사용자 확인): 이 빈 줄은 사용자가 문단
+          // 사이 여백을 의도적으로 넣은 것 — 밖에서 처리되는 일반 문단
+          // 흐름(아래 "빈 줄" 분기)은 <p><span> </span></p>로 살려두는데,
+          // 여기 lookahead 병합 구간만 조용히 건너뛰어(빈 줄 미생성) 같은
+          // 글 안에서 빈 줄이 있다 없다 하는 비일관성이 있었음. 동일하게
+          // 살려서 모든 서식에서 일관되게 보존한다.
+          mergedExtra += '<p><span> </span></p>';
+        }
+        lj++;
+      }
+      li = lj - 1;
+
+      if (!isFirstLine && !justInsertedHr) html += `<hr>`;
       if (layout === 'leftbar') {
-        html += `<div style="border-left:5px solid ${st.h2.border};padding:2px 0 2px 14px;margin:${gapTop} 0 12px 0;"><p style="${font}margin:0;"><span style="color:${st.h2.text};font-size:19px;"><b>${icon} ${esc(t)}</b></span></p></div>`;
+        html += tableBox(titleP + mergedExtra, `border-left:5px solid ${st.h2.border};`, 'transparent');
       } else if (layout === 'newspaper') {
-        html += `<p style="${font}margin:${gapTop} 0 12px 0;border-top:3px solid ${st.h2.border};border-bottom:1px solid ${st.h2.border};padding:8px 0;"><span style="color:${st.h2.text};font-size:19px;"><b>${icon} ${esc(t)}</b></span></p>`;
-      } else if (layout === 'banner' && useBox) {
-        if (!isFirstLine && !justInsertedHr) html += `<hr>`;
-        const inner = `<p style="${font}margin:0;text-transform:uppercase;letter-spacing:1px;"><span style="color:${st.h2.text};font-size:18px;"><b>${icon} ${esc(t)}</b></span></p>`;
-        html += tableBox(inner, `border:none;`, st.h2.bg);
+        html += tableBox(titleP + mergedExtra, `border-top:3px solid ${st.h2.border};border-bottom:1px solid ${st.h2.border};`, 'transparent');
+      } else if (layout === 'banner') {
+        const bannerTitleP = `<p style="${font}margin:0;text-transform:uppercase;letter-spacing:1px;"><span style="color:${st.h2.text};font-size:18px;"><b>${icon} ${esc(t)}</b></span></p>`;
+        html += tableBox(bannerTitleP + mergedExtra, `border:none;`, st.h2.bg);
       } else if (layout === 'underline') {
-        html += `<p style="${font}margin:${gapTop} 0 10px 0;"><span style="color:${st.h2.text};font-size:20px;border-bottom:3px solid ${st.h2.border};padding-bottom:4px;"><b>${icon} ${esc(t)}</b></span></p>`;
-      } else if (useBox) {
-        if (!isFirstLine && !justInsertedHr) html += `<hr>`;
-        const inner = `<p style="${font}margin:0;"><span style="color:${st.h2.text};font-size:20px;"><b>${icon} ${esc(t)}</b></span></p>`;
-        html += tableBox(inner, `border-left:5px solid ${st.h2.border};`, st.h2.bg);
+        // 2026-07-24 후속 수정: border-bottom 방식은 tableBox가 width:100%
+        // 라 본문 전체 폭만큼 선이 그어져 다른 레이아웃의 hr 구분선과 잘
+        // 구분이 안 된다는 지적(실사용 확인) — 샘플처럼 글자 길이와 무관한
+        // 고정폭 짧은 액센트 바(accentBar)로 교체, 더 이상 박스로 감싸지
+        // 않고 제목+병합문단 아래에 바로 붙임.
+        html += underlineTitleP(font, '0', `${icon} ${esc(t)}`, st.h2.text, 20, st.h2.border, 4) + mergedExtra;
       } else {
-        html += `<p style="${font}margin:10px 0 4px 0;"><span style="color:${st.h2.text};font-size:20px;"><b>${icon} ${esc(t)}</b></span></p>`;
+        html += tableBox(titleP + mergedExtra, `border-left:5px solid ${st.h2.border};`, st.h2.bg);
       }
       justInsertedHr = false;
       isFirstLine = false;
@@ -4075,19 +4288,26 @@ function buildIntroHtml(text, fontName, iconCycler, style) {
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   const label = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;">📋 이 글에서 알아볼 내용</span></p>`;
   const inner = label + toNaverHtml(text, fontName, iconCycler, false, st);
-  // 2026-07-24: layout별 도입부 감싸개 분기. leftbar/underline/newspaper는
-  // 표(table) 박스를 아예 쓰지 않는 게 스타일 정체성이라 div만으로 감쌈.
-  // box/banner는 기존과 동일하게 tableBox 사용(banner는 h2.bg가 짙은
-  // 단색이라 이 기본 처리만으로도 배너 느낌이 그대로 남).
+  // 2026-07-24: layout별 도입부 감싸개 분기 — 처음엔 leftbar/underline/
+  // newspaper를 표 없이 div만으로 감쌌으나, 그 div의 border가 SE3
+  // 붙여넣기에서 삭제됨을 실사용 확인(같은 날 후속 수정). box와 동일하게
+  // tableBox(bg:'transparent'로 배경 없이 테두리만)로 재작성.
   const layout = st.layout || 'box';
   if (layout === 'leftbar') {
-    return `<div style="border-left:5px solid ${st.h2.border};padding:10px 0 10px 16px;margin:0 0 16px 0;">${inner}</div>`;
+    return tableBox(inner, `border-left:5px solid ${st.h2.border};`, 'transparent');
   }
   if (layout === 'newspaper') {
-    return `<div style="border-top:2px solid ${st.h2.border};border-bottom:2px solid ${st.h2.border};padding:14px 0;margin:0 0 16px 0;">${inner}</div>`;
+    return tableBox(inner, `border-top:2px solid ${st.h2.border};border-bottom:2px solid ${st.h2.border};`, 'transparent');
   }
   if (layout === 'underline') {
-    return `<div style="border-bottom:2px solid ${st.h2.border};padding:0 0 14px 0;margin:0 0 16px 0;">${inner}</div>`;
+    // 2026-07-24 후속 수정(사용자 실사용 지적): 예전엔 라벨+제목+전체
+    // 문단을 하나의 tableBox로 감싸 border-bottom을 걸었는데, 그러면
+    // 선이 "제목 바로 아래"가 아니라 "박스 전체의 맨 밑"(마지막 문단
+    // 뒤)에 나타나는 문제가 확인됨. 이제 toNaverHtml 자체가 useBox=false
+    // 여도 underline 레이아웃이면 제목 바로 아래에 titleWithAccentBar를
+    // 붙이므로(위 !useBox 분기 수정 참고), 여기서는 더 이상 감싸지 않고
+    // 그대로 반환.
+    return inner;
   }
   return `<div style="margin:0 0 16px 0;">` + tableBox(inner, `border:2px solid ${st.h2.border};`, st.h2.bg) + `</div>`;
 }
@@ -4257,16 +4477,21 @@ function buildConclusionHtml(text, fontName, iconCycler, style) {
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   const label = `<p style="${font}margin:0 0 4px 0;"><span style="color:rgb(136,136,136);font-size:13px;">✏️ 마무리</span></p>`;
   const inner = label + toNaverHtml(text, fontName, iconCycler, false, st);
-  // 2026-07-24: buildIntroHtml과 동일한 layout 분기 원칙 적용
+  // 2026-07-24: buildIntroHtml과 동일한 layout 분기 원칙 적용 — leftbar/
+  // underline/newspaper도 순수 div의 border가 SE3에서 삭제됨을 확인해
+  // tableBox(bg:'transparent') 방식으로 재작성(같은 날 후속 수정).
   const layout = st.layout || 'box';
   if (layout === 'leftbar') {
-    return `<div style="border-left:4px solid ${st.h2.border};padding:8px 0 8px 14px;margin:8px 0 0 0;">${inner}</div>`;
+    return tableBox(inner, `border-left:4px solid ${st.h2.border};`, 'transparent');
   }
   if (layout === 'newspaper') {
-    return `<div style="border-top:1.5px solid ${st.h2.border};border-bottom:1.5px solid ${st.h2.border};padding:12px 0;margin:8px 0 0 0;">${inner}</div>`;
+    return tableBox(inner, `border-top:1.5px solid ${st.h2.border};border-bottom:1.5px solid ${st.h2.border};`, 'transparent');
   }
   if (layout === 'underline') {
-    return `<div style="border-bottom:1.5px solid ${st.h2.border};padding:0 0 12px 0;margin:8px 0 0 0;">${inner}</div>`;
+    // buildIntroHtml과 동일한 원리(2026-07-24 후속 수정) — 바깥 wrapper
+    // border-bottom 대신 toNaverHtml 내부의 titleWithAccentBar가 제목
+    // 바로 아래에 선을 붙이므로 더 이상 감싸지 않음.
+    return inner;
   }
   return `<div style="margin:8px 0 0 0;">` + tableBox(inner, `border:1.5px solid ${st.h2.border};`, st.h2.bg) + `</div>`;
 }
