@@ -634,6 +634,10 @@ export default function Settings() {
   const [claudeStatus, setClaudeStatus]     = useState(null);
   const [unsplashStatus, setUnsplashStatus] = useState(null);
   const [naverApiStatus, setNaverApiStatus] = useState(null);
+  // 2026-07-24 신규: 쿠팡파트너스/알리익스프레스도 다른 API처럼 등록한
+  // 키가 실제로 유효한지 "테스트" 버튼으로 확인할 수 있게 추가.
+  const [coupangStatus, setCoupangStatus] = useState(null);
+  const [aliStatus, setAliStatus]         = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved]   = useState(false);
 
@@ -1051,6 +1055,17 @@ export default function Settings() {
       form.searchAdCustomerId, form.searchAdApiKey, form.searchAdSecretKey
     );
     setSearchAdStatus(res.ok ? 'ok' : 'error');
+  };
+  // 2026-07-24 신규
+  const testCoupang = async () => {
+    setCoupangStatus('testing');
+    const res = await window.electronAPI.settings.testCoupang(form.coupangAccessKey, form.coupangSecretKey);
+    setCoupangStatus(res.ok ? 'ok' : 'error');
+  };
+  const testAliexpress = async () => {
+    setAliStatus('testing');
+    const res = await window.electronAPI.settings.testAliexpress(form.aliAppKey, form.aliAppSecret, form.aliTrackingId);
+    setAliStatus(res.ok ? 'ok' : 'error');
   };
 
   return (
@@ -1849,16 +1864,22 @@ export default function Settings() {
             <div className="form-group">
               <label>쿠팡파트너스 Access Key</label>
               <input className="input" type="text" value={form.coupangAccessKey}
-                onChange={e => set('coupangAccessKey', e.target.value)} placeholder="Access Key" />
+                onChange={e => { set('coupangAccessKey', e.target.value); setCoupangStatus(null); }} placeholder="Access Key" />
             </div>
             <div className="form-group">
               <label>쿠팡파트너스 Secret Key</label>
               <div className="license-input-row">
                 <input className="input" type={showCoupangSecret ? 'text' : 'password'} value={form.coupangSecretKey}
-                  onChange={e => set('coupangSecretKey', e.target.value)} placeholder="Secret Key" />
+                  onChange={e => { set('coupangSecretKey', e.target.value); setCoupangStatus(null); }} placeholder="Secret Key" />
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowCoupangSecret(v => !v)}>
                   {showCoupangSecret ? '숨기기' : '표시'}
                 </button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={testCoupang}
+                  disabled={!form.coupangAccessKey || !form.coupangSecretKey || coupangStatus === 'testing'}>
+                  {coupangStatus === 'testing' ? '확인 중…' : '테스트'}
+                </button>
+                {coupangStatus === 'ok'    && <span className="api-status ok">✓ 연결됨</span>}
+                {coupangStatus === 'error' && <span className="api-status error">✗ 오류</span>}
               </div>
             </div>
             <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'-4px'}}>
@@ -1871,7 +1892,7 @@ export default function Settings() {
             <div className="form-group">
               <label>알리익스프레스 App Key</label>
               <input className="input" type="text" value={form.aliAppKey}
-                onChange={e => set('aliAppKey', e.target.value)} placeholder="App Key" />
+                onChange={e => { set('aliAppKey', e.target.value); setAliStatus(null); }} placeholder="App Key" />
             </div>
             <div className="form-group">
               <label>알리익스프레스 App Secret</label>
@@ -1885,8 +1906,16 @@ export default function Settings() {
             </div>
             <div className="form-group">
               <label>알리익스프레스 Tracking ID</label>
-              <input className="input" type="text" value={form.aliTrackingId}
-                onChange={e => set('aliTrackingId', e.target.value)} placeholder="Tracking ID" />
+              <div className="license-input-row">
+                <input className="input" type="text" value={form.aliTrackingId}
+                  onChange={e => { set('aliTrackingId', e.target.value); setAliStatus(null); }} placeholder="Tracking ID" />
+                <button type="button" className="btn btn-ghost btn-sm" onClick={testAliexpress}
+                  disabled={!form.aliAppKey || !form.aliAppSecret || aliStatus === 'testing'}>
+                  {aliStatus === 'testing' ? '확인 중…' : '테스트'}
+                </button>
+                {aliStatus === 'ok'    && <span className="api-status ok">✓ 연결됨</span>}
+                {aliStatus === 'error' && <span className="api-status error">✗ 오류</span>}
+              </div>
               <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'4px', lineHeight:1.6}}>
                 이 값이 없으면 상품이 검색돼도 광고가 삽입되지 않을 수 있습니다(알리익스프레스 정책상 필수 항목).
               </p>

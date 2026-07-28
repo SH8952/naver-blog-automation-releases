@@ -2855,6 +2855,34 @@ ipcMain.handle('settings:testSearchAd', (event, customerId, apiKey, secretKey) =
   });
 });
 
+// ── IPC: 쿠팡파트너스 API 테스트 (2026-07-24 신규) — 다른 API 테스트
+// 버튼과 동일한 패턴. searchCoupangProduct()를 임의 키워드로 호출해
+// HTTP 요청 자체가 정상 인증되는지만 확인(상품이 실제로 있는지는
+// 무관 — 0건이어도 인증은 성공한 것이므로 ok:true).
+ipcMain.handle('settings:testCoupang', async (event, accessKey, secretKey) => {
+  if (!accessKey || !secretKey) return { ok: false, error: 'Access Key 또는 Secret Key 없음' };
+  try {
+    await searchCoupangProduct('테스트', accessKey, secretKey);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── IPC: 알리익스프레스 어필리에이트 API 테스트 (2026-07-24 신규) —
+// searchAliexpressProduct()를 임의 키워드로 호출. 최근 추가한
+// error_response 감지 덕분에 키/시크릿/트래킹ID가 잘못된 경우 예외로
+// 잡혀 여기서 ok:false + 실제 오류 메시지로 반환됨.
+ipcMain.handle('settings:testAliexpress', async (event, appKey, appSecret, trackingId) => {
+  if (!appKey || !appSecret) return { ok: false, error: 'App Key 또는 App Secret 없음' };
+  try {
+    await searchAliexpressProduct('phone', appKey, appSecret, trackingId || '');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ── IPC: 키워드 자동 생성 (항상 Groq openai/gpt-oss-20b 사용 — 무료 플랜
 // 기준 RPM 30 / RPD 1K / TPM 8K, 공식 rate-limits 문서 2026-07-20 확인.
 // gpt-oss-120b·qwen3.6-27b도 무료 플랜 RPD는 동일(1K)하지만 gpt-oss-20b가

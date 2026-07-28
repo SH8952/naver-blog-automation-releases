@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 네이버 Open API 테스트 */
     testNaverApi:  (id, secret)            => ipcRenderer.invoke('settings:testNaverApi', id, secret),
     testSearchAd:  (customerId, apiKey, secretKey) => ipcRenderer.invoke('settings:testSearchAd', customerId, apiKey, secretKey),
+    testCoupang:   (accessKey, secretKey)  => ipcRenderer.invoke('settings:testCoupang', accessKey, secretKey),
+    testAliexpress: (appKey, appSecret, trackingId) => ipcRenderer.invoke('settings:testAliexpress', appKey, appSecret, trackingId),
   },
 
   // ── 라이선스 (오프라인 서명 키, 2026-07-04 신규 / 2026-07-13 HWID 조회 추가) ──
