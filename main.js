@@ -2083,6 +2083,73 @@ ipcMain.handle('dev:setTierOverride', (event, value) => {
   }
 });
 
+// ── [개발용] URL 글 가져오기 (2026-07-29 신규, 개발자 전용 테스트 기능) ──
+// "글 가져오기" 버튼(PostCreate.jsx, isDev 전용)에서 사용 — 사용자가 입력한
+// URL의 페이지를 가져와 본문으로 보이는 텍스트만 단순 추출해서 반환한다.
+// 반환된 텍스트는 generatePostContent()의 referenceItems(2026-07-22 "글감
+// 수집" 그라운딩 기능)에 합류시켜, 이미 프롬프트에 있는 "원문을 그대로
+// 베끼지 말고 자신의 글로 새로 풀어써서 작성할 것" 지시를 그대로 재사용한다
+// (새 프롬프트 지침을 따로 만들지 않음). 단순 HTML 태그 제거 방식이라
+// 자바스크립트로 내용을 그려주는 사이트는 정상적으로 추출되지 않을 수
+// 있음(테스트 목적 기능이라 별도 렌더링 엔진은 사용하지 않음) — 이 경우
+// 텍스트가 너무 짧게 추출되므로 실패로 처리해 사용자에게 안내한다.
+function extractMainTextFromHtml(html) {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch
+    ? titleMatch[1].replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
+    : '';
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(br|p|div|li|h[1-6]|tr|table)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join('\n');
+  return { title, text };
+}
+
+ipcMain.handle('dev:fetchUrlText', async (event, { url }) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    const raw = String(url || '').trim();
+    if (!raw) return { success: false, error: 'URL을 입력해주세요.' };
+    const safeUrl = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    let res;
+    try {
+      res = await fetch(safeUrl, {
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return { success: false, error: `페이지를 가져오지 못했습니다 (${res.status})` };
+    const html = await res.text();
+    const { title, text } = extractMainTextFromHtml(html);
+    if (!text || text.length < 30) {
+      return { success: false, error: '본문 텍스트를 추출하지 못했습니다 — 자바스크립트로 내용을 그리는 사이트일 수 있습니다.' };
+    }
+    writeLog('INFO', 'DEV', '글 가져오기(URL) 성공(개발자 전용 테스트)', `${safeUrl} — ${text.length}자 추출`);
+    return { success: true, url: safeUrl, title, text: text.slice(0, 6000) };
+  } catch (e) {
+    writeLog('WARN', 'DEV', '글 가져오기(URL) 실패(개발자 전용 테스트)', e.message);
+    return { success: false, error: `페이지를 가져오지 못했습니다: ${e.message}` };
+  }
+});
+
 // ── 자동화 루프 설정 (2026-07-05 신규) ────────────────────────
 // settings:set(전체 저장)이 별도로 호출돼도 서로 값을 지우지 않도록,
 // licenseKey와 마찬가지로 dot-path 전용 IPC로 분리 저장/조회한다.
@@ -3262,6 +3329,20 @@ async function generatePostContent(params) {
       }
     } catch (e) {
       writeLog('WARN', 'AI', '글감 수집 참고 자료 조회 실패 — 참고 자료 없이 진행', e.message);
+    }
+
+    // 2026-07-29 신규(개발자 전용 테스트 기능): "글 가져오기"로 가져온 외부
+    // URL 본문(params.sourceMaterial)이 있으면 참고 자료 맨 앞에 추가.
+    // dev:fetchUrlText 핸들러가 isDev가 아니면 항상 실패를 반환하므로,
+    // 배포판에서는 params.sourceMaterial이 채워질 경로 자체가 없다.
+    // 기존 referenceItems 프롬프트(원문을 그대로 베끼지 말고 새로 풀어써서
+    // 작성할 것)를 그대로 재사용 — 별도 프롬프트 지침을 새로 만들지 않음.
+    if (params.sourceMaterial && params.sourceMaterial.text) {
+      referenceItems = [
+        { title: params.sourceMaterial.title || params.topic, summary: params.sourceMaterial.text.slice(0, 3000) },
+        ...referenceItems,
+      ];
+      writeLog('INFO', 'AI', '외부 URL 가져오기 참고자료 활용(개발자 전용 테스트)', params.sourceMaterial.url || '');
     }
 
     const prompt = buildPrompt({ ...params, referenceItems });

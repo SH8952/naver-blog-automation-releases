@@ -209,6 +209,18 @@ export default function PostCreate() {
   const [reviewMemo, setReviewMemo] = useState('');
   const pendingCategoryRef = useRef(null);
 
+  // 2026-07-29 신규(개발자 전용 테스트 기능): "글 가져오기" — 사용자가
+  // 입력한 URL의 본문을 가져와 참고 자료로 삼아 선택한 글톤에 맞춰
+  // 재구성해서 글을 생성한다. 배포판에서는 아래 process.env.NODE_ENV
+  // 가드로 버튼 자체가 렌더링되지 않고, main.js의 dev:fetchUrlText
+  // 핸들러도 isDev로 이중 차단한다(기존 개발자 등급 토글/테스트 발행과
+  // 동일한 이중가드 패턴).
+  const [showUrlImport, setShowUrlImport] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [sourceMaterial, setSourceMaterial] = useState(null); // { url, title, text } | null
+
   // 환경설정 기본값 로드 (최초 1회)
   useEffect(() => {
     window.electronAPI.settings.get().then(res => {
@@ -419,6 +431,30 @@ export default function PostCreate() {
     setHashtagInput('');
     setErrorMsg('');
     setPublishMsg('');
+    // 2026-07-29 신규: 가져온 참고 URL 본문도 함께 초기화
+    setSourceMaterial(null);
+    setShowUrlImport(false);
+    setImportUrl('');
+    setImportError('');
+  };
+
+  // ── [개발자 전용 테스트] URL 글 가져오기 ──────────────────
+  const handleImportUrl = async () => {
+    if (!importUrl.trim()) return;
+    setImporting(true);
+    setImportError('');
+    try {
+      const res = await window.electronAPI.dev.fetchUrlText({ url: importUrl.trim() });
+      if (res.success) {
+        setSourceMaterial({ url: res.url, title: res.title || '', text: res.text || '' });
+        setShowUrlImport(false);
+        setImportUrl('');
+      } else {
+        setImportError(res.error || '가져오기 실패');
+      }
+    } finally {
+      setImporting(false);
+    }
   };
 
   // ── 글 생성 ──────────────────────────────────────────────
@@ -432,6 +468,9 @@ export default function PostCreate() {
     try {
       const res = await window.electronAPI.post.generate({
         topic, keywords: kwList, tone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax,
+        // 2026-07-29 신규(개발자 전용 테스트 기능): "글 가져오기"로 가져온
+        // 외부 URL 본문이 있으면 참고 자료로 함께 전달
+        sourceMaterial: sourceMaterial || undefined,
       });
       if (res.success) {
         setResult(res.result);
@@ -1065,7 +1104,57 @@ export default function PostCreate() {
           {/* 줄 1: 주제 | 키워드 */}
           <div className="panel-row">
             <div className="panel-field panel-topic">
-              <label className="panel-label">주제 <span className="label-required">*</span></label>
+              <label className="panel-label">
+                주제 <span className="label-required">*</span>
+                {/* 2026-07-29 신규(개발자 전용 테스트 기능): URL의 글을
+                    가져와 참고 자료로 삼아 글을 생성. 배포판 제외 —
+                    process.env.NODE_ENV 가드(기존 테스트 발행 버튼과 동일 패턴). */}
+                {process.env.NODE_ENV === 'development' && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-xs"
+                    style={{ marginLeft: 6, padding: '1px 6px', fontSize: 11 }}
+                    onClick={() => setShowUrlImport(v => !v)}
+                    title="URL의 글 내용을 가져와 참고 자료로 삼아 글을 생성합니다(개발자 전용 테스트 기능)"
+                  >
+                    🔗 글 가져오기
+                  </button>
+                )}
+                {sourceMaterial && (
+                  <span className="label-hint" style={{ marginLeft: 6 }}>
+                    ✓ 가져온 글 반영됨
+                    <button
+                      type="button"
+                      className="tag-remove"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => setSourceMaterial(null)}
+                      title="가져온 참고 자료 해제"
+                    >×</button>
+                  </span>
+                )}
+              </label>
+              {showUrlImport && (
+                <div className="kw-input-wrap" style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="https://..."
+                    value={importUrl}
+                    onChange={e => setImportUrl(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleImportUrl()}
+                    disabled={importing}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleImportUrl}
+                    disabled={importing || !importUrl.trim()}
+                  >
+                    {importing ? <><span className="spinner-xs" /> 가져오는 중…</> : '가져오기'}
+                  </button>
+                </div>
+              )}
+              {importError && <span className="kw-error">{importError}</span>}
               <input
                 className="input"
                 type="text"

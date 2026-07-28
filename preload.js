@@ -183,6 +183,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reset: () => ipcRenderer.invoke('dev:reset'),
     getTierOverride: () => ipcRenderer.invoke('dev:getTierOverride'),
     setTierOverride: (value) => ipcRenderer.invoke('dev:setTierOverride', value),
+
+    /** URL 글 가져오기(2026-07-29 신규, 개발자 전용 테스트) — 메인
+     * 프로세스에서 isDev가 아니면 무조건 거부하므로, 배포판에서 호출해도
+     * 아무 효과 없음. */
+    fetchUrlText: (params) => ipcRenderer.invoke('dev:fetchUrlText', params),
   },
 
   // ── 글감 수집 ──────────────────────────────────────────────
