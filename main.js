@@ -1957,7 +1957,13 @@ const SETTINGS_DEFAULTS = {
   // 검색해 이미지+텍스트로 삽입(기존 이미지 삽입 방식과 동일하게 안전).
   affiliatePlatform: 'coupang', // 'coupang' | 'aliexpress' (라디오, 하나만 활성)
   coupangAccessKey: '', coupangSecretKey: '',
-  aliAppKey: '', aliAppSecret: '',
+  // 2026-07-24 신규: aliTrackingId — 실사용 테스트 결과 이 값 없이는 API가
+  // 상품을 정상 검색해도 광고가 조용히(예외도 로그도 없이) 삽입 안 되는
+  // 문제가 확인됨(원인 추정: 알리익스프레스 어필리에이트 상품검색 API가
+  // tracking_id 없이는 유효한 프로모션 링크를 못 만들어 결과가 비거나
+  // error_response로 돌아오는데, 기존 코드가 이 경우를 예외로 인식하지
+  // 못해 로그도 안 남기고 있었음).
+  aliAppKey: '', aliAppSecret: '', aliTrackingId: '',
   affiliateAdPosition: 'body', // 'none' | 'intro' | 'body' | 'both' — 기본값 "본문 아래"(사용자 확인 2026-07-23)
 };
 
@@ -4622,7 +4628,10 @@ function aliexpressSign(params, appSecret) {
 }
 
 // 알리익스프레스 어필리에이트 상품검색 API — 키워드로 상위 1개 상품 반환
-async function searchAliexpressProduct(keyword, appKey, appSecret) {
+// 2026-07-24 후속 수정(사용자 실사용 확인): trackingId 파라미터 추가 —
+// 이 값 없이는 광고가 조용히 삽입 안 되는 문제가 실사용으로 확인됨(로그에
+// 아무 흔적도 안 남았음 — 아래 error_response 감지 추가와 세트로 수정).
+async function searchAliexpressProduct(keyword, appKey, appSecret, trackingId) {
   const now = new Date();
   const pad = n => String(n).padStart(2, '0');
   // TOP 표준은 상하이(UTC+8) 기준 'yyyy-MM-dd HH:mm:ss' 타임스탬프 필요
@@ -4640,6 +4649,10 @@ async function searchAliexpressProduct(keyword, appKey, appSecret) {
     target_currency: 'KRW',
     target_language: 'KO',
   };
+  // tracking_id는 알리익스프레스 어필리에이트 정책상 프로모션 링크 생성에
+  // 필요한 값 — 등록돼 있으면 서명 대상 파라미터에 포함시킨다(서명은 반드시
+  // 최종 파라미터 집합 기준으로 계산해야 하므로 sign 계산 전에 추가).
+  if (trackingId) params.tracking_id = trackingId;
   const sign = aliexpressSign(params, appSecret);
   const body = new URLSearchParams({ ...params, sign }).toString();
   const res = await fetch('https://api-sg.aliexpress.com/sync', {
@@ -4649,6 +4662,16 @@ async function searchAliexpressProduct(keyword, appKey, appSecret) {
   });
   if (!res.ok) throw new Error(`알리익스프레스 API 응답 오류 (${res.status})`);
   const json = await res.json();
+  // 2026-07-24 신규: TOP API는 파라미터/서명/tracking_id 누락 등의 오류가
+  // 있어도 HTTP 200을 주고 본문에 error_response를 담아 돌려주는 경우가
+  // 있어(res.ok만으로는 못 잡음) — 실사용에서 "로그에 아무 흔적도 없이
+  // 광고가 안 뜨는" 현상의 원인으로 추정됨. 여기서 명시적으로 감지해
+  // 예외로 던져, 호출부(resolveAffiliateAd)의 catch에서 반드시 로그에
+  // 남도록 한다.
+  if (json?.error_response) {
+    const er = json.error_response;
+    throw new Error(`알리익스프레스 API 오류: ${er.msg || er.sub_msg || er.code || JSON.stringify(er)}`);
+  }
   const result = json?.aliexpress_affiliate_product_query_response?.resp_result?.result;
   const list = result?.products?.product || [];
   if (!list.length) return null;
@@ -4677,9 +4700,18 @@ async function resolveAffiliateAd(keyword, tone) {
       product = await searchCoupangProduct(keyword, s.coupangAccessKey, s.coupangSecretKey);
     } else {
       if (!s.aliAppKey || !s.aliAppSecret) return null;
-      product = await searchAliexpressProduct(keyword, s.aliAppKey, s.aliAppSecret);
+      product = await searchAliexpressProduct(keyword, s.aliAppKey, s.aliAppSecret, s.aliTrackingId || '');
     }
-    if (!product) return null;
+    // 2026-07-24 후속 수정(사용자 실사용 확인): 이전엔 product가 null이면
+    // (API 자체는 예외 없이 "결과 없음"으로 응답한 경우) 아무 로그도 안
+    // 남기고 조용히 광고를 건너뛰어, 실제로 왜 안 나오는지 로그로 전혀
+    // 진단할 수 없는 문제가 있었음("로그 어디에도 AD 관련 로그가 없다"는
+    // 실사용 확인으로 발견). 예외가 아닌 "결과 없음" 경로도 최소 WARN
+    // 로그를 남기도록 추가.
+    if (!product) {
+      writeLog('WARN', 'AD', '제휴 광고 상품 검색 결과 없음 — 광고 없이 계속 진행', `platform=${platform}, keyword=${keyword}`);
+      return null;
+    }
     return { product, platform, position };
   } catch (e) {
     writeLog('WARN', 'AD', '제휴 광고 상품 검색 실패 — 광고 없이 계속 진행', e.message);

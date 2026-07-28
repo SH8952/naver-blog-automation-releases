@@ -22,7 +22,11 @@ const DEFAULTS = {
   maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
   // 2026-07-23 신규: 제휴 광고(쿠팡파트너스/알리익스프레스)
   affiliatePlatform: 'coupang', coupangAccessKey: '', coupangSecretKey: '',
-  aliAppKey: '', aliAppSecret: '', affiliateAdPosition: 'body',
+  // 2026-07-24 신규: aliTrackingId — 알리익스프레스 어필리에이트 상품검색
+  // API가 이 값 없이는 광고가 조용히(오류 로그도 없이) 삽입되지 않는
+  // 문제가 실사용으로 확인되어 추가(원인: [[affiliate-ad-button-image-approach-2026-07-23]]
+  // 계열 이슈, tracking_id 파라미터 누락).
+  aliAppKey: '', aliAppSecret: '', aliTrackingId: '', affiliateAdPosition: 'body',
   // 2026-07-23 신규: 완전자동/예약 발행 전용 브라우저 표시 설정(자동화 루프 탭으로 이동)
   autoShowPublishWindow: false,
 };
@@ -1879,9 +1883,17 @@ export default function Settings() {
                 </button>
               </div>
             </div>
+            <div className="form-group">
+              <label>알리익스프레스 Tracking ID</label>
+              <input className="input" type="text" value={form.aliTrackingId}
+                onChange={e => set('aliTrackingId', e.target.value)} placeholder="Tracking ID" />
+              <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'4px', lineHeight:1.6}}>
+                이 값이 없으면 상품이 검색돼도 광고가 삽입되지 않을 수 있습니다(알리익스프레스 정책상 필수 항목).
+              </p>
+            </div>
             <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'-4px'}}>
               <a href="https://portals.aliexpress.com/" target="_blank" rel="noreferrer">알리익스프레스 어필리에이트 바로가기 →</a>
-              {' '}(가입 후 Open Platform 메뉴에서 App Key / App Secret 발급)
+              {' '}(가입 후 Open Platform 메뉴에서 App Key / App Secret / Tracking ID 발급)
             </p>
           </>
         )}
