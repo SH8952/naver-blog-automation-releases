@@ -28,7 +28,7 @@ const SENTENCE_OPTIONS = [
 ];
 
 // ── 커스텀 드롭다운 컴포넌트 ─────────────────────────────────
-function DescSelect({ options, value, onChange, align = 'left' }) {
+function DescSelect({ options, value, onChange, align = 'left', disabled = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const selected = options.find(o => o.value === value) || options[0];
@@ -44,7 +44,8 @@ function DescSelect({ options, value, onChange, align = 'left' }) {
       <button
         type="button"
         className="desc-select-trigger input"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => { if (!disabled) setOpen(o => !o); }}
+        disabled={disabled}
       >
         <span className="desc-select-label">{selected.label}</span>
         <span className="desc-select-arrow">{open ? '▲' : '▼'}</span>
@@ -220,6 +221,8 @@ export default function PostCreate() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
   const [sourceMaterial, setSourceMaterial] = useState(null); // { url, title, text } | null
+  // 2026-07-29 신규: 가져오기 성공 시 잠깐 떴다가(3초) 자동으로 사라지는 알림
+  const [importToast, setImportToast] = useState(false);
 
   // 환경설정 기본값 로드 (최초 1회)
   useEffect(() => {
@@ -436,9 +439,18 @@ export default function PostCreate() {
     setShowUrlImport(false);
     setImportUrl('');
     setImportError('');
+    setImportToast(false);
   };
 
   // ── [개발자 전용 테스트] URL 글 가져오기 ──────────────────
+  // 2026-07-29 수정(사용자 요청): 원문만 가져와서 대기하는 게 아니라,
+  // (1) 원문을 대표하는 짧은 주제(11자 이내, 백엔드에서 생성)로 "주제"
+  // 입력칸을 자동으로 채우고, (2) 그 주제로 기존 "키워드 자동 생성"
+  // 기능을 재사용해 "키워드"도 자동으로 채우고, (3) 글 톤은 "정보형"으로
+  // 고정한 뒤, (4) 곧바로 글 생성까지 자동으로 트리거해서 결과를 미리보기
+  // 화면에 바로 보여준다. topic/keywords/tone/sourceMaterial state는
+  // setState 직후 곧바로 읽으면 갱신 전 값일 수 있어, handleGenerate에는
+  // state가 아니라 여기서 만든 값을 override로 명시해서 넘긴다.
   const handleImportUrl = async () => {
     if (!importUrl.trim()) return;
     setImporting(true);
@@ -446,9 +458,33 @@ export default function PostCreate() {
     try {
       const res = await window.electronAPI.dev.fetchUrlText({ url: importUrl.trim() });
       if (res.success) {
-        setSourceMaterial({ url: res.url, title: res.title || '', text: res.text || '' });
+        const shortTopic = (res.topic && res.topic.trim()) || (res.title || '').trim().slice(0, 11) || topic;
+        const material = { url: res.url, title: res.title || '', text: res.text || '' };
+
+        // 키워드 자동 생성 — 기존 "✦ 키워드 자동 생성" 기능과 동일한 IPC 재사용
+        let kwArray = [];
+        try {
+          const kwRes = await window.electronAPI.post.suggestKeywords({ topic: shortTopic });
+          if (kwRes.success && kwRes.keywords?.length) kwArray = kwRes.keywords;
+        } catch (e) {
+          // 키워드 자동 생성이 실패해도 글 생성 자체는 계속 진행(참고 자료만으로도 충분)
+        }
+
+        // 화면에도 반영(사용자가 결과 확인 가능하도록) — 실제 생성 호출은 아래 override로 진행
+        setTopic(shortTopic);
+        setKeywords(kwArray.join(', '));
+        setTone('info');
+        setSourceMaterial(material);
         setShowUrlImport(false);
         setImportUrl('');
+
+        // 3초 후 자동으로 사라지는 알림(사용자 요청 — 배지의 × 대신 토스트로 변경)
+        setImportToast(true);
+        setTimeout(() => setImportToast(false), 3000);
+
+        // 원문을 재가공해서 곧바로 글 생성 — 완료되면 기존 generating 스피너와
+        // 동일하게 진행 상태가 표시되고, 끝나면 결과가 미리보기에 나타난다.
+        await handleGenerate({ topic: shortTopic, keywords: kwArray, tone: 'info', sourceMaterial: material });
       } else {
         setImportError(res.error || '가져오기 실패');
       }
@@ -458,8 +494,19 @@ export default function PostCreate() {
   };
 
   // ── 글 생성 ──────────────────────────────────────────────
-  const handleGenerate = async () => {
-    if (!topic.trim()) return;
+  // 2026-07-29 수정: "글 가져오기" 자동 생성 흐름에서 setTopic/setKeywords/
+  // setTone 직후 곧바로 글 생성을 트리거해야 하는데, React state 갱신은
+  // 비동기라 이 시점에 topic/kwList/tone/sourceMaterial state를 그대로
+  // 읽으면 이전 값(빈 값)이 잡히는 문제가 있음. overrides 인자로 명시적
+  // 값을 넘길 수 있게 해서 이 경우엔 state 대신 override 값을 사용하고,
+  // 기존처럼 버튼 클릭으로 호출될 때는 override 없이 현재 state를 그대로
+  // 사용(동작 변경 없음).
+  const handleGenerate = async (overrides = {}) => {
+    const genTopic = overrides.topic !== undefined ? overrides.topic : topic;
+    const genKeywords = overrides.keywords !== undefined ? overrides.keywords : kwList;
+    const genTone = overrides.tone !== undefined ? overrides.tone : tone;
+    const genSourceMaterial = overrides.sourceMaterial !== undefined ? overrides.sourceMaterial : sourceMaterial;
+    if (!genTopic || !genTopic.trim()) return;
     setGenerating(true);
     setEditMode(false);
     setImages(emptyImages());
@@ -467,14 +514,14 @@ export default function PostCreate() {
     setErrorMsg('');
     try {
       const res = await window.electronAPI.post.generate({
-        topic, keywords: kwList, tone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax,
+        topic: genTopic, keywords: genKeywords, tone: genTone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax,
         // 2026-07-29 신규(개발자 전용 테스트 기능): "글 가져오기"로 가져온
         // 외부 URL 본문이 있으면 참고 자료로 함께 전달
-        sourceMaterial: sourceMaterial || undefined,
+        sourceMaterial: genSourceMaterial || undefined,
       });
       if (res.success) {
         setResult(res.result);
-        const kws = kwList.length ? kwList : [topic];
+        const kws = genKeywords.length ? genKeywords : [genTopic];
         searchImages(kws);
       } else {
         setErrorMsg(res.error || '알 수 없는 오류가 발생했습니다.');
@@ -942,7 +989,7 @@ export default function PostCreate() {
                   <button className="btn btn-ghost btn-sm" onClick={handleCopy}>
                     <CopyIcon />{copied ? '복사됨!' : '복사'}
                   </button>
-                  <button className="btn btn-ghost btn-sm" onClick={handleGenerate} disabled={generating}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => handleGenerate()} disabled={generating}>
                     <RefreshIcon />전체 재생성
                   </button>
                 </div>
@@ -1104,57 +1151,44 @@ export default function PostCreate() {
           {/* 줄 1: 주제 | 키워드 */}
           <div className="panel-row">
             <div className="panel-field panel-topic">
-              <label className="panel-label">
-                주제 <span className="label-required">*</span>
+              <label className="panel-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                <span>주제 <span className="label-required">*</span></span>
                 {/* 2026-07-29 신규(개발자 전용 테스트 기능): URL의 글을
                     가져와 참고 자료로 삼아 글을 생성. 배포판 제외 —
-                    process.env.NODE_ENV 가드(기존 테스트 발행 버튼과 동일 패턴). */}
+                    process.env.NODE_ENV 가드(기존 테스트 발행 버튼과 동일 패턴).
+                    2026-07-29 수정: 버튼을 주제 입력칸 우측 끝에 맞추고,
+                    "가져온 글 반영됨" 표시는 버튼 위 줄에 겹치지 않게 배치. */}
                 {process.env.NODE_ENV === 'development' && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-xs"
-                    style={{ marginLeft: 6, padding: '1px 6px', fontSize: 11 }}
-                    onClick={() => setShowUrlImport(v => !v)}
-                    title="URL의 글 내용을 가져와 참고 자료로 삼아 글을 생성합니다(개발자 전용 테스트 기능)"
-                  >
-                    🔗 글 가져오기
-                  </button>
-                )}
-                {sourceMaterial && (
-                  <span className="label-hint" style={{ marginLeft: 6 }}>
-                    ✓ 가져온 글 반영됨
+                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                    {/* 2026-07-29 수정(사용자 요청): 배지의 × 버튼 제거 —
+                        가져오기 성공 시 3초만 잠깐 떴다가 자동으로 사라지는
+                        알림으로 대체. 대신 활성 상태는 아래 버튼 자체가
+                        초록색으로 바뀌는 것으로 표시(토글). */}
+                    {importToast && (
+                      <span className="label-hint" style={{ fontSize: 10, whiteSpace: 'nowrap', color: 'var(--success)' }}>
+                        ✓ 가져온 글 반영됨
+                      </span>
+                    )}
                     <button
                       type="button"
-                      className="tag-remove"
-                      style={{ marginLeft: 4 }}
-                      onClick={() => setSourceMaterial(null)}
-                      title="가져온 참고 자료 해제"
-                    >×</button>
+                      className={`btn btn-ghost btn-xs${sourceMaterial ? ' btn-url-import-active' : ''}`}
+                      style={{ padding: '1px 6px', fontSize: 11 }}
+                      onClick={() => {
+                        if (sourceMaterial) {
+                          // 활성 상태에서 다시 누르면 비활성화(해제) — 톤 잠금도 함께 풀림
+                          setSourceMaterial(null);
+                        } else {
+                          setShowUrlImport(true);
+                          setImportError('');
+                        }
+                      }}
+                      title={sourceMaterial ? '가져온 참고 자료가 반영된 상태입니다 — 다시 누르면 해제됩니다' : 'URL의 글 내용을 가져와 참고 자료로 삼아 글을 생성합니다(개발자 전용 테스트 기능)'}
+                    >
+                      🔗 글 가져오기
+                    </button>
                   </span>
                 )}
               </label>
-              {showUrlImport && (
-                <div className="kw-input-wrap" style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                  <input
-                    className="input"
-                    type="text"
-                    placeholder="https://..."
-                    value={importUrl}
-                    onChange={e => setImportUrl(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleImportUrl()}
-                    disabled={importing}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm"
-                    onClick={handleImportUrl}
-                    disabled={importing || !importUrl.trim()}
-                  >
-                    {importing ? <><span className="spinner-xs" /> 가져오는 중…</> : '가져오기'}
-                  </button>
-                </div>
-              )}
-              {importError && <span className="kw-error">{importError}</span>}
               <input
                 className="input"
                 type="text"
@@ -1227,8 +1261,12 @@ export default function PostCreate() {
           {/* 줄 2: 글 톤 | 문체 | 경험담 | 문장 길이 */}
           <div className="panel-row">
             <div className="panel-field panel-flex1">
-              <label className="panel-label">글 톤</label>
-              <DescSelect options={TONE_OPTIONS} value={tone} onChange={setTone} />
+              <label className="panel-label">
+                글 톤
+                {/* 2026-07-29 신규: "글 가져오기" 참고자료가 있을 때는 정보형으로 고정 */}
+                {sourceMaterial && <span className="label-hint" style={{ marginLeft: 6 }}>가져온 글 — 정보형 고정</span>}
+              </label>
+              <DescSelect options={TONE_OPTIONS} value={sourceMaterial ? 'info' : tone} onChange={setTone} disabled={!!sourceMaterial} />
             </div>
             <div className="panel-field panel-flex1">
               <label className="panel-label">문체</label>
@@ -1322,7 +1360,7 @@ export default function PostCreate() {
                 </label>
                 <button
                   className="btn btn-primary btn-generate"
-                  onClick={handleGenerate}
+                  onClick={() => handleGenerate()}
                   disabled={!topic.trim() || generating}
                 >
                   {generating
@@ -1360,6 +1398,40 @@ export default function PostCreate() {
           )}
         </div>
       </div>
+
+      {/* ── URL 글 가져오기 모달 (2026-07-29 신규, 개발자 전용 테스트) ──
+          기존엔 라벨 줄 안에서 인라인으로 확장되는 방식이었는데, 옆
+          "키워드" 영역과 겹쳐 보이는 문제로 별도 팝업으로 전환. 기존
+          예약 발행 모달과 동일한 modal-overlay/modal-box 패턴 재사용. */}
+      {showUrlImport && (
+        <div className="modal-overlay" onClick={() => { if (!importing) setShowUrlImport(false); }}>
+          <div className="modal-box url-import-modal-box" onClick={e => e.stopPropagation()}>
+            <h2 className="modal-title">URL 글 가져오기</h2>
+            <div className="modal-body">
+              <div className="modal-field">
+                <label className="panel-label">가져올 페이지 URL</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="https://..."
+                  value={importUrl}
+                  onChange={e => setImportUrl(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleImportUrl()}
+                  disabled={importing}
+                  autoFocus
+                />
+                {importError && <span className="kw-error">{importError}</span>}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={() => setShowUrlImport(false)} disabled={importing}>취소</button>
+              <button className="btn btn-primary" onClick={handleImportUrl} disabled={importing || !importUrl.trim()}>
+                {importing ? <><span className="spinner-sm" />가져오는 중…</> : '가져오기'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── 예약 발행 모달 ────────────────────────────────────── */}
       {showScheduleModal && (

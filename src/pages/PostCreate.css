@@ -761,6 +761,25 @@
 }
 .modal-body { display: flex; flex-direction: column; gap: 14px; }
 .modal-field { display: flex; flex-direction: column; gap: 5px; }
+/* 2026-07-29 신규: URL 글 가져오기 모달 — 기본 modal-box(360px)는 URL을
+   입력하기엔 좁아서, 키워드 입력칸 정도의 너비로 이 모달만 넓힘. */
+.url-import-modal-box { width: 520px; }
+
+/* 2026-07-29 신규: "글 가져오기" 버튼 — 가져온 참고자료가 반영되어
+   있는 동안(활성 상태) 초록색으로 표시, 다시 누르면 해제(토글).
+   2026-07-29 수정(실사용 테스트로 발견): App.jsx에서 PostCreate가
+   globals.css보다 먼저 import되어 이 파일(PostCreate.css)이 번들에
+   먼저 삽입됨 — .btn-url-import-active 단독(클래스 1개, 우선순위
+   0,1,0)이 나중에 오는 globals.css의 .btn-ghost{background:transparent}
+   (역시 0,1,0)에 로드 순서상 밀려 초록색이 적용되지 않았음. 선택자를
+   .btn-ghost.btn-url-import-active(0,2,0)로 묶어 로드 순서와 무관하게
+   항상 이기도록 수정. */
+.btn-ghost.btn-url-import-active {
+  background: rgba(79,216,110,0.18);
+  border-color: rgba(79,216,110,0.55);
+  color: #4fd86e;
+}
+.btn-ghost.btn-url-import-active:hover { background: rgba(79,216,110,0.28); }
 .modal-hint {
   font-size: 11px;
   color: var(--text-muted);

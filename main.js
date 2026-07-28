@@ -2118,6 +2118,38 @@ function extractMainTextFromHtml(html) {
   return { title, text };
 }
 
+// 2026-07-29 신규(개발자 전용 테스트 기능): "글 가져오기"로 가져온 원문
+// 텍스트를 대표하는 짧은 주제(띄어쓰기 포함 11자 이내)를 AI로 생성.
+// 사용자 요청: 주제 입력칸을 수동으로 채우지 않아도 되도록, 원문 내용을
+// 바탕으로 자동으로 짧은 주제를 만들어 채운다.
+async function generateShortTopicFromText(text) {
+  try {
+    const prompt = `다음은 어떤 웹페이지에서 가져온 글의 내용입니다. 이 내용을 대표하는 블로그 글 주제를 한글로 아주 짧게 요약해 주세요.
+
+[내용]
+${text.slice(0, 2000)}
+
+요구사항:
+- 반드시 순수 한국어(한글)만 사용
+- 띄어쓰기를 포함해서 반드시 11자 이내로 작성(12자 이상 금지)
+- 명사형으로 핵심 주제만 간결하게 (예: "여권 분실 대처법")
+- 마크다운, 특수문자, 따옴표 없는 순수 텍스트
+
+다음 JSON 형식으로만 응답하세요: {"topic": "짧은 주제"}`;
+    const result = await callAI(prompt, 60);
+    let topic = String(result.topic || '')
+      .trim()
+      .split('\n')[0]
+      .replace(/["'.…]/g, '')
+      .trim();
+    if (topic.length > 11) topic = topic.slice(0, 11); // 안전장치 — AI가 규칙을 못 지켜도 코드에서 강제
+    return topic || null;
+  } catch (e) {
+    writeLog('WARN', 'DEV', '글 가져오기 — 짧은 주제 생성 실패', e.message);
+    return null;
+  }
+}
+
 ipcMain.handle('dev:fetchUrlText', async (event, { url }) => {
   if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
   try {
@@ -2142,8 +2174,11 @@ ipcMain.handle('dev:fetchUrlText', async (event, { url }) => {
     if (!text || text.length < 30) {
       return { success: false, error: '본문 텍스트를 추출하지 못했습니다 — 자바스크립트로 내용을 그리는 사이트일 수 있습니다.' };
     }
-    writeLog('INFO', 'DEV', '글 가져오기(URL) 성공(개발자 전용 테스트)', `${safeUrl} — ${text.length}자 추출`);
-    return { success: true, url: safeUrl, title, text: text.slice(0, 6000) };
+    // 2026-07-29 신규: 원문을 대표하는 짧은 주제(11자 이내)를 함께 생성해 반환
+    // — 프론트엔드가 "주제" 입력칸을 자동으로 채우는 데 사용.
+    const shortTopic = await generateShortTopicFromText(text);
+    writeLog('INFO', 'DEV', '글 가져오기(URL) 성공(개발자 전용 테스트)', `${safeUrl} — ${text.length}자 추출, 짧은 주제: ${shortTopic || '(생성 실패)'}`);
+    return { success: true, url: safeUrl, title, text: text.slice(0, 6000), topic: shortTopic };
   } catch (e) {
     writeLog('WARN', 'DEV', '글 가져오기(URL) 실패(개발자 전용 테스트)', e.message);
     return { success: false, error: `페이지를 가져오지 못했습니다: ${e.message}` };
@@ -2552,6 +2587,29 @@ function repairJsonControlChars(str) {
 function tryParse(str) {
   try { return JSON.parse(str); } catch {}
   try { return JSON.parse(repairJsonControlChars(str)); } catch {}
+  // 2026-07-29 신규(실사용 확인 — 키워드 자동 생성에서 "Bad control
+  // character in JSON" 파싱 실패가 반복 발생, 특히 주제에 띄어쓰기가
+  // 있을 때 빈도가 더 높았음): repairJsonControlChars()는 큰따옴표
+  // 안/밖을 직접 추적하는 방식이라, 응답 중간에 이스케이프 안 된
+  // 따옴표 등으로 그 판정이 한 번 틀어지면 뒤쪽 제어문자를 못 잡아냄.
+  // 안/밖 구분 없이 제어문자를 전부 이스케이프/제거하는 더 단순하고
+  // 강한 방식으로 마지막 한 번 더 시도(안/밖 판정 자체가 필요 없어
+  // 상태추적 오류에 영향받지 않음). 유니코드 이스케이프나 원시
+  // 제어문자를 소스에 직접 쓰지 않도록 charCodeAt 비교로만 구현(편집
+  // 도구가 제어문자를 그대로 옥기면서 생기는 문제를 예방).
+  try {
+    let bruteForced = '';
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      const code = str.charCodeAt(i);
+      if (ch === '\n') { bruteForced += '\\n'; continue; }
+      if (ch === '\r') { bruteForced += '\\r'; continue; }
+      if (ch === '\t') { bruteForced += '\\t'; continue; }
+      if (code < 32) { continue; }
+      bruteForced += ch;
+    }
+    return JSON.parse(bruteForced);
+  } catch {}
   return null;
 }
 
@@ -3004,25 +3062,34 @@ ipcMain.handle('post:suggestKeywords', async (event, { topic }) => {
 { "keywords": ["키워드1", "키워드2", "키워드3", ...] }`;
 
     // Groq GPT-OSS 20B 우선 (무료 플랜에서도 사용 가능, 빠르고 저비용) → 키 없으면 현재 provider 폴백
+    // 2026-07-29 수정(실사용 확인 — 주제에 띄어쓰기가 있을 때 "Bad control
+    // character in JSON" 파싱 실패 빈도가 뚜렷하게 높았음): gpt-oss는
+    // 추론(reasoning) 모델이라 답변 전에 내부적으로 생각하는 과정에
+    // 토큰을 먼저 쓰는데, 주제가 길고 복잡할수록 그 추론 분량이 늘어남.
+    // 기존 512 토큰 한도로는 추론 중간에 응답이 잘려(truncated) 불완전한
+    // JSON이 되는 경우가 있었던 것으로 추정 — 1536으로 상향. 그래도
+    // 실패하면 재시도도 기존 1회 → 2회로 늘림(사용자가 재현한 로그에서
+    // 기존 1회 재시도까지 전부 실패한 사례가 확인됨).
+    const KEYWORD_MAX_TOKENS = 1536;
     let result;
-    try {
-      result = groqKey
-        ? await callGroq(groqKey, prompt, 'openai/gpt-oss-20b', 512)
-        : await callAI(prompt, 512);
-    } catch (e) {
-      // 2026-07-22: 실사용에서 "Bad control character in JSON" 파싱 실패가
-      // 이 키워드 자동 생성 호출(항상 Groq 고정)에서 반복 확인됨 — 같은
-      // 요청을 한 번 더 보내면 대부분 해결되는 일회성 포맷 오류라 최소
-      // 수정으로 자동 1회 재시도만 추가.
-      if (/JSON으로 파싱할 수 없습니다/.test(e.message)) {
-        writeLog('WARN', 'AI', '키워드 자동 생성 — JSON 파싱 실패, 자동 재시도 1회', e.message.slice(0, 120));
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
         result = groqKey
-          ? await callGroq(groqKey, prompt, 'openai/gpt-oss-20b', 512)
-          : await callAI(prompt, 512);
-      } else {
-        throw e;
+          ? await callGroq(groqKey, prompt, 'openai/gpt-oss-20b', KEYWORD_MAX_TOKENS)
+          : await callAI(prompt, KEYWORD_MAX_TOKENS);
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (/JSON으로 파싱할 수 없습니다/.test(e.message) && attempt < 3) {
+          writeLog('WARN', 'AI', `키워드 자동 생성 — JSON 파싱 실패, 자동 재시도 ${attempt}회차`, e.message.slice(0, 120));
+          continue;
+        }
+        break;
       }
     }
+    if (lastErr) throw lastErr;
 
     const keywords = (result?.keywords || [])
       .map(k => String(k).trim())
@@ -3030,6 +3097,11 @@ ipcMain.handle('post:suggestKeywords', async (event, { topic }) => {
 
     return { success: true, keywords: keywords.slice(0, 15) };
   } catch (err) {
+    // 2026-07-29 신규(실사용 테스트로 발견): 이 실패가 지금까지 서버 로그에
+    // 전혀 남지 않아 원인 진단이 불가능했음("URL 글 가져오기" 자동 흐름에서
+    // 키워드만 빈칸으로 나온 사례 — AI 호출 3개가 연달아 나가며 Groq
+    // 분당 요청 한도에 걸렸을 가능성 등, 다음 발생 시 이 로그로 확인 가능).
+    writeLog('WARN', 'AI', '키워드 자동 생성 실패', `topic=${topic} — ${err.message}`);
     return { success: false, error: err.message };
   }
 });
