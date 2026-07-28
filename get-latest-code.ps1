@@ -56,15 +56,29 @@ if ($ahead) {
 
 $status = git status --porcelain
 if ($status) {
-    Write-Host "[중단] 저장 안 된 변경사항이 있어 안전하게 받아올 수 없습니다:"
-    $status | ForEach-Object { Write-Host "  $_" }
-    Write-Host ""
-    Write-Host "아래 중 하나를 선택해 처리한 뒤 다시 실행해주세요:"
-    Write-Host "  1) git stash        (변경사항을 잠깐 치워두기)"
-    Write-Host "  2) git checkout .   (변경사항을 그냥 버리고 최신으로 받기)"
-    Write-Host ""
-    pause
-    exit 1
+    # 2026-07-22 추가: package-lock.json은 npm이 npm install 때마다 자동으로
+    # 살짝 바꾸는 파일이라, 이것 "하나만" 걸려있을 때는 안전하게 자동으로
+    # 되돌리고 계속 진행한다 (Mac에서 자주 수정 → Windows가 훨씬 자주
+    # 받는 사용 패턴이라, 매번 수동으로 처리하기 번거롭다는 요청 반영).
+    # 다른 파일까지 같이 걸리면 지금처럼 안전하게 멈춘다.
+    $statusLines = $status -split "`n" | Where-Object { $_.Trim() -ne '' }
+    $onlyPackageLock = ($statusLines.Count -eq 1) -and ($statusLines[0] -match 'package-lock\.json$')
+
+    if ($onlyPackageLock) {
+        Write-Host "[안내] package-lock.json만 변경되어 있어 자동으로 되돌리고 계속 진행합니다."
+        git checkout -- package-lock.json
+        Write-Host ""
+    } else {
+        Write-Host "[중단] 저장 안 된 변경사항이 있어 안전하게 받아올 수 없습니다:"
+        $status | ForEach-Object { Write-Host "  $_" }
+        Write-Host ""
+        Write-Host "아래 중 하나를 선택해 처리한 뒤 다시 실행해주세요:"
+        Write-Host "  1) git stash        (변경사항을 잠깐 치워두기)"
+        Write-Host "  2) git checkout .   (변경사항을 그냥 버리고 최신으로 받기)"
+        Write-Host ""
+        pause
+        exit 1
+    }
 }
 
 Write-Host "[3/5] 최신 코드 받는 중 (git pull)..."
