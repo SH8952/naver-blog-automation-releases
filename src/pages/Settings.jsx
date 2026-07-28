@@ -1854,7 +1854,7 @@ export default function Settings() {
             <label className="loop-radio">
               <input type="radio" name="affiliatePlatform" checked={form.affiliatePlatform === 'aliexpress'}
                 onChange={() => set('affiliatePlatform', 'aliexpress')} />
-              알리익스프레스 어필리에이트
+              알리익스프레스
             </label>
           </div>
         </div>
