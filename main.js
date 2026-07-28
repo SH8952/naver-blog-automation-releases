@@ -2369,7 +2369,7 @@ ${TITLE_RULE_BLOCK}
     {"name": "사이트이름3", "url": "https://..."}
   ]
 }
-links는 주제와 직접 관련된 공식 사이트·정부기관·뉴스·가이드 사이트를 3~5개 포함하세요. 실제로 존재하는 URL만 사용하세요.`;
+links는 주제와 직접 관련된 공식 사이트·정부기관·뉴스·가이드 사이트를 3~5개 포함하세요. 실제로 존재하는 URL만 사용하세요. url은 반드시 대표 메인 홈페이지 주소만 사용하세요(예: https://www.mofa.go.kr/ — 세부 페이지·하위 경로 금지, 예: https://www.mofa.go.kr/wpge/... 형태는 사용하지 마세요). 세부 내용은 독자가 메인 사이트에서 직접 찾도록 안내만 하면 됩니다.`;
   } else if (section === 'title') {
     // 제목 재생성 — 도입부/본문/마무리와 달리 제목은 구조(##/###/▪) 없이
     // 줄바꿈 없는 한 줄 평문이어야 함(2026-07-03: commonInstructions의
@@ -4561,6 +4561,13 @@ function buildConclusionHtml(text, fontName, iconCycler, style) {
 // AI가 그럴듯하지만 실제로는 존재하지 않는 주소를 만들어내는 경우가
 // 실사용 테스트로 확인됨(예: 404/차단 페이지로 연결). 게시 직전에 각
 // 주소가 실제로 열리는지 확인해, 안 열리는 주소는 목록에서 제외한다.
+// 2026-07-29 수정(실사용 테스트로 발견 — 같은 URL이 어떤 발행에서는
+// 통과, 어떤 발행에서는 실패): 정부기관(.go.kr) 등 응답이 느린 사이트가
+// 5초 타임아웃 안에 응답하지 못해 일시적으로 실패 처리되는 경우가
+// 있었음(수동으로 브라우저에서 접속하면 정상). HEAD→GET 전환은 "다른
+// 방식 시도"일 뿐 동일 요청의 재시도가 아니었으므로, 순간적인 지연/
+// 일시적 차단에 대한 방어가 없었음. 최종 실패 시 짧은 대기 후 한 번 더
+// 전체 시도(HEAD→GET)를 재시도하도록 추가.
 async function checkUrlReachable(url) {
   const tryFetch = async (method) => {
     const controller = new AbortController();
@@ -4577,23 +4584,44 @@ async function checkUrlReachable(url) {
       clearTimeout(timer);
     }
   };
+  const attemptOnce = async () => {
+    try {
+      const okHead = await tryFetch('HEAD');
+      if (okHead) return true;
+      // 일부 사이트는 HEAD 요청 자체를 막아두므로(403/405 등) GET으로 재확인
+      return await tryFetch('GET');
+    } catch (e) {
+      return false;
+    }
+  };
+  if (await attemptOnce()) return true;
+  // 순간적인 지연/일시적 차단 대비 — 1.5초 대기 후 한 번 더 시도
+  await new Promise((r) => setTimeout(r, 1500));
+  return await attemptOnce();
+}
+
+// 2026-07-29 신규: URL을 대표 메인 홈페이지 주소(프로토콜+호스트,
+// 하위 경로 제거)로 정규화. AI 프롬프트에서 메인 주소만 생성하도록
+// 이미 지시했지만, 혹시 세부 경로가 섞여 나올 경우를 대비한 안전장치.
+// 파싱 자체가 불가능한 값이면 원본 문자열을 그대로 반환(형식 보정 단계에서 최종 실패 처리됨).
+function toMainDomainUrl(url) {
   try {
-    const okHead = await tryFetch('HEAD');
-    if (okHead) return true;
-    // 일부 사이트는 HEAD 요청 자체를 막아두므로(403/405 등) GET으로 재확인
-    return await tryFetch('GET');
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}/`;
   } catch (e) {
-    return false;
+    return url;
   }
 }
 
-// links 배열 중 실제로 열리는 주소만 남겨서 반환(형식 보정: 프로토콜 없으면 https:// 자동 추가)
+// links 배열 중 실제로 열리는 주소만 남겨서 반환(형식 보정: 프로토콜
+// 없으면 https:// 자동 추가, 세부 경로가 있으면 메인 도메인으로 축약)
 async function filterReachableLinks(links) {
   if (!Array.isArray(links) || links.length === 0) return [];
   const checked = await Promise.all(links.map(async (link) => {
     const rawUrl = String(link?.url || '').trim();
     if (!rawUrl) return null;
-    const safeUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const withProtocol = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const safeUrl = toMainDomainUrl(withProtocol);
     const ok = await checkUrlReachable(safeUrl);
     if (!ok) {
       writeLog('WARN', 'LINKS', '관련 사이트 접속 불가 — 게시 목록에서 제외', safeUrl);
