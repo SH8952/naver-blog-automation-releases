@@ -4728,7 +4728,14 @@ async function resolveAffiliateAd(keyword, tone) {
       product = await searchCoupangProduct(keyword, s.coupangAccessKey, s.coupangSecretKey);
     } else {
       if (!s.aliAppKey || !s.aliAppSecret) return null;
-      product = await searchAliexpressProduct(keyword, s.aliAppKey, s.aliAppSecret, s.aliTrackingId || '');
+      // 2026-07-24 후속 수정(사용자 실사용 지적 — "주제와 안 맞는 상품이
+      // 나온다"): 알리익스프레스는 해외 카탈로그라 한글 키워드를 그대로
+      // 넘기면 쿠팡(국내 카탈로그)만큼 정확한 매칭이 안 될 가능성이 높음
+      // — Unsplash 이미지 검색 관련성을 한글→영어 사전 번역으로 개선했던
+      // 것과 동일한 원리를 적용. 번역 실패 시엔 원래 한글 키워드로 폴백
+      // (완전히 검색을 막지는 않음).
+      const translatedKeyword = await translateKeywordToEnglish(keyword);
+      product = await searchAliexpressProduct(translatedKeyword || keyword, s.aliAppKey, s.aliAppSecret, s.aliTrackingId || '');
     }
     // 2026-07-24 후속 수정(사용자 실사용 확인): 이전엔 product가 null이면
     // (API 자체는 예외 없이 "결과 없음"으로 응답한 경우) 아무 로그도 안
@@ -4755,7 +4762,7 @@ function buildAffiliateAdHtml(product, platform, fontName) {
   const font = fontName ? `font-family:'${fontName}',sans-serif;` : '';
   const label = platform === 'aliexpress' ? '알리익스프레스' : '쿠팡';
   const disclosure = platform === 'aliexpress'
-    ? '이 포스팅은 알리익스프레스 어필리에이트 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받을 수 있습니다.'
+    ? '이 포스팅은 알리익스프레스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받을 수 있습니다.'
     : '이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.';
   const name = String(product.name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const priceNum = Number(product.price);
