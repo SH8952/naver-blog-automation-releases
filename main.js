@@ -6374,9 +6374,38 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       );
       await sleep(400);
 
+      // 2026-07-29 수정(실사용 테스트로 발견 — container_not_found 지속
+      // 발생): "방금 삽입된 이미지는 SE3가 자동으로 선택 상태를 유지한다"는
+      // 가정이 실제로는 보장되지 않음. 썸네일 가운데 정렬(위쪽,
+      // imgClickPos 로직)과 제휴 광고 버튼이미지 링크 첨부 경로는 이미
+      // 이 문제를 실사용으로 확인해 정렬 버튼을 찾기 전에 이미지를 한 번
+      // 클릭해 선택 상태를 보장하는 안전장치가 있었는데, 이 경로(제휴
+      // 상품이미지 가운데 정렬)만 빠져 있었음. 동일한 안전장치를 추가.
+      const productImgClickPos = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(`
+          (function() {
+            var imgs = document.querySelectorAll('.se-section-image');
+            if (!imgs.length) return null;
+            var img = imgs[imgs.length - 1];
+            var r = img.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return null;
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(r.height / 2, 40)) };
+          })()
+        `).catch(() => null),
+        (v) => !!v,
+        3, 300
+      );
+      if (productImgClickPos) {
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: productImgClickPos.x, y: productImgClickPos.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: productImgClickPos.x, y: productImgClickPos.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', label + ' 클릭(선택)', JSON.stringify(productImgClickPos));
+        await sleep(400);
+      } else {
+        writeLog('WARN', 'PUBLISH', label + ' 요소 좌표 획득 실패 — 클릭 생략');
+      }
+
       // 썸네일 가운데 정렬 때 검증된 것과 동일한 방식(선택 → 정렬 토글
-      // 버튼 클릭) 재사용. 방금 삽입된 이미지는 SE3가 자동으로 선택
-      // 상태로 두므로, 별도 클릭 없이 바로 정렬 버튼을 찾아 클릭한다.
+      // 버튼 클릭) 재사용.
       const centerAlignResult = await retryUntilFound(
         () => publishWin.webContents.executeJavaScript(`
           (function() {
