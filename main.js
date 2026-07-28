@@ -4755,13 +4755,22 @@ async function resolveAffiliateAd(keyword, tone) {
       product = await searchCoupangProduct(keyword, s.coupangAccessKey, s.coupangSecretKey);
     } else {
       if (!s.aliAppKey || !s.aliAppSecret) return null;
-      // 2026-07-24 후속 수정(사용자 실사용 지적 — "주제와 안 맞는 상품이
+      // 2026-07-24 1차 수정(사용자 실사용 지적 — "주제와 안 맞는 상품이
       // 나온다"): 알리익스프레스는 해외 카탈로그라 한글 키워드를 그대로
-      // 넘기면 쿠팡(국내 카탈로그)만큼 정확한 매칭이 안 될 가능성이 높음
-      // — Unsplash 이미지 검색 관련성을 한글→영어 사전 번역으로 개선했던
-      // 것과 동일한 원리를 적용. 번역 실패 시엔 원래 한글 키워드로 폴백
-      // (완전히 검색을 막지는 않음).
-      const translatedKeyword = await translateKeywordToEnglish(keyword);
+      // 넘기면 쿠팡(국내 카탈로그)만큼 정확한 매칭이 안 될 가능성이 높다고
+      // 보고 translateKeywordToEnglish()(Unsplash 스톡사진 검색용 번역
+      // 함수)를 재사용했음.
+      // 2026-07-29 2차 수정(사용자 실사용 재확인 — "lost passport로 번역은
+      // 됐는데 검색결과가 0건, 홈페이지에서 직접 검색하면 상품이 나온다"):
+      // 원인은 한글→영어 번역 자체가 아니라, 그 번역이 "상황을 묘사하는
+      // 문구"(예: lost passport)로 나온다는 것. 알리익스프레스 제휴 API는
+      // 문자 그대로 상품명이 일치해야 검색되는데, 실제 상품명엔 그런
+      // 문구가 없음(예: 실제 상품명은 "passport holder"). Unsplash용
+      // translateKeywordToEnglish() 대신 상품 검색 전용
+      // translateKeywordForProductSearch()로 교체 — "구매 가능한 상품
+      // 키워드"를 뽑도록 프롬프트를 별도로 구성함(해당 함수 주석 참고).
+      // 번역 실패 시엔 원래 한글 키워드로 폴백(완전히 검색을 막지는 않음).
+      const translatedKeyword = await translateKeywordForProductSearch(keyword);
       product = await searchAliexpressProduct(translatedKeyword || keyword, s.aliAppKey, s.aliAppSecret, s.aliTrackingId || '');
     }
     // 2026-07-24 후속 수정(사용자 실사용 확인): 이전엔 product가 null이면
@@ -5125,6 +5134,38 @@ async function translateKeywordToEnglish(koreanQuery) {
     return translated;
   } catch (e) {
     writeLog('WARN', 'IMAGE', 'AI 키워드 영어 번역 실패', e.message);
+    return null;
+  }
+}
+
+// 2026-07-29 신규: 알리익스프레스 제휴 상품 검색 전용 번역 함수.
+// translateKeywordToEnglish()는 "스톡 사진 검색"에 적합한 문구(상황 묘사,
+// 예: "lost passport")를 만들도록 설계되어 있어서, 문자 그대로 상품명이
+// 일치해야 검색되는 알리익스프레스 제휴 API(aliexpress.affiliate.product.query)에는
+// 맞지 않았음(실사용 테스트로 확인: "여권 분실" 글 제목 → "lost passport"로
+// 번역되지만 실제 상품명에는 없는 표현이라 검색결과 0건, 반면 "passport holder"류는
+// 실제 판매 상품임). 이 함수는 글 주제와 관련해 "실제로 판매될 법한 상품
+// 키워드"를 뽑아내도록 프롬프트를 별도로 구성한다. Unsplash 이미지 검색용
+// translateKeywordToEnglish()는 그대로 두고 건드리지 않음.
+async function translateKeywordForProductSearch(koreanQuery) {
+  const q = (koreanQuery || '').trim();
+  if (!q) return null;
+  try {
+    const prompt = `A blog post has this Korean title or topic: "${q}"
+Suggest ONE short English product keyword (2-4 words) for a real, purchasable product on AliExpress that would be genuinely relevant to this topic — think of what item someone reading this post might want to buy, not a description of the topic or situation.
+Use a concrete product noun phrase like an actual product listing title would use (e.g. "passport holder", "humidifier", "phone case"), NOT a phrase describing an action, problem, or scenario (e.g. NOT "lost passport", NOT "how to fix").
+Respond ONLY in this JSON format: {"translated": "the product keyword here"}
+No explanation, no Korean, no additional text outside the JSON.`;
+    const result = await callAI(prompt, 60);
+    const translated = String(result.translated || '')
+      .trim()
+      .split('\n')[0]
+      .replace(/["'.\u2026]/g, '')
+      .trim();
+    if (!translated || translated.length > 60 || /[\uac00-\ud7a3]/.test(translated)) return null;
+    return translated;
+  } catch (e) {
+    writeLog('WARN', 'AD', 'AI 상품 검색 키워드 번역 실패', e.message);
     return null;
   }
 }
