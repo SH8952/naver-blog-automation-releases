@@ -289,6 +289,16 @@ export default function Research() {
     }
   };
 
+  // 2026-07-29 신규(사용자 요청): 트렌드 패널이 "트렌드 불러오기" 버튼을
+  // 직접 눌러야만 채워지는 방식이라 있는 줄 모르고 지나치기 쉬웠음 —
+  // 이 화면(글감 수집)에 들어올 때마다 자동으로 한 번 불러오도록 변경.
+  // loadTrends()가 끝나면 trendsLoaded가 true로 바뀌면서 버튼 라벨도
+  // 자동으로 "🔄 새로고침"으로 바뀜(기존 로직 그대로, 별도 처리 불필요).
+  useEffect(() => {
+    loadTrends();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 트렌드/키워드 분석 결과를 등록된 키워드로 추가
   // 2026-07-06: category를 빈 문자열로 고정하고 있어서, "글감 수집"의
   // 배정 카테고리 입력값(kwCategory)이 설정돼 있어도 키워드 분석/트렌드
