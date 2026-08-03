@@ -825,6 +825,15 @@ export default function PostCreate() {
   };
 
   // ── 단어 교체 ────────────────────────────────────────────
+  // 2026-07-29 수정(실사용 지적 — 치환은 되는데 항상 "0건 교체"로 표시됨):
+  // 기존엔 rep()가 setResult(prev => ({...}))의 콜백 안에서 실행됐는데,
+  // 이 콜백은 setResult() 호출 시점에 즉시 실행되는 게 아니라 React가
+  // 나중에(다음 렌더링 처리 시점에) 실행함. 그런데 바로 다음 줄의
+  // setReplaceCount(count)는 그 자리에서 즉시 실행되므로, count가 실제로
+  // 계산되기 전(초기값 0)을 항상 읽어서 표시하고 있었음 — 텍스트 치환
+  // 자체는 나중에 정상 반영되지만 개수 표시만 항상 0이 되는 구조적
+  // 버그. 개수 계산을 setResult() 호출 전에 동기적으로 먼저 끝내고, 그
+  // 결과를 setResult()/setReplaceCount() 양쪽에 나눠 넘기도록 순서 수정.
   const handleReplace = () => {
     if (!replaceFrom.trim() || !result) return;
     const regex = new RegExp(replaceFrom.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
@@ -835,15 +844,16 @@ export default function PostCreate() {
       count += matches ? matches.length : 0;
       return text.replace(regex, replaceTo);
     };
-    setResult(prev => ({
-      ...prev,
-      title:      rep(prev.title),
+    const nextResult = {
+      ...result,
+      title:      rep(result.title),
       // 2026-07-08 신규: 썸네일 전용 문구도 찾아바꾸기 대상에 포함
-      thumbText:  rep(prev.thumbText || ''),
-      intro:      rep(prev.intro),
-      body:       rep(prev.body),
-      conclusion: rep(prev.conclusion),
-    }));
+      thumbText:  rep(result.thumbText || ''),
+      intro:      rep(result.intro),
+      body:       rep(result.body),
+      conclusion: rep(result.conclusion),
+    };
+    setResult(nextResult);
     setReplaceCount(count);
     setTimeout(() => setReplaceCount(null), 2500);
   };
