@@ -2347,6 +2347,11 @@ function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenc
   const sentMap    = { auto: '짧은 문장과 긴 문장을 랜덤하게 혼합', short: '짧은 문장 위주로 템포감 있게', long: '긴 문장 위주로 상세하게' };
   const kwStr      = keywords && keywords.length ? keywords.join(', ') : '없음';
 
+  // 2026-08-04 신규(사용자 요청): 해시태그 20~30개 고정 생성이 "기계적
+  // 패턴"으로 보일 수 있다는 지적에 따라, 발행마다 8~15개 사이에서
+  // 목표 개수를 무작위로 뽑아 매번 다른 개수가 생성되도록 함.
+  const hashtagTarget = 8 + Math.floor(Math.random() * 8); // 8~15
+
   // 2026-07-22 신규: "글감 수집" 기능이 실제로 수집해둔 실제 블로그 글
   // 제목/요약을 참고 자료로 활용 — 지금까지는 자동화 루프가 keyword_text
   // (검색 키워드 문자열)만 주제로 넘기고, 같이 저장된 실제 수집 내용은
@@ -2455,7 +2460,7 @@ ${commonInstructions}${structureCountRule}
   · conclusion(마무리): 최소 ${Math.round(targetMin * 0.1)}자 이상
   · 각 섹션을 유익한 내용으로 충분히 채울 것 (같은 말 반복 금지)
 ${TITLE_RULE_BLOCK}
-- 해시태그: 주제/키워드 관련 20~30개 생성 (한글 해시태그)
+- 해시태그: 주제/키워드 관련 정확히 ${hashtagTarget}개 생성 (한글 해시태그, 개수를 반드시 지킬 것)
 
 다음 JSON 형식으로만 응답하세요 (모든 값은 반드시 순수 한국어):
 {
