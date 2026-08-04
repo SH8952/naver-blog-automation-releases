@@ -69,7 +69,12 @@ function DescSelect({ options, value, onChange, align = 'left', disabled = false
 }
 
 // 2026-07-07: 이미지 3장 → 5장으로 확대 (대주제 전환 지점마다 배치)
-const IMG_POSITIONS = ['도입부', '대주제1', '중간전환', '대주제2', '마무리'];
+// 2026-08-04: 5장 → 10장으로 재확대(제미나이 SEO 리포트의 "항상 5장 고정=
+// 기계적 패턴" 지적 반영). 앞 5개(도입부~마무리)는 기존과 동일하게 항상
+// 삽입되고, 뒤 5개("+" 표시)는 발행마다 1~5개만 무작위(또는 더블클릭으로
+// 사용자가 직접 고른 지점)로 보너스 삽입된다 — 기존 5곳의 삽입 위치·순서는
+// 변경하지 않음([[image-slot-expansion-2026-08-04]] 참고).
+const IMG_POSITIONS = ['도입부', '대주제1', '중간전환', '대주제2', '마무리', '도입부+', '대주제1+', '중간전환+', '대주제2+', '마무리+'];
 const emptyImages = () => IMG_POSITIONS.map(pos => ({ position: pos, id: null, url: null, thumb: null, alt: '', photographer: '', loading: false }));
 
 // ── 아이콘 ────────────────────────────────────────────────────
@@ -152,9 +157,16 @@ export default function PostCreate() {
   // 이미지 상태
   const [images, setImages] = useState(emptyImages());
   const [imgSearched, setImgSearched] = useState(false);
-  // 2026-07-07 신규: 썸네일 배경으로 직접 선택한 이미지 카드 인덱스(0~4).
+  // 2026-07-07 신규: 썸네일 배경으로 직접 선택한 이미지 카드 인덱스(0~9).
   // null이면 선택 안 함 = 기존 자동 검색 그대로 사용. 카드 클릭으로 토글.
   const [thumbBgIndex, setThumbBgIndex] = useState(null);
+  // 2026-08-04 신규: 보너스 슬롯(인덱스 5~9)을 더블클릭으로 "삽입 선택"한
+  // 카드 인덱스 집합. 비어있으면(사용자가 하나도 고르지 않으면) 발행 시
+  // 1~5개를 무작위로 자동 선택한다. resolveBonusPoints()에서 사용.
+  const [insertSelected, setInsertSelected] = useState(new Set());
+  // 미리보기와 실제 발행 결과가 어긋나지 않도록, 보너스 삽입 지점(0~4,
+  // 기존 5곳 기준 인덱스)을 미리보기 요청 시 한 번 계산해 고정해둔다.
+  const [resolvedBonusPoints, setResolvedBonusPoints] = useState(null);
 
   // 에러 메시지
   const [errorMsg, setErrorMsg] = useState('');
@@ -351,6 +363,8 @@ export default function PostCreate() {
   const searchImages = async (kws) => {
     setImgSearched(false);
     setThumbBgIndex(null); // 이미지 전체 재검색 시 이전 썸네일 배경 선택은 초기화
+    setInsertSelected(new Set()); // 2026-08-04: 보너스 삽입 선택도 함께 초기화
+    setResolvedBonusPoints(null);
     setImages(emptyImages().map(img => ({ ...img, loading: true })));
     const res = await window.electronAPI.image.search({ keywords: kws });
     if (res.success && res.images) {
@@ -403,6 +417,35 @@ export default function PostCreate() {
   // 라디오 방식) — 같은 카드를 다시 클릭하면 선택 해제(자동 검색으로 복귀).
   const handleSelectThumbBg = (idx) => {
     setThumbBgIndex(prev => (prev === idx ? null : idx));
+  };
+
+  // ── 보너스 이미지(추가 5슬롯) 삽입 선택 (2026-08-04 신규) ────
+  // 인덱스 5~9(도입부+~마무리+)만 더블클릭으로 토글 가능 — 기존 5개(0~4)는
+  // 항상 삽입되므로 선택 대상이 아님. 하나라도 선택되어 있으면 발행 시
+  // 그 지점만 정확히 사용하고, 하나도 선택 안 하면 1~5개를 무작위로 사용.
+  const handleToggleInsertSelect = (idx) => {
+    if (idx < 5) return;
+    setInsertSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+
+  // 보너스 삽입 지점(0~4, 기존 5곳 기준 인덱스) 계산 — 더블클릭으로 고른
+  // 게 있으면 그 지점 그대로, 없으면 1~5개를 무작위로 고름. 미리보기와
+  // 실제 발행이 어긋나지 않도록 이 함수는 발행 액션 시점에 한 번만
+  // 호출해 resolvedBonusPoints에 저장하고 재사용한다.
+  const resolveBonusPoints = () => {
+    const manual = [...insertSelected].map(i => i - 5).filter(i => i >= 0 && i <= 4);
+    if (manual.length > 0) return manual;
+    const pts = [0, 1, 2, 3, 4];
+    for (let i = pts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pts[i], pts[j]] = [pts[j], pts[i]];
+    }
+    const count = 1 + Math.floor(Math.random() * 5); // 1~5
+    return pts.slice(0, count);
   };
 
   // ── 키워드 자동 생성 ──────────────────────────────────────
@@ -574,6 +617,10 @@ export default function PostCreate() {
   // 발행 동작을 함께 기억해둔다.
   const requestPreview = async (action) => {
     setPreviewLoading(true);
+    // 2026-08-04 신규: 보너스 이미지 삽입 지점을 여기서 한 번만 계산해
+    // 고정 — 미리보기 렌더링과 실제 발행이 같은 지점을 쓰도록 보장.
+    const bonusPts = resolveBonusPoints();
+    setResolvedBonusPoints(bonusPts);
     try {
       const res = await window.electronAPI.post.renderPreview({
         title: result.title,
@@ -614,12 +661,14 @@ export default function PostCreate() {
     // 미리보기에서 확정된 값을 그대로 재사용해 실제 발행 결과가 미리보기와
     // 어긋나지 않도록 함.
     const forcedLayoutId = previewData?.resolvedLayoutId != null ? previewData.resolvedLayoutId : null;
+    // 2026-08-04 신규: 미리보기에서 확정한 보너스 이미지 지점을 그대로 재사용
+    const forcedBonusPoints = resolvedBonusPoints;
     const action = previewPendingAction;
     setPreviewModalOpen(false);
     setPreviewData(null);
     setPreviewPendingAction(null);
-    if (action === 'schedule') await doScheduleSubmit(forcedThumbPath, forcedStyleIndex, forcedLayoutId);
-    else await doPublishNow(forcedThumbPath, forcedStyleIndex, forcedLayoutId);
+    if (action === 'schedule') await doScheduleSubmit(forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints);
+    else await doPublishNow(forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints);
   };
 
   // 2026-07-24 신규(개발자 전용): 미리보기 모달에서 "테스트" — 실제 발행과
@@ -630,15 +679,17 @@ export default function PostCreate() {
     const forcedThumbPath = previewData?.thumbTempPath || null;
     const forcedStyleIndex = previewData?.resolvedStyleIndex != null ? previewData.resolvedStyleIndex : null;
     const forcedLayoutId = previewData?.resolvedLayoutId != null ? previewData.resolvedLayoutId : null;
+    const forcedBonusPoints = resolvedBonusPoints;
     setPreviewModalOpen(false);
     setPreviewData(null);
     setPreviewPendingAction(null);
-    await doTestPublish(forcedThumbPath, forcedStyleIndex, forcedLayoutId);
+    await doTestPublish(forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints);
   };
 
-  const doTestPublish = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId) => {
+  const doTestPublish = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints) => {
     setTesting(true);
     setPublishMsg('');
+    const bonusPts = forcedBonusPoints || resolvedBonusPoints || resolveBonusPoints();
     try {
       const res = await window.electronAPI.publish.test({
         accountId: Number(accountId),
@@ -658,6 +709,7 @@ export default function PostCreate() {
           forcedStyleIndex: forcedStyleIndex != null ? forcedStyleIndex : undefined,
           forcedLayoutId: forcedLayoutId != null ? forcedLayoutId : undefined,
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
+          bonusPoints: bonusPts,
           tone,
         },
       });
@@ -677,12 +729,16 @@ export default function PostCreate() {
     if (!accountId) { setPublishMsg('⚠️ 발행 계정을 선택해주세요.'); setTimeout(() => setPublishMsg(''), 3000); return; }
     if (!result) return;
     if (previewEnabled) { await requestPreview('now'); return; }
-    await doPublishNow(null, null, null);
+    await doPublishNow(null, null, null, null);
   };
 
-  const doPublishNow = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId) => {
+  const doPublishNow = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints) => {
     setPublishing(true);
     setPublishMsg('');
+    // 2026-08-04 신규: 미리보기를 거치지 않은 경우(previewEnabled=false)엔
+    // 여기서 처음으로 보너스 지점을 계산 — 이전 발행에서 남은 값을 그대로
+    // 재사용하지 않도록 forcedBonusPoints > resolvedBonusPoints > 새로 계산 순.
+    const bonusPts = forcedBonusPoints || resolvedBonusPoints || resolveBonusPoints();
     try {
       const res = await window.electronAPI.publish.now({
         accountId: Number(accountId),
@@ -708,6 +764,7 @@ export default function PostCreate() {
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
           // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
           tone,
+          bonusPoints: bonusPts,
         },
       });
       if (res.success) {
@@ -773,12 +830,13 @@ export default function PostCreate() {
       await requestPreview('schedule');
       return;
     }
-    await doScheduleSubmit(null, null, null);
+    await doScheduleSubmit(null, null, null, null);
   };
 
-  const doScheduleSubmit = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId) => {
+  const doScheduleSubmit = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints) => {
     const scheduledAt = `${scheduleDate}T${scheduleTime}`;
     setScheduling(true);
+    const bonusPts = forcedBonusPoints || resolvedBonusPoints || resolveBonusPoints();
     try {
       const res = await window.electronAPI.publish.schedule({
         accountId: Number(accountId),
@@ -802,6 +860,7 @@ export default function PostCreate() {
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
           // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
           tone,
+          bonusPoints: bonusPts,
         },
         scheduledAt,
       });
@@ -1141,6 +1200,8 @@ export default function PostCreate() {
                 onSearchKeyword={(q) => searchImages(q.split(/[,\s]+/).map(s => s.trim()).filter(Boolean))}
                 thumbBgIndex={thumbBgIndex}
                 onSelectThumbBg={handleSelectThumbBg}
+                insertSelected={insertSelected}
+                onToggleInsertSelect={handleToggleInsertSelect}
               />
 
               {/* 2026-07-22 신규: 관련 사이트 수동 편집 — AI가 자동 생성한
@@ -1559,6 +1620,9 @@ export default function PostCreate() {
                     예외 상황) 이미지2~4를 대분류2 뒤에 몰아서 표시. */}
                 <div dangerouslySetInnerHTML={{ __html: previewData?.introHtml || '' }} />
                 {images[0]?.url && <img src={images[0].url} alt={images[0].alt || ''} className="preview-body-img" />}
+                {/* 2026-08-04 신규: 보너스 이미지 — 이 지점이 resolvedBonusPoints에
+                    포함된 경우만, 기존 이미지 바로 뒤에 한 장 더 표시 */}
+                {resolvedBonusPoints?.includes(0) && images[5]?.url && <img src={images[5].url} alt={images[5].alt || ''} className="preview-body-img" />}
                 {/* 2026-07-23 신규: 제휴 광고 — 도입부 아래(위치설정 'intro'|'both') */}
                 {(previewData?.adPosition === 'intro' || previewData?.adPosition === 'both') && previewData?.adHtml && (
                   <>
@@ -1583,18 +1647,21 @@ export default function PostCreate() {
                   <>
                     <div dangerouslySetInnerHTML={{ __html: previewData?.bodyPart1Html || '' }} />
                     {images[1]?.url && <img src={images[1].url} alt={images[1].alt || ''} className="preview-body-img" />}
+                    {resolvedBonusPoints?.includes(1) && images[6]?.url && <img src={images[6].url} alt={images[6].alt || ''} className="preview-body-img" />}
                   </>
                 )}
                 {previewData?.hasPart2 && (
                   <>
                     <div dangerouslySetInnerHTML={{ __html: previewData?.bodyPart2Html || '' }} />
                     {images[2]?.url && <img src={images[2].url} alt={images[2].alt || ''} className="preview-body-img" />}
+                    {resolvedBonusPoints?.includes(2) && images[7]?.url && <img src={images[7].url} alt={images[7].alt || ''} className="preview-body-img" />}
                   </>
                 )}
                 {previewData?.hasPart3 && (
                   <>
                     <div dangerouslySetInnerHTML={{ __html: previewData?.bodyPart3Html || '' }} />
                     {images[3]?.url && <img src={images[3].url} alt={images[3].alt || ''} className="preview-body-img" />}
+                    {resolvedBonusPoints?.includes(3) && images[8]?.url && <img src={images[8].url} alt={images[8].alt || ''} className="preview-body-img" />}
                   </>
                 )}
                 <div dangerouslySetInnerHTML={{ __html: previewData?.bodyPart4Html || '' }} />
@@ -1621,11 +1688,15 @@ export default function PostCreate() {
                 {!(previewData?.hasPart1 || previewData?.hasPart2 || previewData?.hasPart3) && (
                   <>
                     {images[1]?.url && <img src={images[1].url} alt={images[1].alt || ''} className="preview-body-img" />}
+                    {resolvedBonusPoints?.includes(1) && images[6]?.url && <img src={images[6].url} alt={images[6].alt || ''} className="preview-body-img" />}
                     {images[2]?.url && <img src={images[2].url} alt={images[2].alt || ''} className="preview-body-img" />}
+                    {resolvedBonusPoints?.includes(2) && images[7]?.url && <img src={images[7].url} alt={images[7].alt || ''} className="preview-body-img" />}
                     {images[3]?.url && <img src={images[3].url} alt={images[3].alt || ''} className="preview-body-img" />}
+                    {resolvedBonusPoints?.includes(3) && images[8]?.url && <img src={images[8].url} alt={images[8].alt || ''} className="preview-body-img" />}
                   </>
                 )}
                 {images[4]?.url && <img src={images[4].url} alt={images[4].alt || ''} className="preview-body-img" />}
+                {resolvedBonusPoints?.includes(4) && images[9]?.url && <img src={images[9].url} alt={images[9].alt || ''} className="preview-body-img" />}
                 <div dangerouslySetInnerHTML={{ __html: previewData?.conclusionHtml || '' }} />
                 {previewData?.linksHtml && <div dangerouslySetInnerHTML={{ __html: previewData.linksHtml }} />}
               </div>
@@ -1712,7 +1783,7 @@ function SectionCard({ label, content, section, onRegen, regenSection, isTitle, 
 }
 
 // ── 이미지 섹션 컴포넌트 ──────────────────────────────────────
-function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefreshAll, onSearchKeyword, thumbBgIndex, onSelectThumbBg }) {
+function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefreshAll, onSearchKeyword, thumbBgIndex, onSelectThumbBg, insertSelected, onToggleInsertSelect }) {
   const allLoading = images.every(img => img.loading);
   const hasAny     = images.some(img => img.url);
   const [imgQuery, setImgQuery] = React.useState('');
@@ -1736,7 +1807,7 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
             검색/새로고침은 우측 정렬을 유지하고 싶다는 요청 — 힌트를
             img-header-right 밖으로 꺼내 라벨의 형제 요소로 두고,
             img-header-right(입력칸+버튼)는 margin-left:auto로 우측 고정 */}
-        <span className="label-hint img-hint-text">도입부 · 대주제1 · 중간전환 · 대주제2<br />마무리 5곳 자동 배치 · 클릭하면 썸네일 배경으로 선택</span>
+        <span className="label-hint img-hint-text">도입부 · 대주제1 · 중간전환 · 대주제2<br />마무리 5곳 자동 배치(1줄) · 클릭=썸네일 배경 선택 · "+" 5곳(2줄)은 더블클릭=삽입 선택(1~5개, 안 고르면 무작위)</span>
         <div className="img-header-right">
           {/* 키워드 직접 검색 */}
           <input
@@ -1769,12 +1840,15 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
             <div className="image-pos-label">{img.position}</div>
 
             {/* 이미지 영역 — 2026-07-07: 이미지가 있을 때 클릭하면 해당 이미지를
-                썸네일 배경으로 선택(라디오 방식), 선택된 카드는 테두리 강조 */}
+                썸네일 배경으로 선택(라디오 방식), 선택된 카드는 테두리 강조.
+                2026-08-04: 인덱스 5~9(보너스 슬롯)는 더블클릭으로 "삽입 선택"도
+                가능 — 기존 0~4는 항상 삽입되므로 더블클릭 대상 아님. */}
             <div
-              className={`image-thumb-wrap${thumbBgIndex === idx ? ' selected' : ''}`}
+              className={`image-thumb-wrap${thumbBgIndex === idx ? ' selected' : ''}${insertSelected?.has(idx) ? ' insert-selected' : ''}`}
               onClick={() => img.url && !img.loading && onSelectThumbBg(idx)}
+              onDoubleClick={() => idx >= 5 && img.url && !img.loading && onToggleInsertSelect(idx)}
               role={img.url ? 'button' : undefined}
-              title={img.url ? '클릭하면 썸네일 배경으로 선택됩니다' : undefined}
+              title={img.url ? (idx >= 5 ? '클릭=썸네일 배경 선택 · 더블클릭=삽입 선택' : '클릭하면 썸네일 배경으로 선택됩니다') : undefined}
               style={img.url ? { cursor: 'pointer' } : undefined}
             >
               {img.loading ? (
@@ -1791,6 +1865,9 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
               )}
               {thumbBgIndex === idx && (
                 <div className="thumb-bg-badge">썸네일 배경</div>
+              )}
+              {insertSelected?.has(idx) && (
+                <div className="insert-selected-badge">✓ 삽입 선택됨</div>
               )}
             </div>
 

@@ -3811,11 +3811,14 @@ ipcMain.handle('image:search', async (event, { keywords, excludeIds = [] }) => {
     const query   = keywords.slice(0, 3).join(' ');
     // 2026-07-07: 한글 키워드 검색 결과 0건 시 단순화 → AI 영어 번역까지
     // 시도하는 공용 헬퍼로 교체(기존엔 재시도 없이 바로 빈 결과 반환).
-    const pool    = await searchUnsplashWithFallback(apiKey, query, 30, 'IMAGE');
+    // 2026-08-04: 이미지 후보 5장→10장 확대에 맞춰 원본 풀도 30→40으로 소폭 확대
+    const pool    = await searchUnsplashWithFallback(apiKey, query, 40, 'IMAGE');
     const filtered = pool.filter(p => !excludeIds.includes(p.id));
 
     // 2026-07-07: 3장 → 5장으로 확대 (이미지 삽입 위치 5곳으로 변경)
-    const picked = pickImagesFromPool(filtered, 5);
+    // 2026-08-04: 5장 → 10장으로 재확대 — 기존 5곳(항상 삽입)에 더해 추가
+    // 5장은 발행 시 1~5장만 무작위(또는 사용자 수동 선택)로 보너스 삽입됨
+    const picked = pickImagesFromPool(filtered, 10);
 
     return { success: true, images: picked };
   } catch (err) {
@@ -3868,13 +3871,17 @@ async function autoPickUnsplashImages(keywords) {
 
     // 2026-07-07: 단순화 재검색까지도 0건이면 AI 영어 번역 재검색까지
     // 시도하는 공용 헬퍼로 교체(기존 단순화 재검색 로직은 그대로 유지됨).
-    const pool = await searchUnsplashWithFallback(apiKey, query, 30, 'LOOP');
+    // 2026-08-04: image:search와 동일하게 10장 확대에 맞춰 풀 사이즈도 확대
+    const pool = await searchUnsplashWithFallback(apiKey, query, 40, 'LOOP');
 
     if (!pool.length) {
       return { images: [], error: null };
     }
 
-    return { images: pickImagesFromPool(pool, 5), error: null };
+    // 2026-08-04: 자동화 루프(완전자동/반자동)도 수동 화면과 동일하게
+    // 10장을 확보해, publishToNaver의 보너스 이미지 로직이 자동화 루프
+    // 발행에서도 동작하도록 함(기존 5장 삽입 로직은 그대로 유지).
+    return { images: pickImagesFromPool(pool, 10), error: null };
   } catch (err) {
     return { images: [], error: err.message };
   }
@@ -6041,7 +6048,7 @@ async function attachLinkToLastImage(publishWin, url) {
   }
 }
 
-async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, forcedLayoutId = null, thumbBgUrl = null, testMode = false }) {
+async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, forcedLayoutId = null, thumbBgUrl = null, testMode = false, bonusPoints = null }) {
   // 2026-07-24 신규: 테스트 모드(개발자 전용) — 실제 발행 버튼 클릭 직전까지만
   // 자동화를 수행하고 멈춘다. 실제 SE3 붙여넣기 결과를 검사(DevTools)로 그대로
   // 확인할 수 있으면서도 실제로는 아무것도 게시되지 않아 삭제할 필요가 없고
@@ -6433,6 +6440,25 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   //    이미지5 → 마무리 (2026-07-07: 이미지 3장→5장 확대) ─────────────
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const imgs = Array.isArray(images) ? images : [];
+
+  // 2026-08-04 신규: 보너스 이미지(추가 5슬롯, imgs[5]~imgs[9]) — 기존 5곳
+  // (imgs[0]~imgs[4])의 삽입 위치·순서는 절대 변경하지 않고, 그 중 일부
+  // 지점에만 바로 뒤에 이미지를 한 장 더 붙인다. bonusPoints는 프론트
+  // "글 생성" 화면에서 사용자가 더블클릭으로 직접 고른 지점(0~4) 배열을
+  // 그대로 전달하거나, 고른 게 없으면 프론트가 1~5개를 무작위로 골라
+  // 전달한다. bonusPoints가 아예 안 넘어온 경우(자동화 루프·예약 발행
+  // 재실행 등 프론트 UI가 없는 경로)는 여기서 자체적으로 1~5개 지점을
+  // 무작위로 고른다 — 어떤 경로로 발행되든 항상 결정되도록 하는 안전망.
+  const pickRandomBonusPoints = () => {
+    const pts = [0, 1, 2, 3, 4];
+    for (let i = pts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pts[i], pts[j]] = [pts[j], pts[i]];
+    }
+    const count = 1 + Math.floor(Math.random() * 5); // 1~5
+    return pts.slice(0, count);
+  };
+  const bonusSet = new Set(Array.isArray(bonusPoints) ? bonusPoints : pickRandomBonusPoints());
 
   // 폰트 설정 읽기
   const editorFont = (getStore().get('settings.editorFont', '') || '').trim();
@@ -6872,6 +6898,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   await pasteHtml(buildIntroHtml(content.intro, editorFont, iconCycler, postStylePreset), '도입부');
   // 이미지 1 (도입부 아래, 본문 시작 전)
   await insertImgSection(imgs[0], '이미지1');
+  // 2026-08-04 신규: 보너스 이미지 — 이 지점(0)이 선택된 경우만 이미지1
+  // 바로 뒤에 한 장 더 삽입(기존 이미지1 위치/순서는 변경하지 않음)
+  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스');
   // 제휴 광고 — 도입부 아래(위치 설정 'intro'|'both'일 때만)
   if (affiliateAd && (affiliateAd.position === 'intro' || affiliateAd.position === 'both')) {
     await insertAffiliateAd('제휴 광고(도입부 아래)');
@@ -6889,23 +6918,29 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   if (part1) {
     await pasteHtml(buildBodyHtml(part1, editorFont, iconCycler, postStylePreset), '본문(대분류1 도입)');
     await insertImgSection(imgs[1], '이미지2');
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스');
     usedMidImages = true;
   }
   if (part2) {
     await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
     await insertImgSection(imgs[2], '이미지3');
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스');
     usedMidImages = true;
   }
   if (part3) {
     await pasteHtml(buildBodyHtml(part3, editorFont, iconCycler, postStylePreset), '본문(중분류2)');
     await insertImgSection(imgs[3], '이미지4');
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스');
     usedMidImages = true;
   }
   await pasteHtml(buildBodyHtml(part4, editorFont, iconCycler, postStylePreset), '본문(대분류2)');
   if (!usedMidImages) {
     await insertImgSection(imgs[1], '이미지2');
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스');
     await insertImgSection(imgs[2], '이미지3');
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스');
     await insertImgSection(imgs[3], '이미지4');
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스');
   }
 
   // 제휴 광고 — 본문 아래(위치 설정 'body'|'both'일 때만, 기본값)
@@ -6916,6 +6951,7 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 이미지 5 (마무리 시작 지점 — 2026-07-07: 기존엔 마무리 "뒤"였으나
   // 마무리를 읽는 도중 시각적 전환을 주도록 마무리 "시작 지점"으로 변경)
   await insertImgSection(imgs[4], '이미지5');
+  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스');
   // 마무리
   await pasteHtml(buildConclusionHtml(content.conclusion, editorFont, iconCycler, postStylePreset), '마무리');
   // 관련 사이트 링크 섹션 — 2026-07-23: 게시 직전 실제 접속 가능한
@@ -7863,6 +7899,9 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       // 2026-07-07: 미리보기 없이 바로 발행한 경우(previewEnabled=false)에도
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
       thumbBgUrl: post.thumbBgUrl || null,
+      // 2026-08-04 신규: 보너스 이미지(추가 5슬롯) 삽입 지점 — 프론트에서
+      // 결정된 값을 그대로 전달, 없으면 publishToNaver가 자체적으로 무작위 결정
+      bonusPoints: Array.isArray(post.bonusPoints) ? post.bonusPoints : undefined,
     });
 
     return { success: true, postId, warning: limitCheck.warning || undefined };
@@ -7898,6 +7937,7 @@ ipcMain.handle('publish:test', async (event, { accountId, post }) => {
       forcedStyleIndex: post.forcedStyleIndex != null ? post.forcedStyleIndex : null,
       forcedLayoutId: post.forcedLayoutId != null ? post.forcedLayoutId : null,
       thumbBgUrl: post.thumbBgUrl || null,
+      bonusPoints: Array.isArray(post.bonusPoints) ? post.bonusPoints : undefined,
       testMode: true,
     });
     return { success: true };
@@ -8020,6 +8060,7 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       // 2026-07-07: 미리보기 없이 바로 발행한 경우(previewEnabled=false)에도
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
       thumbBgUrl: post.thumbBgUrl || null,
+      bonusPoints: Array.isArray(post.bonusPoints) ? post.bonusPoints : undefined,
     });
 
     return { success: true, postId };

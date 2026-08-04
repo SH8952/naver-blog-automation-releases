@@ -521,6 +521,28 @@
   border-radius: 6px;
   line-height: 1.2;
 }
+
+/* 2026-08-04 신규: 보너스 슬롯(인덱스 5~9)을 더블클릭으로 "삽입 선택"한
+   카드 표시 — thumb-bg-badge(하단)와 겹치지 않도록 상단에 배치, 두 뱃지가
+   동시에 떠도 서로 가리지 않음. 썸네일 배경 선택과 색을 구분하기 위해
+   프로젝트에서 이미 쓰던 초록색(url-import-active 등) 사용. */
+.image-thumb-wrap.insert-selected {
+  box-shadow: 0 0 0 2px rgba(79,216,110,0.6);
+}
+.insert-selected-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  background: #4fd86e;
+  color: #0a0a0a;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  padding: 3px 4px;
+  border-radius: 6px;
+  line-height: 1.2;
+}
 .image-thumb {
   width: 100%;
   height: 100%;
