@@ -1787,6 +1787,30 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
   const allLoading = images.every(img => img.loading);
   const hasAny     = images.some(img => img.url);
   const [imgQuery, setImgQuery] = React.useState('');
+  // 2026-08-04 신규: 더블클릭은 브라우저에서 click 이벤트 2번 + dblclick
+  // 1번이 순서대로 발생함 — onClick(썸네일 배경 선택)이 그대로 있으면
+  // 더블클릭으로 삽입 선택을 하려 할 때마다 썸네일 배경이 먼저 켜졌다가
+  // 다시 꺼지는(토글 2번) 문제가 실사용에서 확인됨. 단일 클릭은 이 타이머로
+  // 살짝 지연시키고, 그 사이 두 번째 클릭(=더블클릭)이 오면 지연된 썸네일
+  // 배경 선택 자체를 취소해 더블클릭 중에는 기존 썸네일 배경 선택이 전혀
+  // 건드려지지 않도록 함.
+  const clickTimerRef = React.useRef(null);
+  const handleCardClick = (idx, img) => {
+    if (!img.url || img.loading) return;
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => {
+      onSelectThumbBg(idx);
+      clickTimerRef.current = null;
+    }, 250);
+  };
+  const handleCardDoubleClick = (idx, img) => {
+    if (!img.url || img.loading) return;
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    if (idx >= 5) onToggleInsertSelect(idx);
+  };
 
   const handleSearch = () => {
     const q = imgQuery.trim();
@@ -1845,8 +1869,8 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
                 가능 — 기존 0~4는 항상 삽입되므로 더블클릭 대상 아님. */}
             <div
               className={`image-thumb-wrap${thumbBgIndex === idx ? ' selected' : ''}${insertSelected?.has(idx) ? ' insert-selected' : ''}`}
-              onClick={() => img.url && !img.loading && onSelectThumbBg(idx)}
-              onDoubleClick={() => idx >= 5 && img.url && !img.loading && onToggleInsertSelect(idx)}
+              onClick={() => handleCardClick(idx, img)}
+              onDoubleClick={() => handleCardDoubleClick(idx, img)}
               role={img.url ? 'button' : undefined}
               title={img.url ? (idx >= 5 ? '클릭=썸네일 배경 선택 · 더블클릭=삽입 선택' : '클릭하면 썸네일 배경으로 선택됩니다') : undefined}
               style={img.url ? { cursor: 'pointer' } : undefined}
