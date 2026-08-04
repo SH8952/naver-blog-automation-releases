@@ -232,7 +232,11 @@ export default function PostCreate() {
   const [importUrl, setImportUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
-  const [sourceMaterial, setSourceMaterial] = useState(null); // { url, title, text } | null
+  // 2026-08-04 신규: URL 가져오기 모달에서 고를 글 톤 — 기본값 정보형.
+  // 상품 판매 관련 소스를 가져올 때 리뷰형으로 선택하면 제휴 상품 코드가
+  // 붙을 수 있도록 하기 위함(사용자 요청).
+  const [importTone, setImportTone] = useState('info');
+  const [sourceMaterial, setSourceMaterial] = useState(null); // { url, title, text, tone } | null
   // 2026-07-29 신규: 가져오기 성공 시 잠깐 떴다가(3초) 자동으로 사라지는 알림
   const [importToast, setImportToast] = useState(false);
 
@@ -502,7 +506,10 @@ export default function PostCreate() {
       const res = await window.electronAPI.dev.fetchUrlText({ url: importUrl.trim() });
       if (res.success) {
         const shortTopic = (res.topic && res.topic.trim()) || (res.title || '').trim().slice(0, 11) || topic;
-        const material = { url: res.url, title: res.title || '', text: res.text || '' };
+        // 2026-08-04 신규: 모달에서 고른 톤(importTone)을 sourceMaterial에
+        // 함께 저장 — "주제" 화면의 고정 힌트 문구가 실제 선택된 톤을
+        // 정확히 표시하도록 함(하드코딩된 '정보형' 대신).
+        const material = { url: res.url, title: res.title || '', text: res.text || '', tone: importTone };
 
         // 키워드 자동 생성 — 기존 "✦ 키워드 자동 생성" 기능과 동일한 IPC 재사용
         let kwArray = [];
@@ -516,7 +523,7 @@ export default function PostCreate() {
         // 화면에도 반영(사용자가 결과 확인 가능하도록) — 실제 생성 호출은 아래 override로 진행
         setTopic(shortTopic);
         setKeywords(kwArray.join(', '));
-        setTone('info');
+        setTone(importTone);
         setSourceMaterial(material);
         setShowUrlImport(false);
         setImportUrl('');
@@ -527,7 +534,7 @@ export default function PostCreate() {
 
         // 원문을 재가공해서 곧바로 글 생성 — 완료되면 기존 generating 스피너와
         // 동일하게 진행 상태가 표시되고, 끝나면 결과가 미리보기에 나타난다.
-        await handleGenerate({ topic: shortTopic, keywords: kwArray, tone: 'info', sourceMaterial: material });
+        await handleGenerate({ topic: shortTopic, keywords: kwArray, tone: importTone, sourceMaterial: material });
       } else {
         setImportError(res.error || '가져오기 실패');
       }
@@ -1334,10 +1341,15 @@ export default function PostCreate() {
             <div className="panel-field panel-flex1">
               <label className="panel-label">
                 글 톤
-                {/* 2026-07-29 신규: "글 가져오기" 참고자료가 있을 때는 정보형으로 고정 */}
-                {sourceMaterial && <span className="label-hint" style={{ marginLeft: 6 }}>가져온 글 — 정보형 고정</span>}
+                {/* 2026-07-29 신규: "글 가져오기" 참고자료가 있을 때는 모달에서 고른
+                    톤으로 고정(2026-08-04: 하드코딩된 '정보형' 대신 실제 선택 톤 표시) */}
+                {sourceMaterial && (
+                  <span className="label-hint" style={{ marginLeft: 6 }}>
+                    가져온 글 — {TONE_OPTIONS.find(o => o.value === sourceMaterial.tone)?.label || '정보형'} 고정
+                  </span>
+                )}
               </label>
-              <DescSelect options={TONE_OPTIONS} value={sourceMaterial ? 'info' : tone} onChange={setTone} disabled={!!sourceMaterial} />
+              <DescSelect options={TONE_OPTIONS} value={sourceMaterial ? sourceMaterial.tone : tone} onChange={setTone} disabled={!!sourceMaterial} />
             </div>
             <div className="panel-field panel-flex1">
               <label className="panel-label">문체</label>
@@ -1492,6 +1504,14 @@ export default function PostCreate() {
                   autoFocus
                 />
                 {importError && <span className="kw-error">{importError}</span>}
+              </div>
+              {/* 2026-08-04 신규: 가져온 원문을 어떤 톤으로 재작성할지 선택 —
+                  상품 판매 관련 소스면 리뷰형을 골라 제휴 상품 코드가
+                  붙도록 할 수 있음(사용자 요청). URL 입력칸 바로 아래
+                  좌측 정렬로 배치. */}
+              <div className="modal-field url-import-tone-field">
+                <label className="panel-label">글 톤</label>
+                <DescSelect options={TONE_OPTIONS} value={importTone} onChange={setImportTone} disabled={importing} />
               </div>
             </div>
             <div className="modal-footer">

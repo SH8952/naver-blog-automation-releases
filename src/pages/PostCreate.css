@@ -977,6 +977,15 @@
   color: var(--text-muted, #888);
 }
 
+/* 2026-08-04 신규: URL 가져오기 모달의 "글 톤" 드롭다운 — 이 필드
+   혼자 520px 모달 폭을 그대로 차지해서(.desc-select 기본 width:100%)
+   트리거/펼침목록이 불필요하게 커 보이던 문제. 트리거 폭만 좁게
+   고정하고, 펼침목록은 .desc-select-menu의 기존 width:max-content가
+   부연설명 글자 길이에 맞춰 자동으로 넓어지므로 잘리지 않는다. */
+.url-import-tone-field .desc-select {
+  width: 160px;
+}
+
 /* ── 관련 사이트 수동 편집 (2026-07-22 신규) ─────────────────── */
 .links-section-header {
   display: flex;
