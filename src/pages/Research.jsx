@@ -294,9 +294,13 @@ export default function Research() {
   // 이 화면(글감 수집)에 들어올 때마다 자동으로 한 번 불러오도록 변경.
   // loadTrends()가 끝나면 trendsLoaded가 true로 바뀌면서 버튼 라벨도
   // 자동으로 "🔄 새로고침"으로 바뀜(기존 로직 그대로, 별도 처리 불필요).
+  // 2026-08-05 수정: 원래 있던 "// eslint-disable-next-line
+  // react-hooks/exhaustive-deps" 주석이 일부 환경(Windows 빌드)에서
+  // "규칙을 찾을 수 없음" 에러로 빌드 자체를 막는 문제가 있어 제거함.
+  // loadTrends를 의존성 배열에 넣지 않아 콘솔 경고가 다시 뜰 수 있으나
+  // 경고는 빌드를 막지 않고, 기능(진입 시 1회 자동 로드)은 동일함.
   useEffect(() => {
     loadTrends();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 트렌드/키워드 분석 결과를 등록된 키워드로 추가
