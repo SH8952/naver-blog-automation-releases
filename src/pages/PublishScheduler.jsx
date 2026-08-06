@@ -8,6 +8,14 @@ function firstDayOf(y, m)  { return new Date(y, m, 1).getDay(); } // 0=Sun
 function fmtDate(y, m, d)  { return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
 function toDateStr(iso)    { return iso ? iso.slice(0, 10) : ''; }
 function toTimeStr(iso)    { return iso ? iso.slice(11, 16) : ''; }
+// 2026-08-06 신규: scheduled_at은 "YYYY-MM-DDTHH:MM" 형식의 로컬시각
+// 문자열(타임존 없음)이라, 비교할 "지금"도 UTC 기준 toISOString이 아니라
+// 동일한 로컬시각 형식으로 만들어야 정확히 비교된다.
+function nowLocalStr() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const STATUS_LABEL = {
   scheduled:      { label: '예약', cls: 'badge-scheduled' },
@@ -52,7 +60,6 @@ export default function PublishScheduler() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(fmtDate(today.getFullYear(), today.getMonth(), today.getDate()));
-  const [cancellingId, setCancellingId] = useState(null);
   const [showAllPublished, setShowAllPublished] = useState(false);
   const [showAllSelected,  setShowAllSelected]  = useState(false);
   const PUBLISHED_LIMIT = 5;
@@ -120,15 +127,6 @@ export default function PublishScheduler() {
 
   const selectedPosts = postsByDate[selectedDate] || [];
 
-  // 예약 취소
-  const handleCancel = async (id) => {
-    if (!window.confirm('예약을 취소하시겠습니까?')) return;
-    setCancellingId(id);
-    await window.electronAPI.publish.cancel(id);
-    setCancellingId(null);
-    loadPosts();
-  };
-
   // 월 이동
   const prevMonth = () => {
     if (month === 0) { setYear(y => y - 1); setMonth(11); }
@@ -149,13 +147,23 @@ export default function PublishScheduler() {
 
   const todayStr = fmtDate(today.getFullYear(), today.getMonth(), today.getDate());
 
-  const publishedPosts  = posts.filter(p => p.status === 'published')
-    .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
-  // (2026-07-03) 'reserved' = 네이버 자체 예약 기능으로 이미 등록 완료된 상태.
-  // 'scheduled'(우리 앱 스케줄러가 나중에 처리 예정)와 구분되지만, 목록에는
-  // 함께 "예약대기"로 보여준다. 단, 취소 버튼은 'scheduled'에만 남겨둔다
-  // (reserved는 이미 네이버 쪽에 등록이 끝나서 우리 앱에서 취소할 수 없음).
-  const scheduledPosts  = posts.filter(p => p.status === 'scheduled' || p.status === 'reserved')
+  // 2026-08-06 신규: 'reserved'(네이버 자체 예약 등록 완료)는 실제 발행이
+  // 네이버 서버에서 예약 시각에 처리되는데, 이 앱은 그 시점을 통보받을
+  // 방법이 없어(콜백 없음) DB status가 영원히 'reserved'로 남아있었음 —
+  // 예약 시각이 지났는데도 "예약 대기"에 계속 남아있던 버그(사용자 지적).
+  // 앱이 예약 발행 자동화를 문제없이 마쳤다면(=이 상태까지 도달했다면)
+  // 발행 자체는 정상 완료된 것으로 판단하고(사용자 확인 — 문제가 생기면
+  // 검수 대기/실패로 빠지지 이 상태까지 오지 않음), 실제로 네이버를 다시
+  // 열어 재확인하지 않고 "예약 시각이 지났는가"만으로 판단한다.
+  const nowStr = nowLocalStr();
+  const isDuePastReserved = p => p.status === 'reserved' && p.scheduled_at && p.scheduled_at <= nowStr;
+
+  const publishedPosts  = posts.filter(p => p.status === 'published' || isDuePastReserved(p))
+    .sort((a, b) => (b.published_at || b.scheduled_at || '').localeCompare(a.published_at || a.scheduled_at || ''));
+  // 'reserved'인데 아직 예약 시각이 안 지난 것만 "예약 대기"에 남긴다.
+  // 'scheduled'(우리 앱 스케줄러가 나중에 처리 예정, 현재 경로에서는
+  // 실질적으로 발생하지 않음)도 계속 함께 표시.
+  const scheduledPosts  = posts.filter(p => p.status === 'scheduled' || (p.status === 'reserved' && !isDuePastReserved(p)))
     .sort((a, b) => (a.scheduled_at || '').localeCompare(b.scheduled_at || ''));
 
   return (
@@ -361,13 +369,7 @@ export default function PublishScheduler() {
                       </a>
                     )}
                     {post.status === 'scheduled' && (
-                      <button
-                        className="btn btn-ghost btn-xs post-cancel-btn"
-                        onClick={() => handleCancel(post.id)}
-                        disabled={cancellingId === post.id}
-                      >
-                        {cancellingId === post.id ? '취소 중…' : '예약 취소'}
-                      </button>
+                      <p className="post-cancel-notice">앱에서 취소는 불가하며 네이버 블로그 관리 화면에서 직접 처리해주세요.</p>
                     )}
                   </div>
                 );
@@ -400,9 +402,12 @@ export default function PublishScheduler() {
                     {(showAllPublished ? publishedPosts : publishedPosts.slice(0, PUBLISHED_LIMIT)).map(post => (
                       <div key={post.id} className="card post-item post-item-compact">
                         <div className="post-item-header">
-                          <span className="badge badge-published">발행완료</span>
+                          {/* 2026-08-06 신규: status가 여전히 'reserved'인 항목은 예약
+                              시각이 지나 이 목록으로 옮겨온 것 — 실제 발행 완료와
+                              구분되도록 "예약 발행완료" 라벨 표시 */}
+                          <span className="badge badge-published">{post.status === 'reserved' ? '예약 발행완료' : '발행완료'}</span>
                           <span className="post-item-time">
-                            {post.published_at ? post.published_at.slice(0, 16).replace('T', ' ') : ''}
+                            {(post.published_at || post.scheduled_at) ? (post.published_at || post.scheduled_at).slice(0, 16).replace('T', ' ') : ''}
                           </span>
                         </div>
                         <p className="post-item-title">{post.title || '(제목 없음)'}</p>
@@ -444,13 +449,7 @@ export default function PublishScheduler() {
                           </span>
                         </div>
                         <p className="post-item-title">{post.title || '(제목 없음)'}</p>
-                        <button
-                          className="btn btn-ghost btn-xs post-cancel-btn"
-                          onClick={() => handleCancel(post.id)}
-                          disabled={cancellingId === post.id}
-                        >
-                          {cancellingId === post.id ? '취소 중…' : '예약 취소'}
-                        </button>
+                        <p className="post-cancel-notice">앱에서 취소는 불가하며 네이버 블로그 관리 화면에서 직접 처리해주세요.</p>
                       </div>
                     ))}
                   </div>

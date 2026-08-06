@@ -286,7 +286,12 @@
 }
 .post-item-link:hover { text-decoration: underline; }
 
-.post-cancel-btn { margin-top: 6px; color: var(--danger); }
+.post-cancel-notice {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
 
 /* ── 뱃지 ───────────────────────────────────────────────────── */
 .badge {
