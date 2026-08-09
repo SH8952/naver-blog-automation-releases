@@ -1369,11 +1369,20 @@ export default function PostCreate() {
                 {!sourceMaterial && tone === 'review' && reviewProductName && (
                   <span
                     className="label-hint"
-                    style={{ marginLeft: 6, cursor: 'pointer', textDecoration: 'underline' }}
+                    style={{
+                      marginLeft: 'auto',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                      textAlign: 'right',
+                    }}
                     onClick={() => { setReviewProductInput(reviewProductName); setShowReviewProductModal(true); }}
-                    title="클릭해서 지정 제품명 수정"
+                    title={`클릭해서 지정 제품명 수정 — ${reviewProductName}`}
                   >
-                    지정 제품: {reviewProductName} (수정)
+                    지정: {reviewProductName}
                   </span>
                 )}
               </label>
