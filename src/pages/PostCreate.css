@@ -1000,6 +1000,25 @@
   gap: 6px;
   flex-shrink: 0;
 }
+/* 2026-08-09 신규: "게시글에 삽입" 체크박스 — 삭제 버튼 우측 */
+.links-insert-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.links-insert-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 .links-rows {
   display: flex;
   flex-direction: column;

@@ -2202,6 +2202,12 @@ const DEFAULT_LOOP_SETTINGS = {
   cycleDurationHours: 4,          // cycleMode='duration'일 때 총 실행 시간(시간)
   keywordExhaustion: 'refill',    // 'refill'(트렌드 자동 보충) | 'notify'(중단+알림)
   pcShutdownOnExhaustion: false,  // 완전자동에서 키워드 소진 시 PC 종료 여부
+  // 2026-08-09 신규: 완전자동/반자동 "관련 사이트" 삽입 — 매 글마다 항상
+  // 삽입되면 저품질 판정 위험이 있다는 우려로, 활성화 시에만 지정한
+  // 비율(%)로 무작위 삽입하도록 함. 기본값은 비활성화(사용자가 직접
+  // 확인 후 켜도록).
+  relatedLinksEnabled: false,     // 관련 사이트 무작위 삽입 활성화 여부
+  relatedLinksRatio: 70,          // 활성화 시 삽입 비율(0~100%)
 };
 const LOOP_SHUTDOWN_COUNTDOWN_SEC = 60; // 사용자 확인(2026-07-05): 60초 고정
 
@@ -8824,6 +8830,14 @@ async function processLoopStep() {
   // - 이미지 누락: 언스플래시 사진을 한 장도 확보하지 못한 경우.
   // - 본문 누락: result.body가 비어있는 경우.
   // - 관련 사이트 누락: result.links가 비어있는 경우.
+  // 2026-08-09 신규: 완전자동/반자동 "관련 사이트" 삽입 여부를 환경설정의
+  // relatedLinksEnabled/relatedLinksRatio로 확률적으로 결정한다. AI가 생성한
+  // result.links 자체는 그대로 두고(아래 누락 판정과 무관하게 항상 생성됨),
+  // 실제로 게시글에 넣을지만 별도로 결정 — 비활성화 상태(기본값)면 매번
+  // 빈 배열로 처리해 관련 사이트 없이 발행되며, 이 경우 "누락"으로 취급해
+  // 검수 대기로 돌리지 않는다(의도적으로 뺀 것이므로).
+  const insertRelatedLinks = !!settings.relatedLinksEnabled
+    && (Math.random() * 100 < (Number.isFinite(settings.relatedLinksRatio) ? settings.relatedLinksRatio : 70));
   let preGenThumbPath = null;
   const missingParts = [];
   if (loopState.mode === 'auto') {
@@ -8839,7 +8853,9 @@ async function processLoopStep() {
     if (autoThumbnail && !preGenThumbPath) missingParts.push('썸네일');
     if (!loopImages.length) missingParts.push('이미지');
     if (!result.body || !result.body.trim()) missingParts.push('본문');
-    if (!result.links || !result.links.length) missingParts.push('관련 사이트');
+    // 2026-08-09 수정: 이번 회차에 관련 사이트를 넣기로 한 경우(insertRelatedLinks)
+    // 에만 누락 여부를 판정 — 비활성화/무작위로 뺀 경우는 애초에 필요 없으므로 제외.
+    if (insertRelatedLinks && (!result.links || !result.links.length)) missingParts.push('관련 사이트');
   }
   const needsReview = loopState.mode === 'auto' && missingParts.length > 0;
   const finalStatus = (loopState.mode === 'semi' || needsReview) ? 'review' : 'publishing';
@@ -8847,6 +8863,8 @@ async function processLoopStep() {
   const memo = needsReview
     ? `완전자동에서 발행되었으나 ${missingParts.join(', ')}가 누락되어 검수 대기로 이동되었습니다.`
     : '';
+  // 관련 사이트를 넣지 않기로 했으면 실제 저장/발행에 쓰일 contentObj에서 비움
+  if (!insertRelatedLinks) contentObj.links = [];
 
   const insertInfo = db.prepare(
     `INSERT INTO posts (account_id, naver_id, title, content_json, hashtags, images_json, status, category, visibility, auto_thumbnail, source, memo, created_at)
@@ -8998,6 +9016,9 @@ ipcMain.handle('post:saveDraft', async (event, { accountId, post }) => {
       // 대신 채워지고 "키워드" 칸은 빈 채로 나오는 문제가 있었음.
       topic: post.topic || '',
       keywords: post.keywords || '',
+      // 2026-08-09 신규: "관련 사이트를 게시글에 삽입" 체크 여부도 함께 저장해
+      // 재사용 시 그대로 복원(links 자체는 항상 원본 그대로 저장됨).
+      insertLinks: !!post.insertLinks,
     };
     const insertInfo = db.prepare(
       `INSERT INTO posts (account_id, naver_id, title, content_json, hashtags, images_json, status, category, visibility, auto_thumbnail, source, memo, created_at)

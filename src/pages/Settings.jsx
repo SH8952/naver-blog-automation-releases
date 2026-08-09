@@ -467,6 +467,9 @@ const LOOP_DEFAULTS = {
   cycleDurationHours: 4,
   keywordExhaustion: 'refill',
   pcShutdownOnExhaustion: false,
+  // 2026-08-09 신규: 완전자동/반자동 "관련 사이트" 무작위 삽입(기본 비활성화)
+  relatedLinksEnabled: false,
+  relatedLinksRatio: 70,
 };
 
 // ── 네이버 블로그 공식 카테고리 전체 목록 (2026-07-06 신규) ─────
@@ -1820,6 +1823,41 @@ export default function Settings() {
           <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'6px', lineHeight:1.6}}>
             "글 생성" 화면의 수동 발행 시 브라우저 표시 여부는 이 설정과 별개로, 발행할 때마다 직접 선택합니다(기본값 해제).
           </p>
+        </div>
+
+        {/* 2026-08-09 신규: 완전자동/반자동 "관련 사이트" 삽입 — 매 글마다
+            항상 삽입되면 저품질 판정 위험이 있다는 우려로, 기본값은
+            비활성화(사용자가 직접 확인 후 켜도록)이고, 켜면 지정한 비율(%)로
+            무작위 삽입한다. "글 생성" 화면(수동 발행)은 별도의 체크박스로
+            그때그때 직접 선택하므로 이 설정의 영향을 받지 않는다. */}
+        <div className="form-group" style={{ marginTop: '18px' }}>
+          <label style={{ display:'flex', alignItems:'center', gap:'10px', cursor:'pointer' }}>
+            <input type="checkbox" checked={!!loopForm.relatedLinksEnabled}
+              onChange={e => setLoop('relatedLinksEnabled', e.target.checked)}
+              style={{ width:'16px', height:'16px', accentColor:'var(--accent)' }} />
+            <span>관련 사이트 무작위 삽입</span>
+          </label>
+          <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'6px', lineHeight:1.6}}>
+            비활성화 시 완전자동·반자동 글에는 관련 사이트를 넣지 않습니다(기본값). "글 생성" 화면의 수동 발행은 이 설정과 별개로, 발행할 때마다 직접 체크박스로 선택합니다.
+          </p>
+          {loopForm.relatedLinksEnabled && (
+            <div style={{ marginTop: '10px', paddingLeft: '26px' }}>
+              <p style={{fontSize:'11px', color:'var(--text-secondary)', marginBottom:'8px'}}>
+                저품질을 고려해 무작위로 삽입됩니다.
+              </p>
+              <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+                <input
+                  type="range" min={0} max={100} step={5}
+                  value={loopForm.relatedLinksRatio}
+                  onChange={e => setLoop('relatedLinksRatio', Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--accent)' }}
+                />
+                <span style={{ fontSize: '13px', fontWeight: 600, minWidth: '40px', textAlign: 'right' }}>
+                  {loopForm.relatedLinksRatio}%
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

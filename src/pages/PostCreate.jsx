@@ -133,6 +133,10 @@ export default function PostCreate() {
   // 사용자가 특정 상품명을 지정할 수 있게 함 — 입력하면 쿠팡 제휴 상품
   // 검색 시 글 제목 대신 이 제품명을 우선 사용(더 정확한 상품 매칭 목적).
   const [reviewProductName, setReviewProductName] = useState('');
+  // 2026-08-09 신규: "관련 사이트"를 실제로 게시글에 삽입할지 여부(기본 해제).
+  // AI가 3개를 생성해 보여주는 것과는 별개로, 사용자가 확인 후 체크해야만
+  // 미리보기/발행 결과에 반영된다.
+  const [insertLinks, setInsertLinks] = useState(false);
   const [showReviewProductModal, setShowReviewProductModal] = useState(false);
   const [reviewProductInput, setReviewProductInput] = useState('');
   const [writingStyle, setWritingStyle] = useState('auto');
@@ -354,6 +358,8 @@ export default function PostCreate() {
     // 톤으로 저장한 글을 불러와도 제휴 광고 게이팅이 어긋날 수 있었음).
     if (rp.tone) setTone(rp.tone);
     setReviewProductName(rp.reviewProductName || '');
+    // 2026-08-09 신규: "관련 사이트를 게시글에 삽입" 체크 여부도 함께 복원
+    setInsertLinks(!!rp.insertLinks);
 
     const rpImages = rp.images || [];
     setImages(IMG_POSITIONS.map((pos, i) => ({
@@ -506,6 +512,8 @@ export default function PostCreate() {
     setImportToast(false);
     // 2026-08-07 신규: 지정했던 리뷰 제품명도 함께 초기화
     setReviewProductName('');
+    // 2026-08-09 신규: 관련 사이트 삽입 체크박스도 기본값(해제)으로 초기화
+    setInsertLinks(false);
   };
 
   // ── [개발자 전용 테스트] URL 글 가져오기 ──────────────────
@@ -655,7 +663,9 @@ export default function PostCreate() {
         intro: result.intro,
         body: result.body,
         conclusion: result.conclusion,
-        links: Array.isArray(result.links) ? result.links : [],
+        // 2026-08-09 신규: "게시글에 삽입" 체크박스가 해제돼 있으면 미리보기에도
+        // 관련 사이트를 빼서, 실제 발행 결과와 미리보기가 어긋나지 않게 함.
+        links: insertLinks && Array.isArray(result.links) ? result.links : [],
         hashtags: hashtagList,
         autoThumbnail: autoThumbnail,
         // 2026-07-07: 이미지 카드를 클릭해 썸네일 배경을 직접 선택한 경우 전달
@@ -734,7 +744,10 @@ export default function PostCreate() {
           intro: result.intro,
           body: result.body,
           conclusion: result.conclusion,
+          // 2026-08-09: 임시저장은 "게시글에 삽입" 체크 여부와 무관하게 AI가
+          // 생성한 관련 사이트 원본을 그대로 저장(체크 상태 자체는 insertLinks로 별도 저장)
           links: Array.isArray(result.links) ? result.links : [],
+          insertLinks,
           hashtags: hashtagList,
           images: images.map(img => ({ id: img.id, url: img.url, thumb: img.thumb, alt: img.alt, photographer: img.photographer })),
           category: publishCategory.trim(),
@@ -774,7 +787,9 @@ export default function PostCreate() {
           intro: result.intro,
           body: result.body,
           conclusion: result.conclusion,
-          links: Array.isArray(result.links) ? result.links : [],
+          // 2026-08-09 신규: "게시글에 삽입" 체크박스 해제 시 실제 발행과
+          // 동일하게 관련 사이트를 빼서 테스트
+          links: insertLinks && Array.isArray(result.links) ? result.links : [],
           hashtags: hashtagList,
           images: images.map(img => ({ url: img.url, alt: img.alt })),
           category: publishCategory.trim(),
@@ -826,7 +841,8 @@ export default function PostCreate() {
           intro: result.intro,
           body: result.body,
           conclusion: result.conclusion,
-          links: Array.isArray(result.links) ? result.links : [],
+          // 2026-08-09 신규: "게시글에 삽입" 체크박스가 해제돼 있으면 관련 사이트를 뺌
+          links: insertLinks && Array.isArray(result.links) ? result.links : [],
           hashtags: hashtagList,
           images: images.map(img => ({ url: img.url, alt: img.alt })),
           category: publishCategory.trim(),
@@ -926,7 +942,8 @@ export default function PostCreate() {
           intro: result.intro,
           body: result.body,
           conclusion: result.conclusion,
-          links: Array.isArray(result.links) ? result.links : [],
+          // 2026-08-09 신규: "게시글에 삽입" 체크박스가 해제돼 있으면 관련 사이트를 뺌
+          links: insertLinks && Array.isArray(result.links) ? result.links : [],
           hashtags: hashtagList,
           images: images.map(img => ({ url: img.url, alt: img.alt })),
           category: publishCategory.trim(),
@@ -1293,6 +1310,8 @@ export default function PostCreate() {
               <LinksSection
                 links={result.links}
                 onChange={(next) => setResult(p => ({ ...p, links: next }))}
+                insertEnabled={insertLinks}
+                onToggleInsertEnabled={setInsertLinks}
               />
             </>
           )}
@@ -2120,7 +2139,7 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
 // 계정 관리 화면의 "선택 삭제" 패턴(휴지통 버튼 → 체크박스 → 일괄삭제)과
 // 동일한 UX를 재사용 — 줄마다 +/- 버튼을 두지 않고 섹션 제목 옆에 작은
 // 버튼 2개만 두어 공간을 절약한다(사용자 요청).
-function LinksSection({ links, onChange }) {
+function LinksSection({ links, onChange, insertEnabled, onToggleInsertEnabled }) {
   const list = Array.isArray(links) ? links : [];
   const [bulkMode, setBulkMode] = React.useState(false);
   const [selectedIdx, setSelectedIdx] = React.useState(new Set());
@@ -2191,6 +2210,18 @@ function LinksSection({ links, onChange }) {
               </button>
             </>
           )}
+          {/* 2026-08-09 신규: 관련 사이트를 실제로 게시글에 삽입할지 여부.
+              기본 해제 — AI가 3개를 생성해 보여주는 것과는 별개로, 매 글마다
+              항상 삽입되면 저품질 판정 위험이 있다는 우려로 사용자가 직접
+              확인 후 체크해야만 미리보기/발행 결과에 반영되도록 함. */}
+          <label className="links-insert-toggle" title="체크해야 실제 미리보기·발행 결과에 관련 사이트가 삽입됩니다. 체크를 해제해도 위 목록은 그대로 유지되어 언제든 다시 켤 수 있습니다.">
+            <input
+              type="checkbox"
+              checked={!!insertEnabled}
+              onChange={e => onToggleInsertEnabled(e.target.checked)}
+            />
+            <span>게시글에 삽입</span>
+          </label>
         </div>
       </div>
 
