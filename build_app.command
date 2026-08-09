@@ -111,6 +111,30 @@ echo ""
 echo "[ 5 / 5 ]  앱 실행 중..."
 echo ""
 echo "  잠시 후 앱 창이 열립니다 🚀"
-echo "  (이 창을 닫으면 앱도 종료됩니다)"
+echo "  (이 창을 닫으면 앱도 종료됩니다 / 앱을 종료하면 이 창도 자동으로 닫힙니다)"
 echo ""
 npm start
+
+# ── 앱 종료 시 이 터미널 창도 함께 닫기 (2026-08-07 신규) ──────
+# package.json의 start 스크립트에 concurrently --kill-others를 추가해,
+# Electron 앱이 종료되면 옆에서 같이 돌던 리액트 개발 서버도 함께
+# 종료되며 위 npm start가 끝나도록 했다. 이제 스크립트가 여기까지
+# 도달하면(=앱이 완전히 종료됨) 이 터미널 창을 스스로 닫는다.
+# ※ 터미널 앱 환경설정("셸이 종료될 때: 정상 종료했으면 닫기")이
+#   이미 켜져 있다면 이 부분 없이도 자동으로 닫히지만, 기본값이
+#   꺼져있는 경우가 많아 보험 차원으로 직접 닫는 명령을 추가함.
+echo ""
+echo "앱이 종료되었습니다. 이 창을 닫습니다..."
+CURRENT_TTY="$(tty)"
+osascript -e "
+tell application \"Terminal\"
+  repeat with w in windows
+    try
+      if tty of (first tab of w) is \"$CURRENT_TTY\" then
+        close w
+      end if
+    end try
+  end repeat
+end tell
+" >/dev/null 2>&1 &
+exit 0

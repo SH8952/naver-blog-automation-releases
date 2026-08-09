@@ -129,6 +129,12 @@ export default function PostCreate() {
   const [topic, setTopic]       = useState('');
   const [keywords, setKeywords] = useState('');
   const [tone, setTone]         = useState('info');
+  // 2026-08-07 신규: 톤을 "리뷰형"으로 바꾸면 제품명 입력 모달을 띄워
+  // 사용자가 특정 상품명을 지정할 수 있게 함 — 입력하면 쿠팡 제휴 상품
+  // 검색 시 글 제목 대신 이 제품명을 우선 사용(더 정확한 상품 매칭 목적).
+  const [reviewProductName, setReviewProductName] = useState('');
+  const [showReviewProductModal, setShowReviewProductModal] = useState(false);
+  const [reviewProductInput, setReviewProductInput] = useState('');
   const [writingStyle, setWritingStyle] = useState('auto');
   const [personalExp, setPersonalExp]   = useState('auto');
   const [sentenceStyle, setSentenceStyle] = useState('auto');
@@ -487,6 +493,8 @@ export default function PostCreate() {
     setImportUrl('');
     setImportError('');
     setImportToast(false);
+    // 2026-08-07 신규: 지정했던 리뷰 제품명도 함께 초기화
+    setReviewProductName('');
   };
 
   // ── [개발자 전용 테스트] URL 글 가져오기 ──────────────────
@@ -644,6 +652,8 @@ export default function PostCreate() {
         thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
         // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 미리보기에도 반영되도록 전달
         tone,
+        // 2026-08-07 신규: 리뷰형에서 사용자가 지정한 제품명 — 있으면 제목 대신 우선 사용
+        reviewProductName: reviewProductName || undefined,
       });
       if (res.success) {
         setPreviewData(res);
@@ -717,6 +727,8 @@ export default function PostCreate() {
           forcedLayoutId: forcedLayoutId != null ? forcedLayoutId : undefined,
           thumbBgUrl: (thumbBgIndex != null && images[thumbBgIndex]?.url) || undefined,
           bonusPoints: bonusPts,
+          // 2026-08-07 신규: 리뷰형에서 사용자가 지정한 제품명 — 있으면 제목 대신 우선 사용
+          reviewProductName: reviewProductName || undefined,
           tone,
         },
       });
@@ -772,6 +784,8 @@ export default function PostCreate() {
           // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
           tone,
           bonusPoints: bonusPts,
+          // 2026-08-07 신규: 리뷰형에서 사용자가 지정한 제품명 — 있으면 제목 대신 우선 사용
+          reviewProductName: reviewProductName || undefined,
         },
       });
       if (res.success) {
@@ -868,6 +882,8 @@ export default function PostCreate() {
           // 2026-07-23 신규: 제휴 광고가 "리뷰형" 톤에서만 삽입되도록 전달
           tone,
           bonusPoints: bonusPts,
+          // 2026-08-07 신규: 리뷰형에서 사용자가 지정한 제품명 — 있으면 제목 대신 우선 사용
+          reviewProductName: reviewProductName || undefined,
         },
         scheduledAt,
       });
@@ -1348,8 +1364,32 @@ export default function PostCreate() {
                     가져온 글 — {TONE_OPTIONS.find(o => o.value === sourceMaterial.tone)?.label || '정보형'} 고정
                   </span>
                 )}
+                {/* 2026-08-07 신규: 리뷰형 + 제품명이 지정된 경우, 어떤 제품이
+                    지정됐는지 표시하고 클릭으로 다시 수정할 수 있게 함 */}
+                {!sourceMaterial && tone === 'review' && reviewProductName && (
+                  <span
+                    className="label-hint"
+                    style={{ marginLeft: 6, cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => { setReviewProductInput(reviewProductName); setShowReviewProductModal(true); }}
+                    title="클릭해서 지정 제품명 수정"
+                  >
+                    지정 제품: {reviewProductName} (수정)
+                  </span>
+                )}
               </label>
-              <DescSelect options={TONE_OPTIONS} value={sourceMaterial ? sourceMaterial.tone : tone} onChange={setTone} disabled={!!sourceMaterial} />
+              <DescSelect
+                options={TONE_OPTIONS}
+                value={sourceMaterial ? sourceMaterial.tone : tone}
+                onChange={(v) => {
+                  setTone(v);
+                  // 2026-08-07 신규: 리뷰형으로 바꾸면 제품명 입력 모달을 띄움
+                  if (v === 'review') {
+                    setReviewProductInput(reviewProductName);
+                    setShowReviewProductModal(true);
+                  }
+                }}
+                disabled={!!sourceMaterial}
+              />
             </div>
             <div className="panel-field panel-flex1">
               <label className="panel-label">문체</label>
@@ -1481,6 +1521,50 @@ export default function PostCreate() {
           )}
         </div>
       </div>
+
+      {/* ── 리뷰형 제품명 지정 모달 (2026-08-07 신규) ──────────────
+          글 톤을 "리뷰형"으로 바꾸면 뜬다. 여기 입력한 제품명이 있으면
+          쿠팡 제휴 상품 검색 시 글 제목 대신 이 값을 우선 검색어로 사용
+          (post:renderPreview / publish:now·test·schedule 모두 반영).
+          기존 예약 발행 모달과 동일한 modal-overlay/modal-box 패턴 재사용. */}
+      {showReviewProductModal && (
+        <div className="modal-overlay" onClick={() => setShowReviewProductModal(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <h2 className="modal-title">리뷰할 제품명 지정</h2>
+            <div className="modal-body">
+              <div className="modal-field">
+                <label className="panel-label">제품명 (선택 사항)</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="예: 다이슨 에어랩 컴플리트"
+                  value={reviewProductInput}
+                  onChange={e => setReviewProductInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && (setReviewProductName(reviewProductInput.trim()), setShowReviewProductModal(false))}
+                  autoFocus
+                />
+                <span className="label-hint" style={{ marginTop: 4, display: 'block' }}>
+                  입력하면 쿠팡 제휴 상품 검색 시 글 제목 대신 이 제품명을 우선 사용합니다. 비워두면 기존처럼 글 제목으로 검색합니다.
+                </span>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn btn-ghost"
+                onClick={() => { setReviewProductName(''); setShowReviewProductModal(false); }}
+              >
+                지정 안 함
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => { setReviewProductName(reviewProductInput.trim()); setShowReviewProductModal(false); }}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── URL 글 가져오기 모달 (2026-07-29 신규, 개발자 전용 테스트) ──
           기존엔 라벨 줄 안에서 인라인으로 확장되는 방식이었는데, 옆

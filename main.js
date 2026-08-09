@@ -1540,8 +1540,14 @@ app.whenReady().then(() => {
   });
 });
 
+// 2026-08-07 수정: macOS 기본 동작(창을 닫아도 앱은 독에 남아있음)은
+// 배포판(고객용)에서 그대로 유지해야 하지만, 개발자가 build_app.command로
+// npm start를 돌릴 때는 창을 닫는 것 = 앱을 완전히 끄는 것으로 취급해야
+// 터미널 자동 종료(package.json의 --kill-others)가 동작한다. isDev일
+// 때만 플랫폼 무관하게 항상 app.quit() — 배포판(app.isPackaged=true)에는
+// 전혀 영향 없음.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (isDev || process.platform !== 'darwin') app.quit();
 });
 
 
@@ -3655,7 +3661,7 @@ ${structureCountRule}
 // 자동화 없이 텍스트 섹션 HTML만 만들어 돌려준다. 이미지 자체는 렌더러가
 // 이미 갖고 있는 이미지 URL로 <img> 태그를 직접 배치하므로, 여기서는
 // 섹션 HTML과 각 조각의 존재 여부만 알려주면 충분하다.
-async function composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset }) {
+async function composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset, reviewProductName }) {
   const iconCycler = makeIconCycler(stylePreset.h2.icons);
   const introHtml = buildIntroHtml(intro, editorFont, iconCycler, stylePreset);
 
@@ -3677,7 +3683,10 @@ async function composePreviewSections({ title, tone, intro, body, conclusion, li
   // 2026-07-23 신규: 제휴 광고 — publishToNaver와 동일하게 resolveAffiliateAd로
   // 게이팅(리뷰형 톤 + 위치설정 + 키등록)한 뒤 미리보기에도 반영해, 실제
   // 발행 결과와 미리보기가 어긋나지 않도록 한다.
-  const adResult = await resolveAffiliateAd((title || '').trim(), tone);
+  // 2026-08-07 신규: 사용자가 리뷰형 선택 시 입력한 제품명(reviewProductName)이
+  // 있으면 제목 대신 그 제품명을 검색어로 우선 사용 — 특정 상품을 정확히
+  // 지정해서 노출시키고 싶다는 요청.
+  const adResult = await resolveAffiliateAd((reviewProductName || title || '').trim(), tone);
   const adHtml = adResult ? buildAffiliateAdHtml(adResult.product, adResult.platform, editorFont) : '';
   const adProductImage = adResult ? adResult.product.image : null;
   const adPosition = adResult ? adResult.position : 'none';
@@ -3707,7 +3716,7 @@ async function composePreviewSections({ title, tone, intro, body, conclusion, li
 // → publishToNaver로 그대로 전달되어 재사용된다 — 그래야 미리본 색상·
 // 구조·썸네일과 실제 발행 결과가 달라지는 문제(랜덤이 두 번 다르게
 // 뽑히는 경우)를 막을 수 있다.
-ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl, tone }) => {
+ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl, tone, reviewProductName }) => {
   try {
     const editorFont = (getStore().get('settings.editorFont', '') || '').trim();
     const styleSetting = getStore().get('settings.postStyle', -1);
@@ -3736,7 +3745,7 @@ ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, bo
       }
     }
 
-    const sections = await composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset });
+    const sections = await composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset, reviewProductName });
 
     return { success: true, ...sections, thumbDataUrl, thumbTempPath, resolvedStyleIndex, resolvedLayoutId };
   } catch (err) {
@@ -6048,7 +6057,7 @@ async function attachLinkToLastImage(publishWin, url) {
   }
 }
 
-async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, forcedLayoutId = null, thumbBgUrl = null, testMode = false, bonusPoints = null }) {
+async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, forcedLayoutId = null, thumbBgUrl = null, testMode = false, bonusPoints = null, reviewProductName = null }) {
   // 2026-07-24 신규: 테스트 모드(개발자 전용) — 실제 발행 버튼 클릭 직전까지만
   // 자동화를 수행하고 멈춘다. 실제 SE3 붙여넣기 결과를 검사(DevTools)로 그대로
   // 확인할 수 있으면서도 실제로는 아무것도 게시되지 않아 삭제할 필요가 없고
@@ -6869,7 +6878,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // "리뷰형"이고 환경설정에 API 키가 등록되어 있을 때만 동작(무분별한
   // 삽입 방지, 사용자 확인 완료). 검색 실패해도 발행 전체를 막지 않도록
   // resolveAffiliateAd 내부에서 예외를 흡수해 null을 반환한다.
-  const affiliateAd = await resolveAffiliateAd((title || '').trim(), content.tone);
+  // 2026-08-07 신규: 사용자가 리뷰형 선택 시 입력한 제품명(reviewProductName)이
+  // 있으면 제목 대신 그 제품명을 검색어로 우선 사용 — composePreviewSections와
+  // 동일한 처리(미리보기와 실제 발행 결과가 어긋나지 않도록).
+  const affiliateAd = await resolveAffiliateAd((reviewProductName || title || '').trim(), content.tone);
   const affiliateAdHtml = affiliateAd ? buildAffiliateAdHtml(affiliateAd.product, affiliateAd.platform, editorFont) : '';
   const insertAffiliateAd = async (label) => {
     if (!affiliateAd) return;
@@ -7902,6 +7914,9 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       // 2026-08-04 신규: 보너스 이미지(추가 5슬롯) 삽입 지점 — 프론트에서
       // 결정된 값을 그대로 전달, 없으면 publishToNaver가 자체적으로 무작위 결정
       bonusPoints: Array.isArray(post.bonusPoints) ? post.bonusPoints : undefined,
+      // 2026-08-07 신규: 리뷰형 톤에서 사용자가 지정한 제품명 — 있으면
+      // 제휴 광고 상품 검색 시 제목 대신 이 값을 우선 사용
+      reviewProductName: post.reviewProductName || undefined,
     });
 
     return { success: true, postId, warning: limitCheck.warning || undefined };
@@ -7938,6 +7953,9 @@ ipcMain.handle('publish:test', async (event, { accountId, post }) => {
       forcedLayoutId: post.forcedLayoutId != null ? post.forcedLayoutId : null,
       thumbBgUrl: post.thumbBgUrl || null,
       bonusPoints: Array.isArray(post.bonusPoints) ? post.bonusPoints : undefined,
+      // 2026-08-07 신규: 리뷰형 톤에서 사용자가 지정한 제품명 — 있으면
+      // 제휴 광고 상품 검색 시 제목 대신 이 값을 우선 사용
+      reviewProductName: post.reviewProductName || undefined,
       testMode: true,
     });
     return { success: true };
@@ -8061,6 +8079,9 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       // 사용자가 이미지 카드에서 선택한 썸네일 배경이 반영되도록 전달
       thumbBgUrl: post.thumbBgUrl || null,
       bonusPoints: Array.isArray(post.bonusPoints) ? post.bonusPoints : undefined,
+      // 2026-08-07 신규: 리뷰형 톤에서 사용자가 지정한 제품명 — 있으면
+      // 제휴 광고 상품 검색 시 제목 대신 이 값을 우선 사용
+      reviewProductName: post.reviewProductName || undefined,
     });
 
     return { success: true, postId };
