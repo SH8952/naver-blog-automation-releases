@@ -109,6 +109,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     /** 검수 대기 글 삭제 */
     deleteReview: (id) => ipcRenderer.invoke('post:deleteReview', { id }),
+
+    /** 발행 전 미리보기에서 임시저장 → 검수 대기로 저장 (2026-08-09 신규) */
+    saveDraft: (params) => ipcRenderer.invoke('post:saveDraft', params),
   },
 
   // ── 자동화 루프 (2026-07-05 신규) ────────────────────────────

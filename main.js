@@ -4789,12 +4789,27 @@ function toMainDomainUrl(url) {
 
 // links 배열 중 실제로 열리는 주소만 남겨서 반환(형식 보정: 프로토콜
 // 없으면 https:// 자동 추가, 세부 경로가 있으면 메인 도메인으로 축약)
+// 2026-08-09 수정: link.manual === true(사용자가 "관련 사이트" 카드에서
+// 직접 추가/URL을 수정한 링크)는 메인 도메인 축약뿐 아니라 접속 가능
+// 여부 확인(checkUrlReachable)까지 건너뛰고 원본 URL을 그대로 유지한다.
+// 이유 1) 링크프라이스/쿠팡파트너스 등 제휴 숏링크·딥링크는 click.php?
+// m=...&a=... 같은 경로/쿼리 자체가 트래킹 정보라서, 도메인만 남기고
+// 잘라버리면 실적이 전혀 집계되지 않는 문제가 있었음.
+// 이유 2) 사용자가 브라우저로 직접 열어 정상 접속을 확인한 링크인데도,
+// click.php류 제휴 추적 링크는 봇 차단 목적으로 Referer/쿠키/UA를
+// 까다롭게 검사해 서버발 fetch 요청엔 403 등으로 응답하는 경우가 있어
+// checkUrlReachable이 오탐(false negative)으로 제외해버리는 문제가
+// 실사용 테스트로 확인됨(2026-08-09). 사용자가 직접 넣은 링크는 이미
+// 본인이 유효성을 확인한 것이므로 이 검증 자체가 불필요함.
+// (AI가 자동 생성한 링크는 여전히 축약+접속확인 모두 적용 — 세부 경로
+// 환각/존재하지 않는 주소 방지 목적 그대로 유지).
 async function filterReachableLinks(links) {
   if (!Array.isArray(links) || links.length === 0) return [];
   const checked = await Promise.all(links.map(async (link) => {
     const rawUrl = String(link?.url || '').trim();
     if (!rawUrl) return null;
     const withProtocol = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    if (link?.manual) return { ...link, url: withProtocol };
     const safeUrl = toMainDomainUrl(withProtocol);
     const ok = await checkUrlReachable(safeUrl);
     if (!ok) {
@@ -8957,6 +8972,45 @@ ipcMain.handle('post:getReviewQueue', () => {
     return { success: true, posts: rows };
   } catch (err) {
     return { success: false, error: err.message, posts: [] };
+  }
+});
+
+// ── IPC: 발행 전 미리보기에서 "임시저장" — 검수 대기로 저장 (2026-08-09 신규) ──
+// AI로 이미 생성한 글(토큰 소모 완료)을, 기능 추가/버그 수정으로 인한 앱
+// 재시작 전에 잃어버리지 않도록 저장해두는 용도. 반자동 루프가 검수 대기
+// 글을 저장할 때와 동일한 INSERT 방식을 재사용해 status='review'로 저장
+// 한다. 저장 후 프론트에서 "검수 대기" 화면으로 이동시키면, 나중에 AI를
+// 다시 호출하지 않고 "글 생성으로 이동"/"테스트로 열기"로 그대로 불러올
+// 수 있다.
+ipcMain.handle('post:saveDraft', async (event, { accountId, post }) => {
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const account = db.prepare('SELECT naver_id FROM accounts WHERE id = ?').get(accountId);
+    const contentObj = {
+      intro: post.intro, body: post.body, conclusion: post.conclusion,
+      links: post.links || [], thumbText: post.thumbText || '',
+      tone: post.tone || '',
+      // 2026-08-09 신규: 리뷰형 지정 제품명도 함께 저장해 재사용 시 복원
+      reviewProductName: post.reviewProductName || '',
+      // 2026-08-09 신규: 사용자가 입력한 원본 주제/키워드도 함께 저장 —
+      // 기존엔 저장이 안 돼서 재사용 시 "주제" 칸에 AI가 만든 제목이
+      // 대신 채워지고 "키워드" 칸은 빈 채로 나오는 문제가 있었음.
+      topic: post.topic || '',
+      keywords: post.keywords || '',
+    };
+    const insertInfo = db.prepare(
+      `INSERT INTO posts (account_id, naver_id, title, content_json, hashtags, images_json, status, category, visibility, auto_thumbnail, source, memo, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'review', ?, ?, ?, ?, ?, datetime('now','localtime'))`
+    ).run(
+      accountId, account?.naver_id || '', post.title || '(제목 없음)',
+      JSON.stringify(contentObj), JSON.stringify(post.hashtags || []), JSON.stringify(post.images || []),
+      post.category || '', post.visibility || 'public', post.autoThumbnail ? 1 : 0,
+      'manual_draft', '발행 전 미리보기에서 임시저장됨'
+    );
+    return { success: true, postId: insertInfo.lastInsertRowid };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 

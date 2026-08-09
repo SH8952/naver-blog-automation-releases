@@ -93,6 +93,11 @@ export default function ReviewQueue() {
       autoThumbnail: !!post.auto_thumbnail,
       memo: post.memo || '',
       tone: content.tone || '',
+      // 2026-08-09 신규: 리뷰형 지정 제품명도 함께 복원
+      reviewProductName: content.reviewProductName || '',
+      // 2026-08-09 신규: 임시저장 시 저장해둔 원본 주제/키워드도 함께 복원
+      topic: content.topic || '',
+      keywords: content.keywords || '',
     };
   };
 
@@ -126,6 +131,11 @@ export default function ReviewQueue() {
       visibility: post.visibility || 'public',
       autoThumbnail: !!post.auto_thumbnail,
       memo: post.memo || '',
+      // 2026-08-09 신규: 글 톤/지정 제품명/원본 주제·키워드도 함께 이동(기존엔 누락돼 있었음)
+      tone: content.tone || '',
+      reviewProductName: content.reviewProductName || '',
+      topic: content.topic || '',
+      keywords: content.keywords || '',
     };
     await window.electronAPI.post.deleteReview(post.id);
     setMovingId(null);

@@ -192,6 +192,7 @@ export default function PostCreate() {
   const [publishing, setPublishing]       = useState(false);
   const [scheduling, setScheduling]       = useState(false); // 예약 등록 중(네이버 에디터 자동화 진행 중)
   const [testing, setTesting]             = useState(false); // 2026-07-24 신규: 테스트 발행 진행 중(개발자 전용, 실제 발행 안 함)
+  const [savingDraft, setSavingDraft]     = useState(false); // 2026-08-09 신규: 임시저장(검수 대기로 저장) 진행 중
   const [publishMsg, setPublishMsg]       = useState('');    // 성공/오류 메시지
   const [headlessMode, setHeadlessMode]   = useState(true);  // true=백그라운드 발행
   const [autoThumbnail, setAutoThumbnail] = useState(true);  // 커스텀 썸네일 자동 생성 (settings.customThumbnail)
@@ -329,7 +330,12 @@ export default function PostCreate() {
     const rp = state?.reviewPost;
     if (!rp) return;
 
-    setTopic(rp.title || '');
+    // 2026-08-09 수정: 임시저장 시 함께 저장한 원본 주제(topic)가 있으면
+    // 그걸 우선 사용 — 예전에는 저장된 값이 없어 AI가 만든 제목(rp.title)을
+    // 대신 채우고 있었음(완전자동/반자동 루프가 만든 검수 대기 글처럼
+    // topic이 없는 경우엔 지금처럼 title로 대체).
+    setTopic(rp.topic || rp.title || '');
+    setKeywords(rp.keywords || '');
     setResult({
       title: rp.title || '',
       // 2026-07-08 신규: 검수 대기 → 글 생성 이동 시 썸네일 전용 문구도 복원
@@ -343,6 +349,11 @@ export default function PostCreate() {
     setAutoThumbnail(rp.autoThumbnail !== false);
     setPublishVisibility(rp.visibility || 'public');
     setReviewMemo(rp.memo || '');
+    // 2026-08-09 신규: 글 톤/지정 제품명도 함께 복원 — 기존엔 이 두 값이
+    // 검수 대기 → 글 생성 이동 시 초기값으로 리셋되던 빈틈이 있었음(리뷰형
+    // 톤으로 저장한 글을 불러와도 제휴 광고 게이팅이 어긋날 수 있었음).
+    if (rp.tone) setTone(rp.tone);
+    setReviewProductName(rp.reviewProductName || '');
 
     const rpImages = rp.images || [];
     setImages(IMG_POSITIONS.map((pos, i) => ({
@@ -701,6 +712,53 @@ export default function PostCreate() {
     setPreviewData(null);
     setPreviewPendingAction(null);
     await doTestPublish(forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints);
+  };
+
+  // 2026-08-09 신규: 발행 전 미리보기 모달에서 "임시저장" — 이미 AI 토큰을
+  // 써서 생성한 글을, 기능 추가/버그 수정으로 앱을 재시작해야 할 때
+  // 다시 생성하지 않고 재사용할 수 있도록 검수 대기(status='review')로
+  // 저장한다. 반자동/완전자동 루프가 검수 대기 글을 저장하는 것과 동일한
+  // 방식(main.js post:saveDraft)을 재사용 — 저장 후 검수 대기 화면으로
+  // 이동하면, 나중에 "글 생성으로 이동"/"테스트로 열기"로 AI 재호출 없이
+  // 그대로 불러올 수 있다.
+  const handleSaveDraft = async () => {
+    if (!result) return;
+    setSavingDraft(true);
+    setPublishMsg('');
+    try {
+      const res = await window.electronAPI.post.saveDraft({
+        accountId: Number(accountId),
+        post: {
+          title: result.title,
+          thumbText: result.thumbText || '',
+          intro: result.intro,
+          body: result.body,
+          conclusion: result.conclusion,
+          links: Array.isArray(result.links) ? result.links : [],
+          hashtags: hashtagList,
+          images: images.map(img => ({ id: img.id, url: img.url, thumb: img.thumb, alt: img.alt, photographer: img.photographer })),
+          category: publishCategory.trim(),
+          visibility: publishVisibility,
+          autoThumbnail: autoThumbnail,
+          tone,
+          reviewProductName: reviewProductName || undefined,
+          // 2026-08-09 신규: 사용자가 입력한 원본 주제/키워드도 함께 저장
+          topic,
+          keywords,
+        },
+      });
+      if (res.success) {
+        setPreviewModalOpen(false);
+        setPreviewData(null);
+        setPreviewPendingAction(null);
+        navigate('/review-queue');
+      } else {
+        setPublishMsg(`⚠️ 임시저장 실패: ${res.error || '알 수 없는 오류'}`);
+        setTimeout(() => setPublishMsg(''), 5000);
+      }
+    } finally {
+      setSavingDraft(false);
+    }
   };
 
   const doTestPublish = async (forcedThumbPath, forcedStyleIndex, forcedLayoutId, forcedBonusPoints) => {
@@ -1815,17 +1873,22 @@ export default function PostCreate() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => { setPreviewModalOpen(false); setPreviewData(null); setPreviewPendingAction(null); }} disabled={publishing || scheduling || testing}>취소</button>
+              <button className="btn btn-ghost" onClick={() => { setPreviewModalOpen(false); setPreviewData(null); setPreviewPendingAction(null); }} disabled={publishing || scheduling || testing || savingDraft}>취소</button>
+              {/* 2026-08-09 신규: 발행하지 않고 검수 대기로 저장 — 이미 AI 토큰을
+                  써서 생성한 글을 나중에(앱 재시작 후 등) 재호출 없이 재사용하기 위함 */}
+              <button className="btn btn-ghost" onClick={handleSaveDraft} disabled={publishing || scheduling || testing || savingDraft}>
+                {savingDraft ? <><span className="spinner-sm" />저장 중…</> : '💾 임시저장'}
+              </button>
               {/* 2026-07-24 신규(개발자 전용): 실제 발행 버튼만 안 누르고 나머지는
                   전부 동일하게 자동화 — 반복 테스트해도 계정에 영향 없음.
                   process.env.NODE_ENV==='development'는 기존 개발자 등급 토글(Sidebar.jsx)과
                   동일한 판정 방식이며, main.js의 publish:test 핸들러도 isDev로 이중 차단한다. */}
               {process.env.NODE_ENV === 'development' && (
-                <button className="btn btn-ghost" onClick={confirmPreviewAndTest} disabled={publishing || scheduling || testing}>
+                <button className="btn btn-ghost" onClick={confirmPreviewAndTest} disabled={publishing || scheduling || testing || savingDraft}>
                   {testing ? <><span className="spinner-sm" />테스트 중…</> : '🧪 테스트(발행 안 함)'}
                 </button>
               )}
-              <button className="btn btn-primary" onClick={confirmPreviewAndPublish} disabled={publishing || scheduling || testing}>
+              <button className="btn btn-primary" onClick={confirmPreviewAndPublish} disabled={publishing || scheduling || testing || savingDraft}>
                 {(publishing || scheduling)
                   ? <><span className="spinner-sm" />발행 중…</>
                   : previewPendingAction === 'schedule' ? '이대로 예약 발행' : '이대로 즉시 발행'}
@@ -2063,7 +2126,10 @@ function LinksSection({ links, onChange }) {
   const [selectedIdx, setSelectedIdx] = React.useState(new Set());
 
   const handleAdd = () => {
-    onChange([...list, { name: '', url: '' }]);
+    // 2026-08-09 신규: 사용자가 직접 추가한 줄은 manual:true로 표시 —
+    // 백엔드 filterReachableLinks()가 이 값을 보고 메인 도메인 축약을
+    // 건너뛰고 URL(제휴 숏링크/딥링크의 경로·쿼리 포함)을 그대로 유지한다.
+    onChange([...list, { name: '', url: '', manual: true }]);
   };
 
   const toggleBulkMode = () => {
@@ -2089,6 +2155,10 @@ function LinksSection({ links, onChange }) {
   const updateField = (idx, field, value) => {
     const next = list.slice();
     next[idx] = { ...next[idx], [field]: value };
+    // 2026-08-09 신규: URL을 직접 입력/수정하면 manual:true로 표시 —
+    // AI가 자동 생성한 링크라도 사용자가 URL을 손댄 순간부터는 원본
+    // 그대로 유지 대상이 된다(제휴 숏링크/딥링크 트래킹 정보 보존).
+    if (field === 'url') next[idx].manual = true;
     onChange(next);
   };
 
