@@ -35,6 +35,15 @@ const NAV_ITEMS = [
     ),
   },
   {
+    to: '/trends',
+    label: '인기 트렌드',
+    icon: (
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
+      </svg>
+    ),
+  },
+  {
     to: '/post-create',
     label: '글 생성',
     icon: (

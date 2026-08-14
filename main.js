@@ -2191,6 +2191,779 @@ ipcMain.handle('dev:fetchUrlText', async (event, { url }) => {
   }
 });
 
+// ── IPC: dev:investigateCreatorAdvisor (2026-08-14 신규, 개발자 전용 조사) ──
+// 크리에이터 어드바이저(creator-advisor.naver.com) 트렌드 탭을 이 앱으로
+// 가져올 수 있는지 1단계 조사. 화면 기능 없음 — 최초 로그인 계정(가장
+// 오래된 계정)의 쿠키를 재사용해 숨겨진 창으로 "검색 유입 트렌드" 탭을
+// 열고, (1) 로그인 세션이 유지되는지, (2) 카테고리/연령대 캐러셀이
+// 전체 DOM에 이미 존재하는지(단순 CSS 오버플로) 아니면 드래그해야
+// 로드되는 가상 스크롤인지 진단 정보를 로그로 남긴다. 이 조사 결과를
+// 보고 2단계(실제 탭 구현) 착수 여부/방식을 정한다.
+ipcMain.handle('dev:investigateCreatorAdvisor', async () => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  let win = null;
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    // 최초 로그인 계정 = 가장 오래된(가장 작은 id) 계정
+    const account = db.prepare('SELECT * FROM accounts ORDER BY id ASC LIMIT 1').get();
+    if (!account?.cookies_encrypted) return { success: false, error: '로그인된 계정이 없습니다.' };
+    const naverId = account.naver_id;
+    if (!naverId) return { success: false, error: '계정에 naver_id가 없습니다.' };
+    const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+
+    // 발행과 동일한 방식 — 매번 새 임시 파티션에 쿠키 주입
+    const partition = `noinit:investigate-creator-advisor-${Date.now()}`;
+    const ses = electronSession.fromPartition(partition);
+    for (const cookie of cookies) {
+      try {
+        const urlBase = cookie.domain?.startsWith('.')
+          ? `https://www${cookie.domain}`
+          : `https://${cookie.domain || 'naver.com'}`;
+        await ses.cookies.set({
+          url: urlBase, name: cookie.name, value: cookie.value,
+          domain: cookie.domain, path: cookie.path || '/',
+          secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+          expirationDate: cookie.expirationDate,
+        });
+      } catch { /* 개별 쿠키 오류 무시 */ }
+    }
+
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 1000,
+      webPreferences: {
+        session: ses, javascript: true, nodeIntegration: false,
+        contextIsolation: true, webSecurity: true, backgroundThrottling: false,
+      },
+    });
+
+    const targetUrl = `https://creator-advisor.naver.com/naver_blog/${naverId}/trends`;
+    writeLog('INFO', 'INVESTIGATE', '크리에이터 어드바이저 조사 시작', targetUrl);
+
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ success: false, error: '타임아웃(20초)' }), 20000);
+      win.webContents.loadURL(targetUrl, {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      });
+      win.webContents.on('did-finish-load', () => {
+        // SPA 렌더링 대기
+        setTimeout(async () => {
+          try {
+            const data = await win.webContents.executeJavaScript(`
+              (function() {
+                return {
+                  url: location.href,
+                  title: document.title,
+                  isLoginPage: /nid\\.naver\\.com|login/i.test(location.href),
+                  bodyTextSample: document.body.innerText.slice(0, 800),
+                  // 카테고리/연령대 캐러셀로 추정되는 영역 — class 이름에
+                  // categ/tab/swipe/scroll/carousel이 들어간 요소를 폭넓게 수집
+                  possibleCarousel: Array.from(document.querySelectorAll(
+                    '[class*="categ"], [class*="tab"], [class*="swipe"], [class*="scroll"], [class*="carousel"], [class*="Categ"], [class*="Tab"]'
+                  )).slice(0, 40).map(el => ({
+                    tag: el.tagName, cls: el.className,
+                    childCount: el.children.length,
+                    text: (el.textContent || '').slice(0, 60),
+                  })),
+                  totalListLikeCount: document.querySelectorAll('li, tr').length,
+                };
+              })()
+            `);
+            clearTimeout(timer);
+            resolve({ success: true, data });
+          } catch (e) {
+            clearTimeout(timer);
+            resolve({ success: false, error: e.message });
+          }
+        }, 4000);
+      });
+      win.webContents.on('did-fail-load', (e, code, desc) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: `로드 실패(${code}): ${desc}` });
+      });
+    });
+
+    writeLog('INFO', 'INVESTIGATE', '크리에이터 어드바이저 조사 결과', JSON.stringify(result).slice(0, 3000));
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'INVESTIGATE', '크리에이터 어드바이저 조사 실패', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+  }
+});
+
+// ── IPC: dev:investigateCreatorAdvisorPhase2 (2026-08-14 신규, 개발자 전용 조사) ──
+// 1단계 조사에서 카테고리 캐러셀(u_ni_search_swiper)이 32개 슬라이드를
+// DOM에 모두 갖고 있지만 활성 슬라이드 근처 2~3개를 제외하면 "데이터를
+// 불러오고 있습니다" placeholder만 있음을 확인했다. 이번 2단계 조사는
+// (1) 그 캐러셀이 Swiper.js 표준 방식(element.swiper)으로 접근 가능한
+// 인스턴스를 갖고 있는지, 있다면 slideTo()를 코드로 호출했을 때 실제
+// 드래그 없이도 placeholder가 실데이터로 바뀌는지, (2) 아직 구조를 본 적
+// 없는 "메인 유입 트렌드" 탭을 클릭했을 때 어떤 DOM이 나오는지를
+// 진단한다. 화면 기능 없음 — 결과는 로그로만 남는다.
+ipcMain.handle('dev:investigateCreatorAdvisorPhase2', async () => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  let win = null;
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const account = db.prepare('SELECT * FROM accounts ORDER BY id ASC LIMIT 1').get();
+    if (!account?.cookies_encrypted) return { success: false, error: '로그인된 계정이 없습니다.' };
+    const naverId = account.naver_id;
+    if (!naverId) return { success: false, error: '계정에 naver_id가 없습니다.' };
+    const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+
+    const partition = `noinit:investigate-creator-advisor-p2-${Date.now()}`;
+    const ses = electronSession.fromPartition(partition);
+    for (const cookie of cookies) {
+      try {
+        const urlBase = cookie.domain?.startsWith('.')
+          ? `https://www${cookie.domain}`
+          : `https://${cookie.domain || 'naver.com'}`;
+        await ses.cookies.set({
+          url: urlBase, name: cookie.name, value: cookie.value,
+          domain: cookie.domain, path: cookie.path || '/',
+          secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+          expirationDate: cookie.expirationDate,
+        });
+      } catch { /* 개별 쿠키 오류 무시 */ }
+    }
+
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 1000,
+      webPreferences: {
+        session: ses, javascript: true, nodeIntegration: false,
+        contextIsolation: true, webSecurity: true, backgroundThrottling: false,
+      },
+    });
+
+    const targetUrl = `https://creator-advisor.naver.com/naver_blog/${naverId}/trends`;
+    writeLog('INFO', 'INVESTIGATE2', '크리에이터 어드바이저 2단계 조사 시작', targetUrl);
+
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ success: false, error: '타임아웃(30초)' }), 30000);
+      win.webContents.loadURL(targetUrl, {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      });
+      win.webContents.on('did-finish-load', () => {
+        setTimeout(async () => {
+          try {
+            const data = await win.webContents.executeJavaScript(`
+              (async function() {
+                const out = {
+                  url: location.href,
+                  title: document.title,
+                  isLoginPage: /nid\\.naver\\.com|login/i.test(location.href),
+                };
+                try {
+                  const catEl = document.querySelector('.u_ni_search_swiper') || document.querySelector('[class*="search_swiper"]');
+                  out.catSwiperFound = !!catEl;
+                  if (catEl) {
+                    out.catSwiperClass = catEl.className;
+                    const inst = catEl.swiper;
+                    out.hasSwiperInstance = !!inst;
+                    out.hasSlideToFn = !!(inst && typeof inst.slideTo === 'function');
+                    out.activeIndexBefore = inst ? inst.activeIndex : null;
+                    out.slideCountReported = inst && inst.slides ? inst.slides.length : null;
+                    // 2026-08-14 수정: 로딩 placeholder 문구가 실데이터 로드된
+                    // 슬라이드의 DOM에도 숨겨진 채로 함께 존재해, 단순 텍스트
+                    // 포함 여부로는 "실제로 비어있는" 슬라이드를 구분 못 함(1차
+                    // 조사에서 idx0처럼 이미 로드된 슬라이드가 오탐되는 버그
+                    // 발견). textContent 총 길이(짧으면 아직 안 채워짐)로 판정.
+                    const slideEls = catEl.querySelectorAll('.swiper-slide');
+                    const snapshot = (els) => Array.from(els).slice(0, 15).map((el, i) => {
+                      const full = el.textContent || '';
+                      return {
+                        idx: i,
+                        len: full.length,
+                        looksEmpty: full.length < 150 && /데이터를 불러오고 있습니다/.test(full),
+                        textSample: full.slice(0, 100),
+                      };
+                    });
+                    out.slidesBefore = snapshot(slideEls);
+                    if (inst && typeof inst.slideTo === 'function') {
+                      let targetIdx = out.slidesBefore.findIndex(s => s.looksEmpty);
+                      if (targetIdx < 0) targetIdx = 3;
+                      const beforeLen = out.slidesBefore[targetIdx] ? out.slidesBefore[targetIdx].len : 0;
+                      inst.slideTo(targetIdx, 300);
+                      out.slideToCalledIndex = targetIdx;
+                      await new Promise(r => setTimeout(r, 3000));
+                      const slideElsAfter = catEl.querySelectorAll('.swiper-slide');
+                      out.slidesAfter = snapshot(slideElsAfter);
+                      out.activeIndexAfter = inst.activeIndex;
+                      out.targetSlideChanged = out.slidesAfter[targetIdx]
+                        ? (out.slidesAfter[targetIdx].len > beforeLen + 30)
+                        : null;
+                      // 실제 파서 작성을 위해, 로드된 슬라이드의 키워드 항목이
+                      // 어떤 태그/클래스로 나뉘어 있는지 원본 마크업 확인
+                      const loadedSlideEl = Array.from(slideElsAfter)[targetIdx];
+                      out.loadedSlideHtml = loadedSlideEl ? loadedSlideEl.innerHTML.slice(0, 2500) : null;
+                    }
+                  }
+                } catch (e) { out.catSwiperError = e.message; }
+
+                try {
+                  const navCandidates = Array.from(document.querySelectorAll(
+                    '[class*="depth1_menu"] li, [class*="depth1_menu"] a, [class*="nav_list"] li, [class*="nav_list"] a'
+                  ));
+                  out.navCandidateTexts = navCandidates.slice(0, 20).map(el => (el.textContent || '').trim()).filter(Boolean);
+                  const mainInflowTab = navCandidates.find(el => (el.textContent || '').includes('메인 유입 트렌드'));
+                  out.mainInflowTabFound = !!mainInflowTab;
+                  if (mainInflowTab) {
+                    mainInflowTab.click();
+                    await new Promise(r => setTimeout(r, 2500));
+                    out.afterClickUrl = location.href;
+                    out.afterClickBodySample = document.body.innerText.slice(0, 1000);
+                    out.afterClickCarousel = Array.from(document.querySelectorAll(
+                      '[class*="categ"], [class*="tab"], [class*="swipe"], [class*="scroll"], [class*="carousel"], [class*="Categ"], [class*="Tab"]'
+                    )).slice(0, 30).map(el => ({
+                      tag: el.tagName, cls: el.className, childCount: el.children.length,
+                      text: (el.textContent || '').slice(0, 60),
+                    }));
+                    // 실제 파서 작성을 위해, "네이버 메인에서 많이 유입된 콘텐츠"
+                    // 순위 목록의 원본 마크업(제목 뒤 3000자)을 확인
+                    const bodyHtml = document.body.innerHTML;
+                    const markerIdx = bodyHtml.indexOf('메인에서 많이 유입된 콘텐츠');
+                    out.mainInflowListHtml = markerIdx >= 0 ? bodyHtml.slice(markerIdx, markerIdx + 3000) : null;
+                  }
+                } catch (e) { out.mainInflowError = e.message; }
+
+                return out;
+              })()
+            `);
+            clearTimeout(timer);
+            resolve({ success: true, data });
+          } catch (e) {
+            clearTimeout(timer);
+            resolve({ success: false, error: e.message });
+          }
+        }, 4000);
+      });
+      win.webContents.on('did-fail-load', (e, code, desc) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: `로드 실패(${code}): ${desc}` });
+      });
+    });
+
+    writeLog('INFO', 'INVESTIGATE2', '크리에이터 어드바이저 2단계 조사 결과', JSON.stringify(result).slice(0, 4000));
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'INVESTIGATE2', '크리에이터 어드바이저 2단계 조사 실패', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+  }
+});
+
+// ── trends:getCreatorAdvisor 핵심 로직 (2026-08-14 신규, 2026-08-14 재수정) ──
+// 1~2단계 조사로 확정된 구조를 바탕으로 한 실제 기능. 최초 로그인 계정
+// (accounts 테이블 id 최솟값)의 세션으로 크리에이터 어드바이저 트렌드
+// 페이지를 열어 "검색 유입 트렌드"(주제별 서브탭 + 성별,연령별 서브탭)와
+// "메인 유입 트렌드"(네이버 메인에서 유입된 콘텐츠 순위) 세 묶음을 가져온다.
+// 카테고리 캐러셀(u_ni_search_swiper)은 활성 슬라이드 근처만 데이터가
+// 채워지는 지연 로딩 구조라, element.swiper.slideTo()를 3칸씩 건너뛰며
+// 호출해 전체 카테고리를 순회한다(한 번 호출에 인접 2~3개 카테고리가
+// 함께 로드되는 것을 조사로 확인). 새 카테고리가 3회 연속 안 나오면
+// 중단(안전장치). 성별,연령별 서브탭 전환 시 u_ni_search_swiper 클래스를
+// 가진 요소가 2개(주제별용 숨김 + 성별연령별용 표시) 동시에 존재해,
+// offsetParent로 실제 화면에 보이는 쪽을 가려서 사용한다(조사 중 첫 번째
+// 매치만 쓰면 주제별 데이터가 잘못 반환되는 버그를 발견해 수정). ipcMain
+// 핸들러와 앱 시작 시 백그라운드 미리 불러오기(prefetchCreatorAdvisorTrends)
+// 양쪽에서 공유하는 함수로 분리.
+async function fetchCreatorAdvisorTrendsCore() {
+  let win = null;
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const account = db.prepare('SELECT * FROM accounts ORDER BY id ASC LIMIT 1').get();
+    if (!account?.cookies_encrypted) return { success: false, error: '로그인된 계정이 없습니다. 계정 관리에서 먼저 네이버 계정을 로그인해주세요.' };
+    const naverId = account.naver_id;
+    if (!naverId) return { success: false, error: '계정에 네이버 아이디 정보가 없습니다.' };
+    const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+
+    const partition = `noinit:creator-advisor-trends-${Date.now()}`;
+    const ses = electronSession.fromPartition(partition);
+    for (const cookie of cookies) {
+      try {
+        const urlBase = cookie.domain?.startsWith('.')
+          ? `https://www${cookie.domain}`
+          : `https://${cookie.domain || 'naver.com'}`;
+        await ses.cookies.set({
+          url: urlBase, name: cookie.name, value: cookie.value,
+          domain: cookie.domain, path: cookie.path || '/',
+          secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+          expirationDate: cookie.expirationDate,
+        });
+      } catch { /* 개별 쿠키 오류 무시 */ }
+    }
+
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 1000,
+      webPreferences: {
+        session: ses, javascript: true, nodeIntegration: false,
+        contextIsolation: true, webSecurity: true, backgroundThrottling: false,
+      },
+    });
+
+    const targetUrl = `https://creator-advisor.naver.com/naver_blog/${naverId}/trends`;
+    writeLog('INFO', 'TRENDS', '크리에이터 어드바이저 트렌드 조회 시작', targetUrl);
+
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ success: false, error: '타임아웃(120초) — 네이버 서버 응답이 늦거나 로그인 세션이 만료됐을 수 있습니다.' }), 120000);
+      win.webContents.loadURL(targetUrl, {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      });
+      win.webContents.on('did-finish-load', () => {
+        setTimeout(async () => {
+          try {
+            const isLoginPage = /nid\.naver\.com|login/i.test(win.webContents.getURL());
+            if (isLoginPage) {
+              clearTimeout(timer);
+              resolve({ success: false, error: '로그인 세션이 만료된 것 같습니다. 계정 관리에서 해당 계정을 다시 로그인해주세요.' });
+              return;
+            }
+            const data = await win.webContents.executeJavaScript(`
+              (async function() {
+                const out = {};
+                try {
+                  const periodEl = document.querySelector('[class*="menu-sub-menu-tabs"]');
+                  const periodMatch = (periodEl?.textContent || '').match(/\\d{4}\\.\\s*\\d{2}\\.\\s*\\d{2}\\./);
+                  out.periodLabel = periodMatch ? periodMatch[0] : null;
+                } catch { out.periodLabel = null; }
+
+                // 카테고리 캐러셀 하나를 3칸씩 slideTo()로 순회하며 로드된
+                // 슬라이드의 제목+키워드 목록을 모으는 공용 함수. 주제별
+                // 캐러셀과 성별,연령별 캐러셀 둘 다 같은 마크업을 쓰므로 재사용.
+                async function collectSwiperCategories(catEl) {
+                  const categories = [];
+                  if (catEl && catEl.swiper && typeof catEl.swiper.slideTo === 'function') {
+                    const inst = catEl.swiper;
+                    const total = inst.slides ? inst.slides.length : 0;
+                    const seen = new Set();
+                    let stagnant = 0;
+                    for (let i = 0; i < total && stagnant < 3; i += 3) {
+                      inst.slideTo(i, 200);
+                      await new Promise(r => setTimeout(r, 2200));
+                      const slideEls = catEl.querySelectorAll('.swiper-slide');
+                      let gotNew = false;
+                      slideEls.forEach(slideEl => {
+                        const h3 = slideEl.querySelector('h3.u_ni_trend_title');
+                        if (!h3) return;
+                        const name = h3.textContent.trim();
+                        if (!name || seen.has(name)) return;
+                        const items = Array.from(slideEl.querySelectorAll('li.u_ni_trend_item')).map(li => {
+                          const a = li.querySelector('a.u_ni_trend_link');
+                          const keyword = (a && a.querySelector('.u_ni_trend_text')) ? a.querySelector('.u_ni_trend_text').textContent.trim() : '';
+                          const dataEl = a ? a.querySelector('.u_ni_data') : null;
+                          const rank = dataEl ? dataEl.textContent.trim() : '';
+                          let direction = 'flat';
+                          if (dataEl && dataEl.classList.contains('up')) direction = 'up';
+                          else if (dataEl && dataEl.classList.contains('down')) direction = 'down';
+                          else if (dataEl && dataEl.classList.contains('new')) direction = 'new';
+                          return { keyword, rank, direction };
+                        }).filter(it => it.keyword);
+                        if (items.length) {
+                          seen.add(name);
+                          categories.push({ name, items });
+                          gotNew = true;
+                        }
+                      });
+                      stagnant = gotNew ? 0 : stagnant + 1;
+                    }
+                  }
+                  return categories;
+                }
+
+                try {
+                  const catEl = document.querySelector('.u_ni_search_swiper');
+                  out.searchInflow = { categories: await collectSwiperCategories(catEl) };
+                } catch (e) { out.searchInflowError = e.message; out.searchInflow = { categories: [] }; }
+
+                try {
+                  // 2026-08-14 신규/재수정: "성별,연령별 인기유입검색어" 서브탭.
+                  // u_ni_search_swiper 클래스를 가진 요소가 항상 2개(주제별용,
+                  // 성별연령별용) DOM에 동시 존재하며, 재조사 결과 둘 다
+                  // display/visibility/opacity/rect가 완전히 동일해 CSS로는
+                  // 구분이 불가능함을 확인(offsetParent 기준은 틀렸었음).
+                  // 대신 DOM 순서가 항상 고정(0번=주제별 "맛집", 1번=성별연령별
+                  // "30-34세 여자" 형태)임을 실측으로 확인 — 인덱스로 직접 선택.
+                  const subNavCandidates = Array.from(document.querySelectorAll(
+                    '[class*="depth"] li, [class*="depth"] a, [class*="nav"] li, [class*="nav"] a, [class*="tab"] li, [class*="tab"] a'
+                  ));
+                  const genderAgeTab = subNavCandidates.find(el => (el.textContent || '').includes('성별,연령별 인기유입검색어'));
+                  let genderAgeGroups = [];
+                  if (genderAgeTab) {
+                    genderAgeTab.click();
+                    await new Promise(r => setTimeout(r, 1500));
+                    const swiperCandidates = Array.from(document.querySelectorAll('.u_ni_search_swiper'));
+                    const targetEl = swiperCandidates[1] || swiperCandidates[swiperCandidates.length - 1] || null;
+                    genderAgeGroups = await collectSwiperCategories(targetEl);
+                  }
+                  out.genderAgeInflow = { groups: genderAgeGroups };
+                } catch (e) { out.genderAgeInflowError = e.message; out.genderAgeInflow = { groups: [] }; }
+
+                try {
+                  const navCandidates = Array.from(document.querySelectorAll(
+                    '[class*="depth1_menu"] li, [class*="depth1_menu"] a, [class*="nav_list"] li, [class*="nav_list"] a'
+                  ));
+                  const mainTab = navCandidates.find(el => (el.textContent || '').includes('메인 유입 트렌드'));
+                  let mainItems = [];
+                  if (mainTab) {
+                    mainTab.click();
+                    await new Promise(r => setTimeout(r, 2500));
+                    mainItems = Array.from(document.querySelectorAll('ul.u_ni_realtime_list li.u_ni_realtime_item')).map(li => {
+                      const a = li.querySelector('a.u_ni_realtime_link');
+                      const rank = li.querySelector('.u_ni_rank_num') ? li.querySelector('.u_ni_rank_num').textContent.trim() : '';
+                      const title = li.querySelector('.u_ni_rank_text') ? li.querySelector('.u_ni_rank_text').textContent.trim() : '';
+                      const url = a ? a.href : '';
+                      return { rank, title, url };
+                    }).filter(it => it.title);
+                  }
+                  out.mainInflow = { items: mainItems };
+                } catch (e) { out.mainInflowError = e.message; out.mainInflow = { items: [] }; }
+
+                return out;
+              })()
+            `);
+            clearTimeout(timer);
+            resolve({ success: true, naverId, ...data });
+          } catch (e) {
+            clearTimeout(timer);
+            resolve({ success: false, error: e.message });
+          }
+        }, 4000);
+      });
+      win.webContents.on('did-fail-load', (e, code, desc) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: `로드 실패(${code}): ${desc}` });
+      });
+    });
+
+    if (result.success) {
+      writeLog('INFO', 'TRENDS', '크리에이터 어드바이저 트렌드 조회 완료',
+        `categories=${result.searchInflow?.categories?.length || 0} genderAgeGroups=${result.genderAgeInflow?.groups?.length || 0} mainItems=${result.mainInflow?.items?.length || 0}`);
+    } else {
+      writeLog('WARN', 'TRENDS', '크리에이터 어드바이저 트렌드 조회 실패', result.error);
+    }
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'TRENDS', '크리에이터 어드바이저 트렌드 조회 예외', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+  }
+}
+
+// 백그라운드 미리 불러오기 캐시(2026-08-14 신규) — 메모리에만 저장, 앱
+// 재시작 시 초기화됨. Trends.jsx는 진입 시 이 캐시를 먼저 확인해 있으면
+// 대기 없이 바로 보여주고, 없으면 기존처럼 실시간으로 불러온다.
+let creatorAdvisorTrendsCache = null; // { success, naverId, periodLabel, searchInflow, genderAgeInflow, mainInflow, fetchedAt }
+
+ipcMain.handle('trends:getCreatorAdvisor', async () => {
+  const result = await fetchCreatorAdvisorTrendsCore();
+  if (result.success) creatorAdvisorTrendsCache = { ...result, fetchedAt: Date.now() };
+  return result;
+});
+
+// 캐시만 조회(백그라운드 미리 불러오기 결과) — 없으면 success:false로
+// 응답, 프런트에서 실시간 조회(trends:getCreatorAdvisor)로 자연스럽게
+// 폴백하도록 함.
+ipcMain.handle('trends:getCached', () => {
+  if (creatorAdvisorTrendsCache) return { ...creatorAdvisorTrendsCache, cached: true };
+  return { success: false, cached: false, error: '아직 미리 불러온 트렌드가 없습니다.' };
+});
+
+// 앱 시작 시 계정 세션 확인이 끝난 뒤 백그라운드에서 트렌드를 미리
+// 가져와 캐시해 두는 함수(사용자 요청, 2026-08-14) — runStartupSessionCheck()
+// 끝에서 fire-and-forget으로 호출됨. 실패해도 조용히 로그만 남기고
+// 넘어감(사용자가 트렌드 페이지에서 직접 새로고침하면 됨).
+async function prefetchCreatorAdvisorTrends() {
+  try {
+    writeLog('INFO', 'TRENDS', '백그라운드 트렌드 미리 불러오기 시작');
+    const result = await fetchCreatorAdvisorTrendsCore();
+    if (result.success) {
+      creatorAdvisorTrendsCache = { ...result, fetchedAt: Date.now() };
+      writeLog('INFO', 'TRENDS', '백그라운드 트렌드 미리 불러오기 완료');
+    } else {
+      writeLog('WARN', 'TRENDS', '백그라운드 트렌드 미리 불러오기 실패', result.error);
+    }
+  } catch (e) {
+    writeLog('WARN', 'TRENDS', '백그라운드 트렌드 미리 불러오기 예외', e.message);
+  }
+}
+
+// ── IPC: dev:investigateCreatorAdvisorGenderAge (2026-08-14 신규, 개발자 전용 조사) ──
+// "검색 유입 트렌드" 탭에는 "주제별 인기유입검색어"(이미 구현) 서브탭 옆에
+// "성별,연령별 인기유입검색어" 서브탭이 있다(사용자가 실제 화면 스크린샷으로
+// 확인 — "60세- 남자" 같은 카드에 주제별과 동일한 형식의 키워드+순위뱃지가
+// 나타남). 이 조사는 (1) 그 서브탭으로 전환하는 nav 요소를 찾아 클릭,
+// (2) 전환 후 카테고리 캐러셀과 같은 클래스(u_ni_search_swiper)를 재사용하는지
+// 별도 캐러셀인지, (3) Swiper 인스턴스/slideTo() 접근 가능 여부와 실제
+// 연령·성별 조합 라벨 목록, (4) 로드된 카드 하나의 원본 마크업(주제별과
+// 동일한 u_ni_trend_item 구조인지)을 확인한다. 화면 기능 없음 — 결과는
+// 로그로만 남는다.
+ipcMain.handle('dev:investigateCreatorAdvisorGenderAge', async () => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  let win = null;
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const account = db.prepare('SELECT * FROM accounts ORDER BY id ASC LIMIT 1').get();
+    if (!account?.cookies_encrypted) return { success: false, error: '로그인된 계정이 없습니다.' };
+    const naverId = account.naver_id;
+    if (!naverId) return { success: false, error: '계정에 naver_id가 없습니다.' };
+    const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+
+    const partition = `noinit:investigate-creator-advisor-genderage-${Date.now()}`;
+    const ses = electronSession.fromPartition(partition);
+    for (const cookie of cookies) {
+      try {
+        const urlBase = cookie.domain?.startsWith('.')
+          ? `https://www${cookie.domain}`
+          : `https://${cookie.domain || 'naver.com'}`;
+        await ses.cookies.set({
+          url: urlBase, name: cookie.name, value: cookie.value,
+          domain: cookie.domain, path: cookie.path || '/',
+          secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+          expirationDate: cookie.expirationDate,
+        });
+      } catch { /* 개별 쿠키 오류 무시 */ }
+    }
+
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 1000,
+      webPreferences: {
+        session: ses, javascript: true, nodeIntegration: false,
+        contextIsolation: true, webSecurity: true, backgroundThrottling: false,
+      },
+    });
+
+    const targetUrl = `https://creator-advisor.naver.com/naver_blog/${naverId}/trends`;
+    writeLog('INFO', 'INVESTIGATE3', '성별,연령별 인기유입검색어 조사 시작', targetUrl);
+
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ success: false, error: '타임아웃(40초)' }), 40000);
+      win.webContents.loadURL(targetUrl, {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      });
+      win.webContents.on('did-finish-load', () => {
+        setTimeout(async () => {
+          try {
+            const data = await win.webContents.executeJavaScript(`
+              (async function() {
+                const out = {};
+                try {
+                  const subNavCandidates = Array.from(document.querySelectorAll(
+                    '[class*="depth"] li, [class*="depth"] a, [class*="nav"] li, [class*="nav"] a, [class*="tab"] li, [class*="tab"] a'
+                  ));
+                  out.subNavTexts = subNavCandidates.slice(0, 30).map(el => (el.textContent || '').trim()).filter(Boolean);
+                  const genderAgeTab = subNavCandidates.find(el => (el.textContent || '').includes('성별,연령별 인기유입검색어') || (el.textContent || '').includes('성별,연령별'));
+                  out.genderAgeTabFound = !!genderAgeTab;
+                  if (genderAgeTab) {
+                    genderAgeTab.click();
+                    await new Promise(r => setTimeout(r, 2500));
+                  }
+                } catch (e) { out.navError = e.message; }
+
+                try {
+                  // 주제별과 같은 클래스(u_ni_search_swiper)를 재사용하는지 확인,
+                  // 없으면 swiper 관련 클래스 전체를 넓게 수집
+                  const reuseEl = document.querySelector('.u_ni_search_swiper');
+                  out.reusesSameSwiperClass = !!reuseEl;
+                  const allSwipers = Array.from(document.querySelectorAll('[class*="swiper-container"], [class*="swiper-initialized"]'));
+                  out.swiperCandidates = allSwipers.slice(0, 10).map(el => ({
+                    cls: el.className,
+                    hasInstance: !!el.swiper,
+                    slideCount: el.swiper && el.swiper.slides ? el.swiper.slides.length : null,
+                  }));
+
+                  const catEl = reuseEl || allSwipers[0] || null;
+                  out.targetSwiperClass = catEl ? catEl.className : null;
+                  if (catEl) {
+                    const slideEls = catEl.querySelectorAll('.swiper-slide');
+                    const snapshot = (els) => Array.from(els).slice(0, 20).map((el, i) => {
+                      const full = el.textContent || '';
+                      const h3 = el.querySelector('h3');
+                      return {
+                        idx: i,
+                        titleGuess: h3 ? h3.textContent.trim() : null,
+                        len: full.length,
+                        looksEmpty: full.length < 150 && /데이터를 불러오고 있습니다/.test(full),
+                        textSample: full.slice(0, 60),
+                      };
+                    });
+                    out.slidesBefore = snapshot(slideEls);
+
+                    const inst = catEl.swiper;
+                    if (inst && typeof inst.slideTo === 'function') {
+                      let targetIdx = out.slidesBefore.findIndex(s => s.looksEmpty);
+                      if (targetIdx < 0) targetIdx = 3;
+                      inst.slideTo(targetIdx, 200);
+                      await new Promise(r => setTimeout(r, 2800));
+                      const slideElsAfter = catEl.querySelectorAll('.swiper-slide');
+                      out.slidesAfter = snapshot(slideElsAfter);
+                      const loadedEl = Array.from(slideElsAfter)[targetIdx];
+                      out.loadedSlideHtml = loadedEl ? loadedEl.innerHTML.slice(0, 2000) : null;
+                    }
+                  }
+                } catch (e) { out.swiperError = e.message; }
+
+                return out;
+              })()
+            `);
+            clearTimeout(timer);
+            resolve({ success: true, data });
+          } catch (e) {
+            clearTimeout(timer);
+            resolve({ success: false, error: e.message });
+          }
+        }, 4000);
+      });
+      win.webContents.on('did-fail-load', (e, code, desc) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: `로드 실패(${code}): ${desc}` });
+      });
+    });
+
+    writeLog('INFO', 'INVESTIGATE3', '성별,연령별 인기유입검색어 조사 결과', JSON.stringify(result).slice(0, 4000));
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'INVESTIGATE3', '성별,연령별 인기유입검색어 조사 실패', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+  }
+});
+
+// ── IPC: dev:investigateCreatorAdvisorGenderAge2 (2026-08-14 신규, 개발자 전용 조사) ──
+// 실제 구현에서 offsetParent!==null 기준으로 "화면에 보이는" 캐러셀을
+// 고르도록 했는데도, 실사용에서 성별,연령별 패널에 여전히 주제별(맛집 등)
+// 데이터가 나오는 문제가 재현됨. 이 조사는 두 u_ni_search_swiper 후보를
+// 서브탭 클릭 전/후로 각각 (1) computed style(display/visibility/opacity),
+// (2) getBoundingClientRect, (3) offsetParent 존재 여부, (4) 첫 슬라이드
+// 제목(h3) 텍스트를 직접 비교해서, 어떤 조건으로 걸러야 진짜 성별,연령별
+// 캐러셀을 정확히 골라낼 수 있는지 알아낸다. 화면 기능 없음.
+ipcMain.handle('dev:investigateCreatorAdvisorGenderAge2', async () => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  let win = null;
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const account = db.prepare('SELECT * FROM accounts ORDER BY id ASC LIMIT 1').get();
+    if (!account?.cookies_encrypted) return { success: false, error: '로그인된 계정이 없습니다.' };
+    const naverId = account.naver_id;
+    if (!naverId) return { success: false, error: '계정에 naver_id가 없습니다.' };
+    const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+
+    const partition = `noinit:investigate-creator-advisor-genderage2-${Date.now()}`;
+    const ses = electronSession.fromPartition(partition);
+    for (const cookie of cookies) {
+      try {
+        const urlBase = cookie.domain?.startsWith('.')
+          ? `https://www${cookie.domain}`
+          : `https://${cookie.domain || 'naver.com'}`;
+        await ses.cookies.set({
+          url: urlBase, name: cookie.name, value: cookie.value,
+          domain: cookie.domain, path: cookie.path || '/',
+          secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+          expirationDate: cookie.expirationDate,
+        });
+      } catch { /* 개별 쿠키 오류 무시 */ }
+    }
+
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 1000,
+      webPreferences: {
+        session: ses, javascript: true, nodeIntegration: false,
+        contextIsolation: true, webSecurity: true, backgroundThrottling: false,
+      },
+    });
+
+    const targetUrl = `https://creator-advisor.naver.com/naver_blog/${naverId}/trends`;
+    writeLog('INFO', 'INVESTIGATE4', '성별,연령별 판별 재조사 시작', targetUrl);
+
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ success: false, error: '타임아웃(40초)' }), 40000);
+      win.webContents.loadURL(targetUrl, {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      });
+      win.webContents.on('did-finish-load', () => {
+        setTimeout(async () => {
+          try {
+            const data = await win.webContents.executeJavaScript(`
+              (async function() {
+                const out = {};
+
+                function inspect(el) {
+                  if (!el) return null;
+                  const rect = el.getBoundingClientRect();
+                  const cs = window.getComputedStyle(el);
+                  const firstSlideH3 = el.querySelector('.swiper-slide h3.u_ni_trend_title');
+                  // 조상 체인 5단계까지 class 이름 수집 — 어느 조상이 숨김을
+                  // 담당하는지 파악하기 위함
+                  const ancestorClasses = [];
+                  let p = el.parentElement;
+                  for (let i = 0; i < 5 && p; i++) { ancestorClasses.push(p.className); p = p.parentElement; }
+                  return {
+                    cls: el.className,
+                    offsetParentIsNull: el.offsetParent === null,
+                    display: cs.display,
+                    visibility: cs.visibility,
+                    opacity: cs.opacity,
+                    rectWidth: rect.width,
+                    rectHeight: rect.height,
+                    firstSlideTitle: firstSlideH3 ? firstSlideH3.textContent.trim() : null,
+                    ancestorClasses,
+                  };
+                }
+
+                try {
+                  const before = Array.from(document.querySelectorAll('.u_ni_search_swiper')).map(inspect);
+                  out.before = before;
+                } catch (e) { out.beforeError = e.message; }
+
+                try {
+                  const subNavCandidates = Array.from(document.querySelectorAll(
+                    '[class*="depth"] li, [class*="depth"] a, [class*="nav"] li, [class*="nav"] a, [class*="tab"] li, [class*="tab"] a'
+                  ));
+                  const genderAgeTab = subNavCandidates.find(el => (el.textContent || '').includes('성별,연령별 인기유입검색어'));
+                  out.genderAgeTabFound = !!genderAgeTab;
+                  if (genderAgeTab) {
+                    genderAgeTab.click();
+                    await new Promise(r => setTimeout(r, 2000));
+                  }
+                  const after = Array.from(document.querySelectorAll('.u_ni_search_swiper')).map(inspect);
+                  out.after = after;
+                } catch (e) { out.afterError = e.message; }
+
+                return out;
+              })()
+            `);
+            clearTimeout(timer);
+            resolve({ success: true, data });
+          } catch (e) {
+            clearTimeout(timer);
+            resolve({ success: false, error: e.message });
+          }
+        }, 4000);
+      });
+      win.webContents.on('did-fail-load', (e, code, desc) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: `로드 실패(${code}): ${desc}` });
+      });
+    });
+
+    writeLog('INFO', 'INVESTIGATE4', '성별,연령별 판별 재조사 결과', JSON.stringify(result).slice(0, 4000));
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'INVESTIGATE4', '성별,연령별 판별 재조사 실패', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+  }
+});
+
 // ── 자동화 루프 설정 (2026-07-05 신규) ────────────────────────
 // settings:set(전체 저장)이 별도로 호출돼도 서로 값을 지우지 않도록,
 // licenseKey와 마찬가지로 dot-path 전용 IPC로 분리 저장/조회한다.
@@ -9217,6 +9990,11 @@ async function runStartupSessionCheck() {
       await new Promise(r => setTimeout(r, 1500));
     }
     writeLog('INFO', 'SESSION_CHECK', `앱 시작 세션 확인 완료`);
+    // 2026-08-14 신규(사용자 요청): 계정 세션 확인이 끝난 직후 트렌드를
+    // 백그라운드에서 미리 불러와 캐시 — 사용자가 트렌드 페이지에 들어갈 때
+    // 대기 없이 바로 보이도록 함. await 없이 fire-and-forget(세션 확인
+    // 완료 처리를 지연시키지 않음).
+    prefetchCreatorAdvisorTrends();
   } catch (e) {
     writeLog('WARN', 'SESSION_CHECK', '앱 시작 세션 확인 실패', e.message);
   }

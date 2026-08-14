@@ -1,0 +1,259 @@
+/* 2026-08-14 신규: 크리에이터 어드바이저 트렌드 페이지 전용 스타일 */
+
+.trends-page {
+  padding: 0;
+}
+
+.ca-error {
+  background: rgba(248,113,113,0.12);
+  border: 1px solid rgba(248,113,113,0.3);
+  color: var(--danger);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.ca-section {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+}
+
+.ca-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ca-section-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  margin-bottom: 14px;
+}
+
+/* 2026-08-14 신규: 메인 유입 트렌드 페이지네이션 */
+.ca-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 14px;
+}
+
+.ca-page-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.ca-page-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ca-page-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.ca-page-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── 메인 유입 트렌드 ── */
+.ca-main-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ca-main-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition);
+}
+
+.ca-main-item:hover { background: var(--bg-hover); }
+
+.ca-main-rank {
+  flex: 0 0 auto;
+  min-width: 22px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.ca-main-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+a.ca-main-title:hover { color: var(--accent); text-decoration: underline; }
+
+/* ── 검색 유입 트렌드: 좌(주제별)/우(성별,연령별) 드롭다운 2패널
+   (2026-08-14 재설계 — 카테고리를 다 늘어놓는 대신 드롭다운으로 하나씩
+   골라 보는 방식으로 변경) ── */
+.ca-dual-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* 2026-08-14 재수정(사용자 요청): 드롭다운을 결과 박스 밖으로 분리 —
+   .ca-panel-col이 (드롭다운이 있는) .ca-panel-controls와 (목록만 담은)
+   .ca-panel 박스를 세로로 묶는다. */
+.ca-panel-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ca-panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ca-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.ca-panel-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.ca-select-row {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 auto;
+}
+
+.ca-select {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.ca-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ca-panel-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 10px 0;
+}
+
+.ca-kw-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  /* 2026-08-14 수정(사용자 요청): 내부 스크롤 대신 목록 개수만큼 박스가
+     늘어나도록 높이 제한 제거 — 세로 스크롤이 이중으로 생기던 문제 해결 */
+}
+
+.ca-kw-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ca-kw-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.ca-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.ca-badge.ca-up   { color: var(--danger);  background: rgba(248,113,113,0.12); }
+.ca-badge.ca-down { color: var(--info);    background: rgba(96,165,250,0.12); }
+.ca-badge.ca-new  { color: var(--success); background: rgba(52,211,153,0.15); }
+.ca-badge.ca-flat { color: var(--text-muted); background: var(--bg-hover); }
+
+.ca-add-btn {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.ca-add-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ca-add-btn:disabled {
+  cursor: default;
+  color: var(--success);
+  border-color: rgba(52,211,153,0.4);
+}
+
+.spinner-sm {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 4px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

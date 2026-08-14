@@ -672,6 +672,67 @@ export default function Settings() {
   // 방지). 아래 handleFullReset은 그 범위 축소된 dev:reset을 그대로 호출.
   const [fullResetting, setFullResetting] = useState(false);
 
+  // 2026-08-14 신규(개발자 전용, 임시): 크리에이터 어드바이저 트렌드
+  // 조사 1단계 — 조사가 끝나면(2단계 착수 시점) 이 버튼/상태는 정리 예정.
+  const [investigating, setInvestigating]           = useState(false);
+  const [investigateVisible, setInvestigateVisible] = useState(false);
+  const [investigateResult, setInvestigateResult]   = useState('');
+  const handleInvestigateCreatorAdvisor = async () => {
+    setInvestigating(true);
+    try {
+      const res = await window.electronAPI.dev.investigateCreatorAdvisor();
+      setInvestigateResult(JSON.stringify(res, null, 2));
+      setInvestigateVisible(true);
+    } finally {
+      setInvestigating(false);
+    }
+  };
+
+  // 2026-08-14 신규(개발자 전용, 임시): 크리에이터 어드바이저 트렌드
+  // 조사 2단계 — 카테고리 캐러셀 Swiper API 접근/slideTo() 동작 여부 +
+  // 메인 유입 트렌드 탭 구조 조사. 결과 모달은 1단계와 공유.
+  const [investigating2, setInvestigating2] = useState(false);
+  const handleInvestigateCreatorAdvisorPhase2 = async () => {
+    setInvestigating2(true);
+    try {
+      const res = await window.electronAPI.dev.investigateCreatorAdvisorPhase2();
+      setInvestigateResult(JSON.stringify(res, null, 2));
+      setInvestigateVisible(true);
+    } finally {
+      setInvestigating2(false);
+    }
+  };
+
+  // 2026-08-14 신규(개발자 전용, 임시): "성별,연령별 인기유입검색어"
+  // 서브탭 조사 — 서브탭 전환/캐러셀 재사용 여부/연령·성별 조합 라벨.
+  // 결과 모달은 1·2단계와 공유.
+  const [investigating3, setInvestigating3] = useState(false);
+  const handleInvestigateCreatorAdvisorGenderAge = async () => {
+    setInvestigating3(true);
+    try {
+      const res = await window.electronAPI.dev.investigateCreatorAdvisorGenderAge();
+      setInvestigateResult(JSON.stringify(res, null, 2));
+      setInvestigateVisible(true);
+    } finally {
+      setInvestigating3(false);
+    }
+  };
+
+  // 2026-08-14 신규(개발자 전용, 임시): 성별,연령별 캐러셀 판별 재조사 —
+  // 실사용에서 여전히 주제별 데이터가 나오는 문제의 원인(display/visibility/
+  // rect 비교) 파악. 결과 모달은 기존과 공유.
+  const [investigating4, setInvestigating4] = useState(false);
+  const handleInvestigateCreatorAdvisorGenderAge2 = async () => {
+    setInvestigating4(true);
+    try {
+      const res = await window.electronAPI.dev.investigateCreatorAdvisorGenderAge2();
+      setInvestigateResult(JSON.stringify(res, null, 2));
+      setInvestigateVisible(true);
+    } finally {
+      setInvestigating4(false);
+    }
+  };
+
   // 자동화 루프 전용 로그 (2026-07-05 신규)
   const [loopLogContent, setLoopLogContent]   = useState('');
   const [loopLogPath, setLoopLogPath]         = useState('');
@@ -2091,9 +2152,55 @@ export default function Settings() {
           </button>
           {/* 문의하기 — 오류 로그 자동 첨부 (2026-07-14 신규) */}
           <button className="btn btn-ghost btn-sm" onClick={handleOpenInquiry}>📮 문의하기</button>
+          {/* 2026-08-14 신규(개발자 전용, 임시): 크리에이터 어드바이저 조사 1단계 */}
+          {process.env.NODE_ENV === 'development' && (
+            <button className="btn btn-ghost btn-sm" onClick={handleInvestigateCreatorAdvisor} disabled={investigating}>
+              {investigating ? '조사 중…' : '🔍 크리에이터 어드바이저 조사(dev)'}
+            </button>
+          )}
+          {/* 2026-08-14 신규(개발자 전용, 임시): 크리에이터 어드바이저 조사 2단계
+              — Swiper API 접근/slideTo() 동작 + 메인 유입 트렌드 탭 구조 */}
+          {process.env.NODE_ENV === 'development' && (
+            <button className="btn btn-ghost btn-sm" onClick={handleInvestigateCreatorAdvisorPhase2} disabled={investigating2}>
+              {investigating2 ? '조사 중…' : '🔍 크리에이터 어드바이저 조사2(dev)'}
+            </button>
+          )}
+          {/* 2026-08-14 신규(개발자 전용, 임시): 성별,연령별 인기유입검색어 조사 */}
+          {process.env.NODE_ENV === 'development' && (
+            <button className="btn btn-ghost btn-sm" onClick={handleInvestigateCreatorAdvisorGenderAge} disabled={investigating3}>
+              {investigating3 ? '조사 중…' : '🔍 크리에이터 어드바이저 조사3-성별연령(dev)'}
+            </button>
+          )}
+          {/* 2026-08-14 신규(개발자 전용, 임시): 성별,연령별 캐러셀 판별 재조사 */}
+          {process.env.NODE_ENV === 'development' && (
+            <button className="btn btn-ghost btn-sm" onClick={handleInvestigateCreatorAdvisorGenderAge2} disabled={investigating4}>
+              {investigating4 ? '조사 중…' : '🔍 크리에이터 어드바이저 조사4-판별(dev)'}
+            </button>
+          )}
         </div>
         {logPath && <div className="log-path-hint">{logPath}</div>}
       </div>}
+
+      {/* 2026-08-14 신규(개발자 전용, 임시): 크리에이터 어드바이저 조사 결과 모달 */}
+      {investigateVisible && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setInvestigateVisible(false); }}>
+          <div className="log-modal">
+            <div className="log-modal-header">
+              <span className="log-modal-title">크리에이터 어드바이저 조사 결과</span>
+              <div className="log-modal-actions">
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => navigator.clipboard.writeText(investigateResult)}
+                >
+                  복사
+                </button>
+                <button className="btn btn-ghost btn-xs" onClick={() => setInvestigateVisible(false)}>✕ 닫기</button>
+              </div>
+            </div>
+            <pre className="log-modal-content">{investigateResult || '(결과 없음)'}</pre>
+          </div>
+        </div>
+      )}
 
       {/* ── 자동화 루프 로그 팝업 모달 (2026-07-05 신규) ─────────── */}
       {loopLogVisible && (

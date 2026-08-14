@@ -8,6 +8,7 @@ import History from './pages/History';
 import Settings from './pages/Settings';
 import PublishScheduler from './pages/PublishScheduler';
 import Research from './pages/Research';
+import Trends from './pages/Trends';
 import ReviewQueue from './pages/ReviewQueue';
 import LicenseGate from './components/LicenseGate';
 import './styles/globals.css';
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="post-create" element={null} />
             <Route path="accounts" element={<Accounts />} />
             <Route path="research" element={<Research />} />
+            <Route path="trends" element={<Trends />} />
             <Route path="scheduler" element={<PublishScheduler />} />
             <Route path="review-queue" element={<ReviewQueue />} />
             <Route path="history" element={<History />} />
