@@ -60,7 +60,7 @@
 .research-header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px; /* 2026-08-15: 버튼 2개→3개(바로 글 생성 추가)로 늘면서 10px→6px 축소 */
 }
 .research-status {
   position: absolute;
@@ -81,13 +81,21 @@
   background: rgba(239,68,68,0.12);
   color: #ef4444;
 }
-.btn-collect-all,
-.btn-collect-now {
+/* 2026-08-15 수정: globals.css의 공통 .btn(padding 8px 16px, font-size 13px,
+   gap 6px)이 App.jsx에서 이 파일보다 나중에 import되어, 동일 specificity
+   (단일 클래스, 0,1,0) 셀렉터끼리는 "나중에 로드된 쪽"이 이겨 아래 값이
+   조용히 무시되고 있었음([[css-specificity-silent-override-pattern]]과
+   동일 유형 — 2026-07-29 URL 가져오기 버튼 색상 버그와 같은 원인). .btn과
+   결합해 specificity를 0,2,0으로 높여 로드 순서와 무관하게 항상 이기도록 수정. */
+.btn.btn-collect-all,
+.btn.btn-collect-now {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 14px;
-  font-size: 12px;
+  gap: 4px;
+  /* 2026-08-15: 버튼이 3개(바로 글 생성 추가)로 늘어나며 부연설명이
+     두 줄로 밀리던 문제 — padding/font-size를 줄여 한 줄로 복원 */
+  padding: 5px 10px;
+  font-size: 11px;
   font-weight: 600;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -108,6 +116,120 @@
 .btn-collect-now:hover:not(:disabled)  { background: rgba(251,191,36,0.22); }
 .btn-collect-all:disabled,
 .btn-collect-now:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 2026-08-15 신규: "바로 글 생성" — 등록된 키워드로 글 생성 화면으로
+   즉시 이동(키워드 1개면 곧바로, 2개 이상이면 모달에서 선택). 다른 헤더
+   버튼(초록/주황)과 구분되도록 파란 계열 사용. */
+/* 2026-08-15 수정: 위 .btn-collect-all/.btn-collect-now와 동일한 이유로
+   .btn과 결합(specificity 0,2,0)해 globals.css .btn에 덮어써지지 않도록 함. */
+.btn.btn-goto-postcreate {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 2026-08-15: 다른 헤더 버튼 2개와 동일하게 축소(3개 합산 폭 때문에
+     부연설명이 두 줄로 밀리던 문제 해결) */
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity var(--transition), background var(--transition);
+  white-space: nowrap;
+  background: rgba(96,165,250,0.12);
+  color: var(--info);
+  border: 1px solid rgba(96,165,250,0.35);
+}
+.btn-goto-postcreate:hover:not(:disabled) { background: rgba(96,165,250,0.22); }
+.btn-goto-postcreate:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 2026-08-15 신규: "바로 글 생성" 모달 — 다른 화면(PostCreate.jsx 등)의
+   .modal-overlay/.modal-box와 동일한 관례를 이 파일에도 그대로 정의
+   (CRA는 CSS를 전역으로 번들하지만, 페이지별 CSS 파일에 필요한 클래스를
+   각자 정의해두는 기존 관례를 따름 — PostCreate.css/Settings.css 참고). */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+.modal-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 360px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: var(--text-primary);
+}
+.modal-body { display: flex; flex-direction: column; gap: 14px; }
+.modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.goto-postcreate-modal { width: 380px; max-height: calc(100vh - 120px); }
+/* 2026-08-15 신규: 톤 선택 select를 취소 버튼과 같은 줄, 좌측에 배치.
+   주의: 공용 .modal-footer(justify-content:flex-end)를 직접 건드리지
+   않고, 결합 셀렉터(.modal-footer.goto-modal-footer, specificity 0,2,0)로
+   이 모달에만 적용 — Research.css의 .modal-footer는 PostCreate.css 등
+   다른 파일의 동일 이름 규칙과 로드 순서로 얽혀 있어([[css-specificity-silent-override-pattern]])
+   바로 그 셀렉터 자체를 수정하면 앱 전체 다른 모달에도 영향이 번질 수 있음. */
+.modal-footer.goto-modal-footer {
+  justify-content: space-between;
+  align-items: center;
+}
+/* globals.css .input{width:100%} 덮어쓰기 — 기존 .items-filter-select 등과 동일 관례 */
+.goto-tone-select {
+  flex: 0 0 120px !important;
+  width: 120px !important;
+  height: 32px;
+  font-size: 12.5px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.goto-kw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.goto-kw-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.goto-kw-item:hover { border-color: var(--info); background: rgba(96,165,250,0.1); }
+.goto-kw-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goto-kw-cat {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-surface, rgba(255,255,255,0.06));
+  padding: 2px 8px;
+  border-radius: 10px;
+}
 
 /* ── 달력 오버레이 (딤 처리) ────────────────────────────────── */
 .cal-overlay {
@@ -339,7 +461,12 @@
 .research-body {
   display: flex;
   gap: 12px;
-  flex: 0 0 240px;      /* 키워드·글감 패널 고정 높이 240px */
+  /* 2026-08-15 수정(사용자 요청): 헤더 버튼 3개 폭 조정 이후 대시보드 등
+     다른 화면과 어긋난 페이지 하단 여백을 이 박스 높이를 늘려서 보정 —
+     240px→250px→248px. 임시 진단 배지(MainLayout.jsx)로 실측한 결과
+     대시보드/발행이력은 콘텐츠 높이-보이는 영역 차이가 0px인데 글감 수집만
+     +2px(스크롤 여지)로 나와 250px에서 2px 줄여 최종 확정(실측 기반, 매직넘버 아님). */
+  flex: 0 0 248px;      /* 키워드·글감 패널 고정 높이 248px(2026-08-15 실측 확정) */
   min-height: 0;
 }
 
@@ -604,6 +731,13 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* 2026-08-15 신규(사용자 요청): "등록된 키워드/수집된 글감" 박스와
+     "키워드 분석" 사이 간격을 "키워드 분석"↔"실시간 트렌드 키워드" 간격
+     (위 gap:10px)과 동일하게 맞춤. .research-page의 공용 gap(6px)을 직접
+     늘리면 페이지 안의 다른 구간(제목-입력폼, 입력폼-키워드박스 등)까지
+     전부 같이 바뀌어버리므로, 이 컨테이너에만 margin-top 4px을 추가해
+     6px+4px=10px로 이 지점만 맞춤(다른 6px 간격은 그대로 유지). */
+  margin-top: 4px;
 }
 
 /* ── 키워드 분석 섹션 (CORE 05) ────────────────────────────── */

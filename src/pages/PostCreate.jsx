@@ -340,6 +340,58 @@ export default function PostCreate() {
     // topic이 없는 경우엔 지금처럼 title로 대체).
     setTopic(rp.topic || rp.title || '');
     setKeywords(rp.keywords || '');
+
+    // 2026-08-15 신규: 글감 수집 화면의 "바로 글 생성" 버튼으로 넘어온
+    // 경우(rp.autoSuggestKeywords) — 키워드 칸에 주제와 동일한 문구만
+    // 채워지면 사용자가 "키워드 자동 생성" 버튼을 또 눌러야 하는 번거로움이
+    // 있어, 도착 직후 자동으로 한 번 생성해서 덮어씀(URL 가져오기 기능의
+    // handleImportUrl과 동일 패턴 — topic state는 아직 갱신 전이라 rp.topic을
+    // 직접 사용, handleSuggestKeywords()를 그대로 호출하면 stale state를
+    // 읽어 조용히 실패함). 실패해도 위에서 채운 폴백(키워드=주제)이 그대로
+    // 남으므로 글 생성 자체는 계속 진행 가능.
+    if (rp.autoSuggestKeywords) {
+      const topicForKw = (rp.topic || rp.title || '').trim();
+      if (topicForKw) {
+        setKwSuggesting(true);
+        setKwError('');
+        window.electronAPI.post.suggestKeywords({ topic: topicForKw })
+          .then(res => {
+            if (res.success && res.keywords?.length) {
+              setKeywords(res.keywords.join(', '));
+              return res.keywords;
+            }
+            setKwError(res.error || '키워드 생성 실패');
+            setTimeout(() => setKwError(''), 4000);
+            return [];
+          })
+          .catch(() => {
+            setKwError('키워드 생성 실패');
+            setTimeout(() => setKwError(''), 4000);
+            return [];
+          })
+          // 2026-08-15: 키워드 자동 생성 스피너(kwSuggesting)는 여기서 끝냄 —
+          // 아래 자동 글 생성까지 이 상태를 물고 있으면 "키워드 자동 생성"
+          // 버튼이 전체 글 생성이 끝날 때까지 계속 "생성 중"으로 보여
+          // 혼동을 줄 수 있음(글 생성 자체는 별도 generating 스피너가 표시).
+          .finally(() => setKwSuggesting(false))
+          .then((kwArray) => {
+            // 2026-08-15 신규(사용자 요청): 글감 수집 화면 "바로 글 생성"
+            // 모달에서 톤까지 골라 넘어온 경우(rp.autoGenerate) — 키워드
+            // 자동 생성이 끝나는 대로 이어서 글 생성까지 자동 실행. URL
+            // 가져오기(handleImportUrl)와 동일한 체이닝 패턴 — 키워드
+            // 생성이 실패해도(kwArray가 비어도) topicForKw 하나로 글 생성은
+            // 계속 진행(handleGenerate 내부에서 topic 폴백 처리).
+            if (rp.autoGenerate) {
+              return handleGenerate({
+                topic: topicForKw,
+                keywords: (kwArray && kwArray.length) ? kwArray : [topicForKw],
+                tone: rp.tone,
+              });
+            }
+          });
+      }
+    }
+
     setResult({
       title: rp.title || '',
       // 2026-07-08 신규: 검수 대기 → 글 생성 이동 시 썸네일 전용 문구도 복원

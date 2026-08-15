@@ -7,6 +7,7 @@ import './MainLayout.css';
 export default function MainLayout() {
   const { pathname } = useLocation();
   const isPostCreate = pathname === '/post-create';
+
   // 2026-07-08: Mac은 titleBarStyle:'hiddenInset'이라 신호등 버튼이 콘텐츠에
   // 겹쳐서 이 여백이 필요하지만, Windows는 기본 네이티브 타이틀바를 쓰므로
   // 이 여백이 불필요한 빈 공간 + 스크롤 발생의 원인이 되어 Mac에서만 렌더링.

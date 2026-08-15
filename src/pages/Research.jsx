@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './Research.css';
 import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
@@ -7,6 +8,16 @@ const INTERVAL_OPTIONS = [
   { value: 6,  label: '6시간마다' },
   { value: 12, label: '12시간마다' },
   { value: -1, label: '기간 선택' },
+];
+
+// 2026-08-15 신규: "바로 글 생성" 모달의 톤 선택용 — PostCreate.jsx의
+// TONE_OPTIONS(파일 내부 상수, export 안 됨)와 동일한 value/label만 복제
+// (설명(desc)까지는 이 모달의 단순 select에는 필요 없어 생략).
+const GOTO_TONE_OPTIONS = [
+  { value: 'info',      label: '정보형' },
+  { value: 'daily',     label: '일상형' },
+  { value: 'review',    label: '리뷰형' },
+  { value: 'emotional', label: '감성형' },
 ];
 
 // ── 날짜 범위 달력 컴포넌트 ──────────────────────────────────────
@@ -108,6 +119,7 @@ function DateRangePicker({ dateFrom, dateTo, onChange, onClose }) {
 
 export default function Research() {
   const { limits: tierLimits } = useLicenseLimits();
+  const navigate = useNavigate(); // 2026-08-15 신규: 바로 글 생성 이동용
   // ── 키워드 상태 ───────────────────────────────────────────
   const [keywords, setKeywords]       = useState([]);
   const [kwInput, setKwInput]         = useState('');
@@ -128,6 +140,8 @@ export default function Research() {
   const [collectingAll, setCollectingAll] = useState(false);
   const [collectingNow, setCollectingNow] = useState(false);
   const [statusMsg, setStatusMsg]     = useState('');
+  const [showGotoModal, setShowGotoModal] = useState(false); // 2026-08-15 신규: 바로 글 생성 — 키워드 선택 모달
+  const [gotoTone, setGotoTone] = useState('info'); // 2026-08-15 신규: 모달에서 고르는 글 톤(기본 정보형)
 
   // ── 키워드 분석 상태 ──────────────────────────────────────
   const [analyzeInput, setAnalyzeInput]     = useState('');
@@ -409,6 +423,41 @@ export default function Research() {
     await loadItems(filterKw);
   };
 
+  // ── 바로 글 생성 (2026-08-15 신규) ──────────────────────────
+  // 등록된 키워드가 1개면 곧바로, 2개 이상이면 모달에서 고른 키워드로
+  // "글 생성" 화면(topic/keywords 자동 채움)으로 이동. ReviewQueue.jsx의
+  // "글 생성으로 이동"(reviewPost state) 패턴을 그대로 재사용.
+  const goToPostCreateWithKeyword = (keyword) => {
+    setShowGotoModal(false);
+    // 2026-08-15 수정(사용자 요청): 키워드 칸에 주제와 동일한 문구만
+    // 채워지면 사용자가 결국 "키워드 자동 생성" 버튼을 또 눌러야 하는
+    // 번거로움이 있어 — autoSuggestKeywords 플래그로 PostCreate.jsx가
+    // 도착 직후 자동으로 키워드를 생성하도록 함(URL 가져오기 기능과 동일
+    // 패턴). keywords는 생성 실패 시를 대비한 폴백으로 그대로 둠.
+    // 2026-08-15 추가: 모달에서 고른 톤(gotoTone)과 autoGenerate 플래그도
+    // 함께 전달 — 키워드 자동 생성이 끝나면 이어서 글 생성까지 자동으로
+    // 진행되도록 함(URL 가져오기 기능과 동일한 흐름).
+    navigate('/post-create', {
+      state: {
+        reviewPost: {
+          topic: keyword,
+          keywords: keyword,
+          tone: gotoTone,
+          autoSuggestKeywords: true,
+          autoGenerate: true,
+        },
+      },
+    });
+  };
+  // 2026-08-15 수정(사용자 요청): 키워드가 1개뿐이어도 톤을 고를 수 있어야
+  // 하므로 더 이상 즉시 이동하지 않고 항상 모달을 띄움(문구만 1개/여러개
+  // 경우로 분기 — 모달 렌더링 쪽에서 처리).
+  const handleGotoPostCreate = () => {
+    if (keywords.length === 0) return;
+    setGotoTone('info');
+    setShowGotoModal(true);
+  };
+
   // ── 글감 필터 변경 ────────────────────────────────────────
   const handleFilterChange = async (val) => {
     setFilterKw(val);
@@ -454,6 +503,14 @@ export default function Research() {
           <p>키워드를 등록하고 실시간 트렌드를 확인해 블로그 글감을 자동으로 수집합니다.</p>
         </div>
         <div className="research-header-right">
+          <button
+            className="btn btn-goto-postcreate"
+            onClick={handleGotoPostCreate}
+            disabled={keywords.length === 0}
+            title="등록된 키워드로 글 생성 화면으로 이동"
+          >
+            ✍️ 바로 글 생성
+          </button>
           <button
             className="btn btn-collect-now"
             onClick={handleCollectNow}
@@ -815,6 +872,46 @@ export default function Research() {
       </div>
 
       </div>{/* /research-bottom-scroll */}
+
+      {/* 2026-08-15 신규: 바로 글 생성 — 키워드 선택 + 톤 선택 모달
+          (키워드 개수와 무관하게 항상 표시, 제목 문구만 분기) */}
+      {showGotoModal && (
+        <div className="modal-overlay" onClick={() => setShowGotoModal(false)}>
+          <div className="modal-box goto-postcreate-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">
+              {keywords.length === 1 ? '해당 키워드로 글을 생성할까요?' : '어떤 키워드로 글을 생성할까요?'}
+            </div>
+            <div className="modal-body">
+              <div className="goto-kw-list">
+                {keywords.map(kw => (
+                  <button
+                    key={kw.id}
+                    type="button"
+                    className="goto-kw-item"
+                    onClick={() => goToPostCreateWithKeyword(kw.keyword)}
+                  >
+                    <span className="goto-kw-name">{kw.keyword}</span>
+                    {kw.category && <span className="goto-kw-cat">{kw.category}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer goto-modal-footer">
+              <select
+                className="input goto-tone-select"
+                value={gotoTone}
+                onChange={e => setGotoTone(e.target.value)}
+                title="글 톤 선택 — 선택한 키워드로 글 생성 시 이 톤이 적용됩니다"
+              >
+                {GOTO_TONE_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowGotoModal(false)}>취소</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
