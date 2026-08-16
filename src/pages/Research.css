@@ -142,49 +142,29 @@
 .btn-goto-postcreate:hover:not(:disabled) { background: rgba(96,165,250,0.22); }
 .btn-goto-postcreate:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* 2026-08-15 신규: "바로 글 생성" 모달 — 다른 화면(PostCreate.jsx 등)의
-   .modal-overlay/.modal-box와 동일한 관례를 이 파일에도 그대로 정의
-   (CRA는 CSS를 전역으로 번들하지만, 페이지별 CSS 파일에 필요한 클래스를
-   각자 정의해두는 기존 관례를 따름 — PostCreate.css/Settings.css 참고). */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-}
-.modal-box {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 24px;
-  width: 360px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-}
-.modal-title {
-  font-size: 16px;
-  font-weight: 700;
-  margin-bottom: 20px;
-  color: var(--text-primary);
-}
-.modal-body { display: flex; flex-direction: column; gap: 14px; }
-.modal-footer {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 20px;
-}
-
+/* 2026-08-16 수정: "바로 글 생성" 모달을 위해 이 파일에 .modal-overlay/
+   .modal-box/.modal-title/.modal-body/.modal-footer를 그대로 복제했었는데
+   (PostCreate.css/Settings.css의 기존 관례를 따른 것), 이 클래스들은 CRA가
+   CSS를 전역 번들로 합치는 방식 때문에 PostCreate.css가 이미 앱 전체에서
+   동일한 이름으로 제공 중이라 애초에 다시 정의할 필요가 없었음. App.jsx가
+   PostCreate를 Research보다 먼저 import해서 이 파일(Research.css)이 번들에
+   더 나중에 삽입되는데, 동일 클래스명·동일 우선순위(0,1,0)라 "나중에 로드된
+   쪽이 이긴다"는 캐스케이드 규칙상 이 중복 .modal-box(width:360px)가 발행
+   전 미리보기 모달의 .preview-modal-box(width:640px)를 조용히 덮어써 모달이
+   좁아지는 회귀 버그를 일으켰음(2026-08-16 사용자 제보,
+   [[css-specificity-silent-override-pattern]] 동일 유형). PostCreate.css의
+   정의와 완전히 동일한 값이었으므로 안전하게 삭제 — 이 화면 모달은 이제
+   PostCreate.css가 제공하는 공용 .modal-overlay/.modal-box/.modal-title/
+   .modal-body/.modal-footer를 그대로 상속받아 쓰고, 이 화면만의 차이점
+   (너비 380px, footer 배치)만 아래처럼 결합 셀렉터로 최소한으로 얹는다. */
 .goto-postcreate-modal { width: 380px; max-height: calc(100vh - 120px); }
-/* 2026-08-15 신규: 톤 선택 select를 취소 버튼과 같은 줄, 좌측에 배치.
-   주의: 공용 .modal-footer(justify-content:flex-end)를 직접 건드리지
-   않고, 결합 셀렉터(.modal-footer.goto-modal-footer, specificity 0,2,0)로
-   이 모달에만 적용 — Research.css의 .modal-footer는 PostCreate.css 등
-   다른 파일의 동일 이름 규칙과 로드 순서로 얽혀 있어([[css-specificity-silent-override-pattern]])
-   바로 그 셀렉터 자체를 수정하면 앱 전체 다른 모달에도 영향이 번질 수 있음. */
+/* 2026-08-15 신규, 2026-08-16 주석 갱신: 톤 선택 select를 취소 버튼과
+   같은 줄, 좌측에 배치. 이 화면은 PostCreate.css가 제공하는 공용
+   .modal-footer(justify-content:flex-end)를 그대로 상속받아 쓰므로,
+   그 셀렉터 자체를 여기서 수정하면 앱 전체 다른 모달에도 영향이 번짐
+   ([[css-specificity-silent-override-pattern]]). 그래서 결합 셀렉터
+   (.modal-footer.goto-modal-footer, specificity 0,2,0)로 이 모달에만
+   적용. */
 .modal-footer.goto-modal-footer {
   justify-content: space-between;
   align-items: center;
