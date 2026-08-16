@@ -8923,33 +8923,57 @@ ipcMain.handle('publish:getAll', (event, filters = {}) => {
   }
 });
 
+// 2026-08-16 신규: 네이버 자체 예약 발행(status='reserved')은 앱이 완료
+// 시점을 통보받을 방법이 없어 DB status가 영원히 'reserved'로 남는다.
+// 발행 스케줄러 화면(PublishScheduler.jsx nowLocalStr/isDuePastReserved,
+// 2026-08-06)은 "예약 시각이 지났으면 발행완료로 간주"하는 재분류를
+// 화면에서만 적용해 정확히 보여주고 있었는데, 대시보드 통계/트렌드
+// 쿼리는 DB status만 그대로 봐서 이런 글들이 전부 누락되고 있었음
+// (사용자 지적). 동일한 판정 로직을 여기도 적용 — 형식은 scheduled_at
+// ('YYYY-MM-DDTHH:MM')과 정확히 맞춰야 문자열 비교가 유효하므로
+// PublishScheduler.jsx의 nowLocalStr()과 동일한 조합으로 생성.
+function nowLocalStrForStats() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// 발행완료로 간주할 조건: 실제 status='published' 이거나, 'reserved'인데
+// 예약 시각이 이미 지난 경우. 기준 날짜는 published_at이 비어있는
+// reserved 건을 위해 COALESCE(published_at, scheduled_at) 사용.
+const PUBLISHED_OR_DUE_RESERVED =
+  "(status='published' OR (status='reserved' AND scheduled_at IS NOT NULL AND scheduled_at <= ?))";
+// 위와 동일 조건이지만 JOIN 쿼리(p.status/p.scheduled_at)용 별칭 버전.
+const PUBLISHED_OR_DUE_RESERVED_P =
+  "(p.status='published' OR (p.status='reserved' AND p.scheduled_at IS NOT NULL AND p.scheduled_at <= ?))";
+
 // ── IPC: 대시보드 통계 ────────────────────────────────────────
 ipcMain.handle('dashboard:getStats', () => {
   try {
     const { getDB } = require('./src/db');
     const db = getDB();
+    const nowStr = nowLocalStrForStats();
     const todayPublished = db.prepare(
-      "SELECT COUNT(*) as c FROM posts WHERE status='published' AND date(published_at)=date('now','localtime')"
-    ).get()?.c || 0;
+      `SELECT COUNT(*) as c FROM posts WHERE ${PUBLISHED_OR_DUE_RESERVED} AND date(COALESCE(published_at, scheduled_at))=date('now','localtime')`
+    ).get(nowStr)?.c || 0;
     // 2026-07-13 수정: 기존엔 "최근 7일" 롤링 윈도우라 월요일이 지나도
     // 지난주 화~일 발행분이 계속 섞여 보이던 문제 — 월요일 0시부터 시작하는
     // 달력주(月~日) 기준으로 변경. 'weekday 0'는 다음 일요일로 이동하고
     // (오늘이 일요일이면 그대로), '-6 days'로 그 주의 월요일로 되돌림.
     const weekPublished = db.prepare(
-      "SELECT COUNT(*) as c FROM posts WHERE status='published' AND published_at >= date('now','localtime','weekday 0','-6 days')"
-    ).get()?.c || 0;
+      `SELECT COUNT(*) as c FROM posts WHERE ${PUBLISHED_OR_DUE_RESERVED} AND COALESCE(published_at, scheduled_at) >= date('now','localtime','weekday 0','-6 days')`
+    ).get(nowStr)?.c || 0;
     const totalPublished = db.prepare(
-      "SELECT COUNT(*) as c FROM posts WHERE status='published'"
-    ).get()?.c || 0;
+      `SELECT COUNT(*) as c FROM posts WHERE ${PUBLISHED_OR_DUE_RESERVED}`
+    ).get(nowStr)?.c || 0;
     const totalAccounts = db.prepare(
       "SELECT COUNT(*) as c FROM accounts"
     ).get()?.c || 0;
     const recent = db.prepare(`
-      SELECT p.title, p.published_at, p.post_url, a.nickname AS account_nickname
+      SELECT p.title, COALESCE(p.published_at, p.scheduled_at) AS published_at, p.post_url, a.nickname AS account_nickname
       FROM posts p LEFT JOIN accounts a ON p.account_id=a.id
-      WHERE p.status='published'
-      ORDER BY p.published_at DESC LIMIT 5
-    `).all();
+      WHERE ${PUBLISHED_OR_DUE_RESERVED_P}
+      ORDER BY COALESCE(p.published_at, p.scheduled_at) DESC LIMIT 5
+    `).all(nowStr);
     const scheduled = db.prepare(
       "SELECT COUNT(*) as c FROM posts WHERE status='scheduled'"
     ).get()?.c || 0;
@@ -8967,17 +8991,29 @@ ipcMain.handle('dashboard:getTrend', () => {
     const db = getDB();
     const trend = [];
     const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    const nowStr = nowLocalStrForStats();
 
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
       const mm = d.getMonth() + 1;
       const dd = d.getDate();
+      // 2026-08-16 수정: toISOString()은 UTC 기준 날짜라 한국시간 새벽
+      // 0~8시대에는 "오늘" 날짜 구간이 하루 전으로 잘못 잡히던 버그.
+      // 로컬 달력 날짜(YYYY-MM-DD)로 직접 조립.
+      const dateStr = `${d.getFullYear()}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
       const dayName = dayNames[d.getDay()];
+      // 2026-08-16 1차 수정: published_at은 저장 시 이미 datetime('now','localtime')로
+      // 로컬시각 문자열로 기록되는데, 여기서만 date(published_at,'localtime')로
+      // 로컬 보정을 한 번 더 적용해 오후 3시(=24-9시) 이후 발행 건이 전부 다음
+      // 날짜로 밀리던 버그. 바로 위 "오늘 발행" 집계(date(published_at)=date(...))와
+      // 동일하게 불필요한 'localtime' 수식어 제거.
+      // 2026-08-16 2차 수정: 네이버 자체 예약 발행(reserved, published_at 없음)
+      // 건은 완전히 누락되고 있어서 위 PUBLISHED_OR_DUE_RESERVED 조건 +
+      // COALESCE(published_at, scheduled_at) 기준 날짜로 함께 집계.
       const count = db.prepare(
-        "SELECT COUNT(*) as c FROM posts WHERE status='published' AND date(published_at,'localtime')=?"
-      ).get(dateStr)?.c || 0;
+        `SELECT COUNT(*) as c FROM posts WHERE ${PUBLISHED_OR_DUE_RESERVED} AND date(COALESCE(published_at, scheduled_at))=?`
+      ).get(nowStr, dateStr)?.c || 0;
       trend.push({ date: dateStr, label: `${mm}/${dd}`, dayName, count });
     }
     return { success: true, trend };

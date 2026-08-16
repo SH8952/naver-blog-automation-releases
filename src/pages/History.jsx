@@ -11,6 +11,29 @@ const STATUS_LABEL = {
   draft:           { label: '임시저장', cls: 'badge-draft' },
 };
 
+// 2026-08-16 신규: 네이버 자체 예약 발행(status='reserved')은 앱이 완료
+// 시점을 통보받을 방법이 없어 DB status가 영원히 'reserved'로 남는다
+// ([[dashboard-trend-chart-datefix-2026-08-16]] 참고). 발행 스케줄러
+// 화면(PublishScheduler.jsx nowLocalStr/isDuePastReserved, 2026-08-06)과
+// 동일한 판정 로직을 여기도 적용 — 예약 시각이 지났으면 "발행완료"로
+// 간주하되, 즉시 발행 완료(badge-published, 초록)와 헷갈리지 않도록
+// 파란 계열(badge-scheduled, 스케줄러와 동일 색)로 구분. 아직 예약
+// 시각 전이면 "발행 대기"로 노란색(badge-publishing, 사용자 요청).
+function nowLocalStr() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function getStatusDisplay(post, nowStr) {
+  if (post.status === 'reserved') {
+    const isDue = post.scheduled_at && post.scheduled_at <= nowStr;
+    return isDue
+      ? { label: '발행완료', cls: 'badge-scheduled' }   // 예약 발행 완료(파란색)
+      : { label: '발행 대기', cls: 'badge-publishing' }; // 예약 시각 전(노란색)
+  }
+  return STATUS_LABEL[post.status] || { label: post.status, cls: 'badge-draft' };
+}
+
 function fmtDt(iso) {
   if (!iso) return '';
   // MM-DD HH:MM 형식으로 축약
@@ -140,32 +163,39 @@ export default function History() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(post => {
-                const st = STATUS_LABEL[post.status] || { label: post.status, cls: 'badge-draft' };
-                return (
-                  <tr key={post.id}>
-                    <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
-                    <td className="history-title-cell">
-                      <span title={post.title}>{post.title || '(제목 없음)'}</span>
-                      {post.error_msg && (
-                        <p className="history-error">⚠️ {post.error_msg}</p>
-                      )}
-                    </td>
-                    <td className="history-account">
-                      {post.account_nickname || post.naver_id || '—'}
-                    </td>
-                    <td className="history-date">{fmtDt(post.scheduled_at) || '—'}</td>
-                    <td className="history-date">{fmtDt(post.published_at) || '—'}</td>
-                    <td>
-                      <button
-                        className="history-delete-btn"
-                        onClick={() => handleDelete(post.id)}
-                        title="이력 삭제"
-                      >🗑</button>
-                    </td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                const nowStr = nowLocalStr();
+                return filtered.map(post => {
+                  const st = getStatusDisplay(post, nowStr);
+                  // 예약 발행이 실제로 완료된 것으로 간주된 글은, 비어있는
+                  // published_at 대신 예약해둔 scheduled_at을 발행일시로 표시.
+                  const isDueReserved = post.status === 'reserved' && post.scheduled_at && post.scheduled_at <= nowStr;
+                  const effectivePublishedAt = isDueReserved ? post.scheduled_at : post.published_at;
+                  return (
+                    <tr key={post.id}>
+                      <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
+                      <td className="history-title-cell">
+                        <span title={post.title}>{post.title || '(제목 없음)'}</span>
+                        {post.error_msg && (
+                          <p className="history-error">⚠️ {post.error_msg}</p>
+                        )}
+                      </td>
+                      <td className="history-account">
+                        {post.account_nickname || post.naver_id || '—'}
+                      </td>
+                      <td className="history-date">{fmtDt(post.scheduled_at) || '—'}</td>
+                      <td className="history-date">{fmtDt(effectivePublishedAt) || '—'}</td>
+                      <td>
+                        <button
+                          className="history-delete-btn"
+                          onClick={() => handleDelete(post.id)}
+                          title="이력 삭제"
+                        >🗑</button>
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
