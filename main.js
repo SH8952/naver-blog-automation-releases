@@ -10609,7 +10609,11 @@ ipcMain.handle('keyword:analyze', async (event, keywords) => {
                   pcMonthly:     pc,
                   mobileMonthly: mob,
                   total:         pc + mob,
-                  compIdx:       item.compIdx || 'low',
+                  // 2026-08-19 수정: 네이버 검색광고 API가 실제로 돌려주는
+                  // 경쟁정도 값은 영어('low' 등)가 아니라 한글 문자열
+                  // ("낮음"/"중간"/"높음")이라, 폴백값도 동일한 한글로
+                  // 맞춤(프론트 compLabel()의 한글 매칭과 짝을 이룸).
+                  compIdx:       item.compIdx || '낮음',
                   plAvgDepth:    item.plAvgDepth || 0,
                 });
               }

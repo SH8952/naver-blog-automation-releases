@@ -298,7 +298,9 @@ export default function Research() {
     // 2026-08-19 추가: 판정 방식(데이터랩 실측 vs AI 대체)을 배지에 바로
     // 노출 — 신규 API라 실제로 데이터랩이 성공했는지 AI로 조용히
     // 폴백됐는지 hover 없이 한눈에 구분하기 위함(개발자 전용 디버그용).
-    const methodTag = r.method === 'ai' ? 'AI 추정' : '데이터랩';
+    // 2026-08-19 수정(사용자 요청): 키워드 분석 표에 컬럼이 늘어나며
+    // 가로 스크롤이 생기던 문제 — 텍스트를 최대한 줄여 공간 절약.
+    const methodTag = r.method === 'ai' ? 'AI' : 'DL';
     const title = r.method === 'ai'
       ? (r.reason || 'AI 판단')
       : `CV ${r.cv != null ? r.cv.toFixed(2) : '-'} · ${r.monthsCount ?? 0}개월 데이터`;
@@ -318,15 +320,21 @@ export default function Research() {
     return String(v);
   };
 
+  // 2026-08-19 수정: 네이버 검색광고 API가 실제로 돌려주는 경쟁정도 값은
+  // 영어('low'/'mid'/'high')가 아니라 한글 문자열("낮음"/"중간"/"높음")
+  // 이라, 기존 영어 매칭 조건이 한 번도 매치되지 않아 항상 "-"만
+  // 표시되던 버그(사용자 제보) — 실제 값 기준으로 매칭하도록 수정.
   const compLabel = (c) => {
-    if (c === 'low')  return { text: '낮음', cls: 'comp-low' };
-    if (c === 'mid')  return { text: '중간', cls: 'comp-mid' };
-    if (c === 'high') return { text: '높음', cls: 'comp-high' };
+    if (c === '낮음')  return { text: '낮음', cls: 'comp-low' };
+    if (c === '중간')  return { text: '중간', cls: 'comp-mid' };
+    if (c === '높음')  return { text: '높음', cls: 'comp-high' };
     return { text: '-', cls: '' };
   };
 
   // ── 컬럼 헤더 클릭 정렬 ────────────────────────────────────
-  const COMP_ORDER = { low: 1, mid: 2, high: 3 };
+  // 2026-08-19 수정: compLabel과 동일한 이유로 정렬 기준 키도 한글로 통일
+  // (정렬 클릭 시 값이 매칭 안 돼 전부 0으로 취급되던 문제도 같이 해결됨).
+  const COMP_ORDER = { '낮음': 1, '중간': 2, '높음': 3 };
   const handleSort = (key) => {
     if (sortKey === key) {
       setSortDir(d => d === 'desc' ? 'asc' : 'desc');
