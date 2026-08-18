@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testSearchAd:  (customerId, apiKey, secretKey) => ipcRenderer.invoke('settings:testSearchAd', customerId, apiKey, secretKey),
     testCoupang:   (accessKey, secretKey)  => ipcRenderer.invoke('settings:testCoupang', accessKey, secretKey),
     testAliexpress: (appKey, appSecret, trackingId) => ipcRenderer.invoke('settings:testAliexpress', appKey, appSecret, trackingId),
+    /** 네이버 API HUB 검색어트렌드(데이터랩) 테스트 — 2026-08-19 신규(개발자 전용, 에버그린 키워드 판별 준비) */
+    testDatalab:   (clientId, clientSecret) => ipcRenderer.invoke('settings:testDatalab', clientId, clientSecret),
   },
 
   // ── 라이선스 (오프라인 서명 키, 2026-07-04 신규 / 2026-07-13 HWID 조회 추가) ──
@@ -225,6 +227,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     /** 등록된 키워드에서 사용된 카테고리 목록(중복제거) 조회 (2026-07-05 신규) */
     getCategories: () => ipcRenderer.invoke('research:getCategories'),
+  },
+
+  // ── 에버그린 키워드 판별 (2026-08-19 신규, 개발자 전용) ────────
+  evergreen: {
+    /** 키워드(최대 5개) 판별 실행 — 데이터랩 API 조회+저장, 실패 시 AI 폴백 */
+    analyze:   (keywords) => ipcRenderer.invoke('evergreen:analyze', keywords),
+    /** 이미 저장된 판정 결과만 조회(외부 API 호출 없음) */
+    getCached: (keywords) => ipcRenderer.invoke('evergreen:getCached', keywords),
   },
 
   // ── 트렌드(크리에이터 어드바이저, 2026-08-14 신규) ────────────

@@ -3777,6 +3777,53 @@ ipcMain.handle('settings:testNaverApi', (event, clientId, clientSecret) => {
   });
 });
 
+// ── IPC: 네이버 API HUB 검색어트렌드(데이터랩) 테스트 ─────────
+// 2026-08-19 신규(개발자 전용, 에버그린 키워드 판별 준비). 예전
+// developers.naver.com 검색 오픈API(X-Naver-Client-Id 헤더, GET)와는
+// 완전히 다른 신규 플랫폼(NAVER API HUB, X-NCP-APIGW 헤더, POST+JSON
+// body) — 2026-06-25 출시, 2026-07-31부로 구 개발자센터 신규 발급 종료.
+// 연결 확인 목적으로 최근 2개월치를 월 단위로 최소 조회한다.
+ipcMain.handle('settings:testDatalab', (event, clientId, clientSecret) => {
+  if (!isDev) return { ok: false, error: '개발 모드 전용 기능입니다.' };
+  if (!clientId || !clientSecret) return { ok: false, error: 'Client ID 또는 Secret 없음' };
+  return new Promise((resolve) => {
+    try {
+      const end = new Date();
+      const start = new Date();
+      start.setMonth(start.getMonth() - 2);
+      const fmt = (d) => d.toISOString().slice(0, 10);
+      const payload = JSON.stringify({
+        startDate: fmt(start),
+        endDate: fmt(end),
+        timeUnit: 'month',
+        keywordGroups: [{ groupName: 'test', keywords: ['테스트'] }],
+      });
+      const req = net.request({
+        method: 'POST',
+        url: 'https://naverapihub.apigw.ntruss.com/search-trend/v1/search',
+      });
+      req.setHeader('X-NCP-APIGW-API-KEY-ID', clientId.trim());
+      req.setHeader('X-NCP-APIGW-API-KEY', clientSecret.trim());
+      req.setHeader('Content-Type', 'application/json');
+      let body = '';
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { body += chunk.toString(); });
+        res.on('end', () => {
+          if (res.statusCode === 200) { resolve({ ok: true }); }
+          else {
+            let msg = `HTTP ${res.statusCode}`;
+            try { msg = JSON.parse(body)?.errorMessage || JSON.parse(body)?.message || msg; } catch {}
+            resolve({ ok: false, error: msg });
+          }
+        });
+      });
+      req.on('error', (err) => resolve({ ok: false, error: err.message }));
+      req.write(payload);
+      req.end();
+    } catch (err) { resolve({ ok: false, error: err.message }); }
+  });
+});
+
 // ── IPC: 네이버 검색광고 API 테스트 ──────────────────────────
 ipcMain.handle('settings:testSearchAd', (event, customerId, apiKey, secretKey) => {
   if (!customerId || !apiKey || !secretKey) return { ok: false, error: '필드 누락' };
@@ -10577,6 +10624,198 @@ ipcMain.handle('keyword:analyze', async (event, keywords) => {
     return { success: true, data: results };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+// ── 에버그린 키워드 판별 (2026-08-19 신규, 개발자 전용) ────────
+// 배경: [[evergreen-keyword-feature-2026-08-19]] — 시즌 무관 연중 꾸준
+// 검색어를 데이터랩 API의 과거 12개월 월별 상대 관심도(0~100)로 즉시
+// 판별. 데이터가 부족하거나(6개월 미만) API 자체가 실패하면(키 미설정,
+// 신규 플랫폼이라 응답 스펙이 문서와 다를 가능성 포함) AI 판단으로
+// 폴백한다. 전체 기능이 process.env.NODE_ENV==='development' UI 가드
+// 아래에서만 호출되지만, main.js 쪽도 isDev 2차 가드를 둔다(기존 dev
+// 전용 IPC와 동일 패턴, [[dev-tier-override-toggle-2026-07-14]] 참고).
+
+// 데이터랩 검색어트렌드 API 호출 — keywordGroups는 최대 5개, 각 그룹당
+// 키워드 1개씩만 넣어 그룹명=키워드로 1:1 매칭되게 구성한다(응답 배열
+// 순서가 요청 순서와 같다고 가정 — NAVER API HUB가 최근(2026-06-25)
+// 출시된 신규 플랫폼이라 정확한 응답 필드명이 문서와 다를 위험이 있어,
+// title/groupName 등 특정 필드명에 의존하지 않고 인덱스로 매칭한다).
+function fetchDatalabTrend(keywordGroups, clientId, clientSecret) {
+  return new Promise((resolve, reject) => {
+    const end = new Date();
+    const start = new Date();
+    start.setMonth(start.getMonth() - 12);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const payload = JSON.stringify({
+      startDate: fmt(start),
+      endDate: fmt(end),
+      timeUnit: 'month',
+      keywordGroups,
+    });
+    const req = net.request({
+      method: 'POST',
+      url: 'https://naverapihub.apigw.ntruss.com/search-trend/v1/search',
+    });
+    req.setHeader('X-NCP-APIGW-API-KEY-ID', clientId);
+    req.setHeader('X-NCP-APIGW-API-KEY', clientSecret);
+    req.setHeader('Content-Type', 'application/json');
+    let body = '';
+    req.on('response', (res) => {
+      res.on('data', (chunk) => { body += chunk.toString(); });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try { resolve(JSON.parse(body)); }
+          catch (e) { reject(new Error('데이터랩 응답 파싱 실패: ' + e.message)); }
+        } else {
+          let msg = `HTTP ${res.statusCode}`;
+          try { const j = JSON.parse(body); msg = j?.errorMessage || j?.message || msg; } catch (_) {}
+          reject(new Error(msg));
+        }
+      });
+    });
+    req.on('error', (err) => reject(err));
+    req.write(payload);
+    req.end();
+  });
+}
+
+// 월별 ratio 배열의 변동계수(CV = 표준편차/평균)로 에버그린 여부 판정.
+// 데이터가 너무 적으면(6개월 미만) 통계적으로 신뢰하기 어려워 'unknown'
+// 반환 → 호출부에서 AI 판단으로 폴백. 임계값 0.35는 첫 구현 잠정값 —
+// 실사용하며 오탐이 많으면 조정 예정(사용자와 협의 필요).
+function classifyEvergreenSeries(dataArr) {
+  const vals = (Array.isArray(dataArr) ? dataArr : [])
+    .map(d => d?.ratio)
+    .filter(v => typeof v === 'number' && !Number.isNaN(v));
+  if (vals.length < 6) return { classification: 'unknown', cv: null, monthsCount: vals.length };
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (mean <= 0) return { classification: 'unknown', cv: null, monthsCount: vals.length };
+  const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length;
+  const cv = Math.sqrt(variance) / mean;
+  return { classification: cv < 0.35 ? 'evergreen' : 'seasonal', cv, monthsCount: vals.length };
+}
+
+// AI 폴백 판별 — JSON 전용 응답을 요구(plain-text 프롬프트는 callAI에서
+// 조용히 실패한 전례가 있음, [[unsplash-korean-to-english-fallback]]).
+async function classifyEvergreenWithAI(keyword) {
+  const prompt = `다음 키워드가 "에버그린 키워드"(계절이나 특정 이슈와 무관하게 1년 내내 꾸준히 검색되는 키워드)인지, "시즌 키워드"(특정 시기·계절·이슈에 검색이 몰리는 키워드)인지 판단해줘.
+
+키워드: "${keyword}"
+
+반드시 아래 JSON 형식으로만 답변해. 다른 설명은 절대 붙이지 마:
+{"classification": "evergreen 또는 seasonal 중 하나", "reason": "판단 이유 한 문장"}`;
+  try {
+    const raw = await callAI(prompt, 300);
+    const match = String(raw).match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(match ? match[0] : raw);
+    const cls = parsed.classification === 'evergreen' ? 'evergreen' : 'seasonal';
+    return { classification: cls, reason: parsed.reason || '' };
+  } catch (err) {
+    return { classification: 'unknown', reason: 'AI 판별 실패: ' + err.message };
+  }
+}
+
+function upsertEvergreenResult(db, keyword, { classification, method, cv = null, monthsCount = 0, reason = '' }) {
+  db.prepare(`
+    INSERT INTO keyword_evergreen_result (keyword, classification, method, cv, months_count, reason, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+    ON CONFLICT(keyword) DO UPDATE SET
+      classification = excluded.classification,
+      method         = excluded.method,
+      cv             = excluded.cv,
+      months_count   = excluded.months_count,
+      reason         = excluded.reason,
+      updated_at     = excluded.updated_at
+  `).run(keyword, classification, method, cv, monthsCount, reason);
+}
+
+// ── IPC: evergreen:analyze — 키워드(최대 5개) 판별 실행 ────────
+ipcMain.handle('evergreen:analyze', async (event, keywordsInput) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  const keywords = (Array.isArray(keywordsInput) ? keywordsInput : [keywordsInput])
+    .map(k => (k || '').trim()).filter(Boolean).slice(0, 5);
+  if (!keywords.length) return { success: false, error: '키워드 없음' };
+
+  try {
+    const store = getStore();
+    const clientId     = (store.get('settings.datalabClientId', '') || '').trim();
+    const clientSecret = (store.get('settings.datalabClientSecret', '') || '').trim();
+    const { getDB } = require('./src/db');
+    const db = getDB();
+
+    let datalabResults = null;
+    let datalabError = null;
+    if (clientId && clientSecret) {
+      try {
+        const keywordGroups = keywords.map(k => ({ groupName: k, keywords: [k] }));
+        const json = await fetchDatalabTrend(keywordGroups, clientId, clientSecret);
+        datalabResults = Array.isArray(json?.results) ? json.results : [];
+      } catch (err) {
+        datalabError = err.message;
+      }
+    } else {
+      datalabError = '데이터랩 API 키 미설정';
+    }
+
+    const results = [];
+    for (let i = 0; i < keywords.length; i++) {
+      const kw = keywords[i];
+      const entry = datalabResults ? datalabResults[i] : null;
+
+      if (entry && Array.isArray(entry.data) && entry.data.length) {
+        const upsertHistory = db.prepare(`
+          INSERT INTO keyword_evergreen_history (keyword, month, ratio) VALUES (?, ?, ?)
+          ON CONFLICT(keyword, month) DO UPDATE SET ratio = excluded.ratio, fetched_at = datetime('now','localtime')
+        `);
+        const tx = db.transaction((rows) => {
+          for (const r of rows) {
+            const month = (r.period || '').slice(0, 7);
+            if (month) upsertHistory.run(kw, month, r.ratio || 0);
+          }
+        });
+        tx(entry.data);
+
+        const { classification, cv, monthsCount } = classifyEvergreenSeries(entry.data);
+        if (classification === 'unknown') {
+          const ai = await classifyEvergreenWithAI(kw);
+          upsertEvergreenResult(db, kw, { classification: ai.classification, method: 'ai', monthsCount, reason: ai.reason });
+          results.push({ keyword: kw, classification: ai.classification, method: 'ai', reason: ai.reason, monthsCount });
+        } else {
+          upsertEvergreenResult(db, kw, { classification, method: 'datalab', cv, monthsCount });
+          results.push({ keyword: kw, classification, method: 'datalab', cv, monthsCount });
+        }
+      } else {
+        // 데이터랩 조회 실패/데이터 없음 → AI 판단으로 폴백
+        const ai = await classifyEvergreenWithAI(kw);
+        upsertEvergreenResult(db, kw, { classification: ai.classification, method: 'ai', monthsCount: 0, reason: ai.reason });
+        results.push({ keyword: kw, classification: ai.classification, method: 'ai', reason: ai.reason, datalabError });
+      }
+    }
+
+    return { success: true, results };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ── IPC: evergreen:getCached — 저장된 판정 결과만 조회(API 호출 없음) ──
+ipcMain.handle('evergreen:getCached', (event, keywordsInput) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  const keywords = (Array.isArray(keywordsInput) ? keywordsInput : [keywordsInput])
+    .map(k => (k || '').trim()).filter(Boolean);
+  if (!keywords.length) return { success: true, results: {} };
+  try {
+    const { getDB } = require('./src/db');
+    const placeholders = keywords.map(() => '?').join(',');
+    const rows = getDB().prepare(
+      `SELECT * FROM keyword_evergreen_result WHERE keyword IN (${placeholders})`
+    ).all(...keywords);
+    const results = {};
+    for (const r of rows) results[r.keyword] = r;
+    return { success: true, results };
+  } catch (err) {
+    return { success: false, error: err.message, results: {} };
   }
 });
 

@@ -151,6 +151,13 @@ export default function Research() {
   const [sortKey, setSortKey]   = useState(null);   // 정렬 기준 컬럼
   const [sortDir, setSortDir]   = useState('desc'); // 'desc' | 'asc'
 
+  // ── 에버그린 키워드 판별 상태 (2026-08-19 신규, 개발자 전용) ──
+  // evergreenMap: 키워드 문자열 → 판정 결과({classification, method, cv, reason, monthsCount})
+  // "등록된 키워드" 목록과 "키워드 분석" 표 양쪽에서 키워드 텍스트 기준으로 공유해서 씀.
+  const isDevBuild = process.env.NODE_ENV === 'development';
+  const [evergreenMap, setEvergreenMap] = useState({});
+  const [evergreenLoadingKw, setEvergreenLoadingKw] = useState(new Set());
+
   // ── 트렌드 상태 ───────────────────────────────────────────
   const [trends, setTrends]           = useState([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
@@ -158,10 +165,21 @@ export default function Research() {
   const [trendsLoaded, setTrendsLoaded] = useState(false);
 
   // ── 데이터 로드 ───────────────────────────────────────────
+  // 2026-08-19 신규(개발자 전용): 저장된 에버그린 판정 결과만 조회(API
+  // 호출 없이 DB 캐시만 읽음) — 키워드 목록을 불러올 때마다 같이 채움.
+  const loadEvergreenCached = useCallback(async (kwList) => {
+    if (!isDevBuild || !kwList || !kwList.length) return;
+    const res = await window.electronAPI.evergreen.getCached(kwList);
+    if (res.success) setEvergreenMap(prev => ({ ...prev, ...res.results }));
+  }, [isDevBuild]);
+
   const loadKeywords = useCallback(async () => {
     const res = await window.electronAPI.research.getKeywords();
-    if (res.success) setKeywords(res.data);
-  }, []);
+    if (res.success) {
+      setKeywords(res.data);
+      loadEvergreenCached(res.data.map(k => k.keyword));
+    }
+  }, [loadEvergreenCached]);
 
   const loadItems = useCallback(async (kwId = 'all') => {
     const res = await window.electronAPI.research.getItems(kwId === 'all' ? null : kwId);
@@ -242,9 +260,55 @@ export default function Research() {
     if (res.success) {
       setAnalyzeResults(res.data || []);
       if (!res.data?.length) setAnalyzeError('조회 결과가 없습니다.');
+      // 2026-08-19 신규(개발자 전용): 검색량 조회와 별개로 에버그린 판별도
+      // 같이 실행 — 실패해도 검색량 결과 표시에는 영향 없음(fire-and-forget).
+      if (isDevBuild) handleEvergreenAnalyze(kws);
     } else {
       setAnalyzeError(res.error || '오류가 발생했습니다.');
     }
+  };
+
+  // ── 에버그린 키워드 판별 실행 (2026-08-19 신규, 개발자 전용) ──
+  // keywordsArr에 담긴 키워드들을 실제로 데이터랩 API(+필요 시 AI 폴백)로
+  // 판별해 evergreenMap을 갱신. "등록된 키워드"의 개별 판별 버튼과
+  // "키워드 분석"의 분석 버튼 양쪽에서 재사용.
+  const handleEvergreenAnalyze = async (keywordsArr) => {
+    const kws = (keywordsArr || []).filter(Boolean);
+    if (!isDevBuild || !kws.length) return;
+    setEvergreenLoadingKw(prev => new Set([...prev, ...kws]));
+    const res = await window.electronAPI.evergreen.analyze(kws);
+    setEvergreenLoadingKw(prev => {
+      const next = new Set(prev);
+      kws.forEach(k => next.delete(k));
+      return next;
+    });
+    if (res.success) {
+      const map = {};
+      for (const r of res.results || []) map[r.keyword] = r;
+      setEvergreenMap(prev => ({ ...prev, ...map }));
+    }
+  };
+
+  // 판정 결과 → 배지 JSX (없으면 null, 로딩 중이면 스피너)
+  const renderEvergreenBadge = (keyword) => {
+    if (!isDevBuild) return null;
+    if (evergreenLoadingKw.has(keyword)) return <span className="eg-badge eg-loading"><span className="spinner-sm"/></span>;
+    const r = evergreenMap[keyword];
+    if (!r || !r.classification || r.classification === 'unknown') return null;
+    // 2026-08-19 추가: 판정 방식(데이터랩 실측 vs AI 대체)을 배지에 바로
+    // 노출 — 신규 API라 실제로 데이터랩이 성공했는지 AI로 조용히
+    // 폴백됐는지 hover 없이 한눈에 구분하기 위함(개발자 전용 디버그용).
+    const methodTag = r.method === 'ai' ? 'AI 추정' : '데이터랩';
+    const title = r.method === 'ai'
+      ? (r.reason || 'AI 판단')
+      : `CV ${r.cv != null ? r.cv.toFixed(2) : '-'} · ${r.monthsCount ?? 0}개월 데이터`;
+    const cls = r.classification === 'evergreen' ? 'eg-ever' : 'eg-season';
+    const icon = r.classification === 'evergreen' ? '🌲 에버그린' : '☀️ 시즌성';
+    return (
+      <span className={`eg-badge ${cls}`} title={title}>
+        {icon} <em className="eg-method">{methodTag}</em>
+      </span>
+    );
   };
 
   const fmtVol = (v) => {
@@ -631,6 +695,7 @@ export default function Research() {
                     onClick={() => handleToggleActive(kw.id, kw.active)}
                   />
                   <span className="kw-name">{kw.keyword}</span>
+                  {renderEvergreenBadge(kw.keyword)}
                   {kw.category && <span className="kw-cat">{kw.category}</span>}
                   <span className="kw-interval">
                     {kw.interval_hours === -1 && kw.date_from && kw.date_to
@@ -652,6 +717,14 @@ export default function Research() {
                       className="btn-sm btn-del"
                       onClick={() => handleDeleteKeyword(kw.id)}
                     >삭제</button>
+                    {isDevBuild && (
+                      <button
+                        className="btn-sm btn-evergreen"
+                        onClick={() => handleEvergreenAnalyze([kw.keyword])}
+                        disabled={evergreenLoadingKw.has(kw.keyword)}
+                        title="에버그린 키워드 판별(개발자 전용)"
+                      >판별</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -782,6 +855,7 @@ export default function Research() {
                   <th className="th-sortable" onClick={() => handleSort('plAvgDepth')}>
                     평균 순위{sortIcon('plAvgDepth')}
                   </th>
+                  {isDevBuild && <th>에버그린</th>}
                   <th></th>
                 </tr>
               </thead>
@@ -796,6 +870,7 @@ export default function Research() {
                       <td className="analyze-num analyze-total">{fmtVol(row.total)}</td>
                       <td><span className={`comp-badge ${comp.cls}`}>{comp.text}</span></td>
                       <td className="analyze-num">{row.plAvgDepth || '-'}</td>
+                      {isDevBuild && <td>{renderEvergreenBadge(row.keyword) || <span className="eg-badge-empty">-</span>}</td>}
                       <td>
                         <button
                           className="btn-sm btn-collect"

@@ -8,6 +8,10 @@ const DEFAULTS = {
   geminiKey: '', groqKey: '', openaiKey: '', claudeKey: '', unsplashKey: '',
   naverApiId: '', naverApiSecret: '',
   searchAdCustomerId: '', searchAdApiKey: '', searchAdSecretKey: '',
+  // 2026-08-19 신규(개발자 전용): 에버그린 키워드 판별용 — NAVER API HUB
+  // "검색어트렌드"(Data Lab) API. 기존 검색광고 API(키워드 분석)와는
+  // 완전히 별개 발급 체계(NCP 콘솔, X-NCP-APIGW 헤더 방식).
+  datalabClientId: '', datalabClientSecret: '',
   licenseKey: '',
   customThumbnail: true, thumbnailStyle: -1, thumbnailDesign: 'default',
   postStyle: -1,
@@ -637,6 +641,9 @@ export default function Settings() {
   const [claudeStatus, setClaudeStatus]     = useState(null);
   const [unsplashStatus, setUnsplashStatus] = useState(null);
   const [naverApiStatus, setNaverApiStatus] = useState(null);
+  // 2026-08-19 신규(개발자 전용): 에버그린 키워드 판별용 데이터랩 API
+  const [showDatalabSecret, setShowDatalabSecret] = useState(false);
+  const [datalabStatus, setDatalabStatus]         = useState(null);
   // 2026-07-24 신규: 쿠팡파트너스/알리익스프레스도 다른 API처럼 등록한
   // 키가 실제로 유효한지 "테스트" 버튼으로 확인할 수 있게 추가.
   const [coupangStatus, setCoupangStatus] = useState(null);
@@ -1120,6 +1127,12 @@ export default function Settings() {
     );
     setSearchAdStatus(res.ok ? 'ok' : 'error');
   };
+  // 2026-08-19 신규(개발자 전용): 에버그린 키워드 판별용 데이터랩 API 연결 테스트
+  const testDatalab = async () => {
+    setDatalabStatus('testing');
+    const res = await window.electronAPI.settings.testDatalab(form.datalabClientId, form.datalabClientSecret);
+    setDatalabStatus(res.ok ? 'ok' : 'error');
+  };
   // 2026-07-24 신규
   const testCoupang = async () => {
     setCoupangStatus('testing');
@@ -1417,6 +1430,40 @@ export default function Settings() {
             🔑 <a href="https://searchad.naver.com" target="_blank" rel="noreferrer" style={{color:'var(--accent)'}}>searchad.naver.com</a> 로그인 → 좌측 도구 → SA API 사용 관리 → 고객 ID · API Key · Secret 발급 (무료)
           </p>
         </div>
+
+        {/* 2026-08-19 신규(개발자 전용): 에버그린 키워드 판별 — NAVER API HUB
+            "검색어트렌드"(Data Lab). 아직 실사용 검증 전인 기능이라 배포판에는
+            노출하지 않고 개발 모드에서만 입력 가능하게 함(process.env.NODE_ENV
+            가드 — main.js의 관련 IPC도 isDev 2차 가드 적용). */}
+        {process.env.NODE_ENV === 'development' && (<>
+          <hr className="api-divider" />
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>네이버 API HUB — 검색어트렌드 <span style={{fontWeight:400, color:'var(--text-secondary)', fontSize:'12px'}}>— 에버그린 키워드 판별(개발자 전용)</span></label>
+            <div style={{ display:'flex', gap:'8px', marginBottom:'6px' }}>
+              <input className="input" type="text" placeholder="Client ID (X-NCP-APIGW-API-KEY-ID)"
+                value={form.datalabClientId}
+                onChange={e => { set('datalabClientId', e.target.value); setDatalabStatus(null); }}
+                style={{ flex:1 }} />
+            </div>
+            <div className="api-key-row">
+              <div className="input-with-toggle" style={{ flex:1 }}>
+                <input className="input" type={showDatalabSecret ? 'text' : 'password'} placeholder="Client Secret (X-NCP-APIGW-API-KEY)"
+                  value={form.datalabClientSecret}
+                  onChange={e => { set('datalabClientSecret', e.target.value); setDatalabStatus(null); }} />
+                <button className="toggle-eye" onClick={() => setShowDatalabSecret(v => !v)}><EyeIcon open={showDatalabSecret} /></button>
+              </div>
+              <button className="btn btn-ghost" onClick={testDatalab}
+                disabled={!form.datalabClientId || !form.datalabClientSecret || datalabStatus === 'testing'}>
+                {datalabStatus === 'testing' ? '확인 중…' : '테스트'}
+              </button>
+              {datalabStatus === 'ok'    && <span className="api-status ok">✓ 연결됨</span>}
+              {datalabStatus === 'error' && <span className="api-status error">✗ 오류</span>}
+            </div>
+            <p style={{fontSize:'11px',color:'var(--text-secondary)',marginTop:'5px',lineHeight:'1.5'}}>
+              🔑 <a href="https://console.ncloud.com/naver-api-hub/application" target="_blank" rel="noreferrer" style={{color:'var(--accent)'}}>NAVER API HUB 콘솔</a> → Application → 검색어트렌드 API 선택 → Client ID/Secret 발급
+            </p>
+          </div>
+        </>)}
       </div>
       </div>}
 

@@ -158,6 +158,38 @@ function getDB() {
     db.prepare("UPDATE accounts SET sort_order = id WHERE sort_order = 0").run();
   } catch (_) {}
 
+  // 에버그린 키워드 판별 (2026-08-19 신규, 개발자 전용 기능)
+  // - keyword_evergreen_history: 데이터랩 API로 조회한 키워드별 월간 상대
+  //   검색 관심도(0~100)를 매번 누적 저장. 같은 키워드·같은 달을 다시
+  //   조회하면 UNIQUE(keyword, month) 제약으로 덮어씀(재조회 시 최신화).
+  //   이 원본 데이터를 계속 쌓아두면, 나중에 판정 기준(임계값 등)을
+  //   바꾸더라도 API를 다시 호출하지 않고 재계산만으로 검증할 수 있음.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS keyword_evergreen_history (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      keyword    TEXT    NOT NULL,
+      month      TEXT    NOT NULL,
+      ratio      REAL    NOT NULL DEFAULT 0,
+      fetched_at TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      UNIQUE(keyword, month)
+    )
+  `).run();
+
+  // - keyword_evergreen_result: 위 히스토리를 기반으로 계산한 최신 판정
+  //   결과 캐시(키워드당 1행). 매번 재계산하지 않고 화면에서 바로 읽어
+  //   보여주기 위한 용도 — "판별" 버튼을 눌렀을 때만 갱신됨.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS keyword_evergreen_result (
+      keyword        TEXT PRIMARY KEY,
+      classification TEXT    NOT NULL DEFAULT '',
+      method         TEXT    NOT NULL DEFAULT '',
+      cv             REAL,
+      months_count   INTEGER NOT NULL DEFAULT 0,
+      reason         TEXT    NOT NULL DEFAULT '',
+      updated_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+  `).run();
+
   return db;
 }
 
