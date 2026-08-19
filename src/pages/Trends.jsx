@@ -44,6 +44,10 @@ export default function Trends() {
   const [mainPage, setMainPage] = useState(0);
 
   // 조회 결과(res)를 화면 상태에 반영 — 실시간 조회/캐시 조회 양쪽에서 공유
+  // 2026-08-19 수정(사용자 요청): 주제별/성별,연령별 드롭다운의 초기 선택값이
+  // 항상 배열의 첫 번째 항목(주제별은 늘 "맛집")으로 고정돼 있어 매번 똑같이
+  // 보이던 문제 — 인기 트렌드 화면에 진입/새로고침할 때마다 무작위 인덱스로
+  // 뽑아 시작 카테고리・성별,연령대가 매번 달라지도록 변경.
   const applyResult = (res) => {
     const cats = res.searchInflow?.categories || [];
     const groups = res.genderAgeInflow?.groups || [];
@@ -53,11 +57,13 @@ export default function Trends() {
     setGenderAgeGroups(groups);
     setMainItems(res.mainInflow?.items || []);
     setMainPage(0);
-    setSelectedCategory(cats[0]?.name || '');
+    const randomCat = cats.length ? cats[Math.floor(Math.random() * cats.length)] : null;
+    setSelectedCategory(randomCat?.name || '');
     if (groups.length) {
-      const first = parseGenderAgeName(groups[0].name);
-      setSelectedGender(first.gender);
-      setSelectedAge(first.age);
+      const randomGroup = groups[Math.floor(Math.random() * groups.length)];
+      const parsed = parseGenderAgeName(randomGroup.name);
+      setSelectedGender(parsed.gender);
+      setSelectedAge(parsed.age);
     } else {
       setSelectedGender('');
       setSelectedAge('');
