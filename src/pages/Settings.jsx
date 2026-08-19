@@ -35,7 +35,7 @@ const DEFAULTS = {
   autoShowPublishWindow: false,
 };
 
-// ── 썸네일 디자인 22종 미리보기 옵션 (2026-07-13) ──────────────
+// ── 썸네일 디자인 24종 미리보기 옵션 (2026-07-13, 2026-08-19 2종 추가) ──
 // main.js THUMB_DESIGNS와 id/kind/색상 파라미터를 1:1로 맞춰야 함(둘 다
 // 여기서 바꾸면 main.js도 함께 바꿀 것). 'default'는 기존 포토 프레임형.
 // kind/색상 필드는 아래 ThumbDesignPreview가 작은 미리보기 카드를 그리는 데 씀 —
@@ -66,6 +66,9 @@ const THUMB_DESIGN_OPTIONS = [
   { id:'color-terracotta-diamond', label:'테라코타 골드 다이아프레임', kind:'frame-square', accent:'#d4af37', double:true, cutCorners:true, logos:['bl'] },
   { id:'color-mint-frame', label:'민트 골드 프레임', kind:'frame-square', accent:'#d4af37', logos:['bl'] },
   { id:'color-purple-dots', label:'퍼플 골드 도트클러스터', kind:'dot-cluster', accent:'#d4af37', logos:['tr'] },
+  // 2026-08-19 신규(모던 컨셉 D1~D2) — main.js THUMB_DESIGNS와 짝 맞춤
+  { id:'modern-neon', label:'네온 그리드', kind:'neon-grid', accent:'#00e5ff' },
+  { id:'modern-botanical', label:'다크 그린 보태니컬', kind:'botanical-corner', accent:'#7fae86' },
 ];
 
 // ── 썸네일 디자인 미니 미리보기 (2026-07-13 신규) ────────────────
@@ -182,6 +185,22 @@ function ThumbDesignPreview({ design }) {
         <div style={{ position:'absolute', top:'11px', left:'12px', width:'3px', height:'3px', borderRadius:'50%', background:acc }} />
         <div style={{ position:'absolute', bottom:'6px', right:'6px', width:'5px', height:'5px', borderRadius:'50%', background:acc }} />
         <div style={{ position:'absolute', bottom:'11px', right:'12px', width:'3px', height:'3px', borderRadius:'50%', background:acc }} />
+      </>;
+      break;
+    case 'neon-grid':
+      chrome = <>
+        <div style={{ position:'absolute', inset:'5px', border:`1px solid ${acc}`, opacity:.85 }} />
+        <div style={{ position:'absolute', top:'2px', left:'2px', width:'12px', height:'12px',
+          borderTop:'2px solid #ff2fd1', borderLeft:'2px solid #ff2fd1' }} />
+        <div style={{ position:'absolute', bottom:'2px', right:'2px', width:'12px', height:'12px',
+          borderBottom:'2px solid #ff2fd1', borderRight:'2px solid #ff2fd1' }} />
+      </>;
+      break;
+    case 'botanical-corner':
+      chrome = <>
+        <div style={{ position:'absolute', inset:'6px', border:`1px solid ${acc}`, opacity:.8 }} />
+        <div style={{ position:'absolute', top:'3px', left:'3px', fontSize:'9px', color:acc }}>❀</div>
+        <div style={{ position:'absolute', bottom:'3px', right:'3px', fontSize:'9px', color:acc }}>❀</div>
       </>;
       break;
     default:

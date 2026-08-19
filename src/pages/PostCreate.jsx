@@ -727,6 +727,9 @@ export default function PostCreate() {
         tone,
         // 2026-08-07 신규: 리뷰형에서 사용자가 지정한 제품명 — 있으면 제목 대신 우선 사용
         reviewProductName: reviewProductName || undefined,
+        // 2026-08-19 신규: 쿠팡 subId(계정별 채널 구분)를 실제 발행과 동일하게
+        // 미리보기에도 반영하기 위해 선택된 계정 ID 전달
+        accountId: accountId ? Number(accountId) : undefined,
       });
       if (res.success) {
         setPreviewData(res);

@@ -4611,7 +4611,7 @@ ${structureCountRule}
 // 자동화 없이 텍스트 섹션 HTML만 만들어 돌려준다. 이미지 자체는 렌더러가
 // 이미 갖고 있는 이미지 URL로 <img> 태그를 직접 배치하므로, 여기서는
 // 섹션 HTML과 각 조각의 존재 여부만 알려주면 충분하다.
-async function composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset, reviewProductName }) {
+async function composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset, reviewProductName, coupangSubId }) {
   const iconCycler = makeIconCycler(stylePreset.h2.icons);
   const introHtml = buildIntroHtml(intro, editorFont, iconCycler, stylePreset);
 
@@ -4636,7 +4636,9 @@ async function composePreviewSections({ title, tone, intro, body, conclusion, li
   // 2026-08-07 신규: 사용자가 리뷰형 선택 시 입력한 제품명(reviewProductName)이
   // 있으면 제목 대신 그 제품명을 검색어로 우선 사용 — 특정 상품을 정확히
   // 지정해서 노출시키고 싶다는 요청.
-  const adResult = await resolveAffiliateAd((reviewProductName || title || '').trim(), tone);
+  // 2026-08-19 신규: 미리보기도 실제 발행과 동일하게 coupangSubId(발행 예정
+  // 계정의 naver_id) 전달 — post:renderPreview 핸들러에서 accountId로 조회해 넘겨줌.
+  const adResult = await resolveAffiliateAd((reviewProductName || title || '').trim(), tone, coupangSubId);
   const adHtml = adResult ? buildAffiliateAdHtml(adResult.product, adResult.platform, editorFont) : '';
   const adProductImage = adResult ? adResult.product.image : null;
   const adPosition = adResult ? adResult.position : 'none';
@@ -4666,8 +4668,17 @@ async function composePreviewSections({ title, tone, intro, body, conclusion, li
 // → publishToNaver로 그대로 전달되어 재사용된다 — 그래야 미리본 색상·
 // 구조·썸네일과 실제 발행 결과가 달라지는 문제(랜덤이 두 번 다르게
 // 뽑히는 경우)를 막을 수 있다.
-ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl, tone, reviewProductName }) => {
+ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, body, conclusion, links, hashtags, autoThumbnail, thumbBgUrl, tone, reviewProductName, accountId }) => {
   try {
+    // 2026-08-19 신규: 발행 예정 계정의 naver_id를 쿠팡 subId로 조회 —
+    // 미리보기도 실제 발행과 동일한 subId가 반영되도록 함(사용자 요청).
+    let coupangSubId;
+    if (accountId) {
+      try {
+        const { getDB } = require('./src/db');
+        coupangSubId = getDB().prepare('SELECT naver_id FROM accounts WHERE id = ?').get(accountId)?.naver_id || undefined;
+      } catch {}
+    }
     const editorFont = (getStore().get('settings.editorFont', '') || '').trim();
     const styleSetting = getStore().get('settings.postStyle', -1);
     const resolvedStyleIndex = (styleSetting >= 0 && styleSetting < POST_STYLE_PRESETS.length)
@@ -4695,7 +4706,7 @@ ipcMain.handle('post:renderPreview', async (event, { title, thumbText, intro, bo
       }
     }
 
-    const sections = await composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset, reviewProductName });
+    const sections = await composePreviewSections({ title, tone, intro, body, conclusion, links, editorFont, stylePreset, reviewProductName, coupangSubId });
 
     return { success: true, ...sections, thumbDataUrl, thumbTempPath, resolvedStyleIndex, resolvedLayoutId };
   } catch (err) {
@@ -5822,9 +5833,15 @@ function coupangHmacAuth(method, pathWithQuery, secretKey, accessKey) {
 }
 
 // 쿠팡파트너스 상품검색 API — 키워드로 상위 1개 상품 반환(null이면 결과 없음/실패)
-async function searchCoupangProduct(keyword, accessKey, secretKey) {
+// 2026-08-19 신규: subId(쿠팡이 실적 리포트에서 채널 구분에 쓰는 서브 아이디)
+// 파라미터 추가 — 사용자가 쿠팡 파트너스 계정(=API 키)은 하나인데 네이버
+// 블로그 계정 여러 개(skysmoga/skysmogs66)를 번갈아 발행해, 실적 리포트에서
+// 어느 네이버 계정에서 발생한 클릭인지 구분하고 싶다고 요청. 값이 없어도
+// 기존처럼 정상 동작(하위 호환).
+async function searchCoupangProduct(keyword, accessKey, secretKey, subId) {
   const path = '/v2/providers/affiliate_open_api/apis/openapi/products/search';
-  const query = `keyword=${encodeURIComponent(keyword)}&limit=5`;
+  let query = `keyword=${encodeURIComponent(keyword)}&limit=5`;
+  if (subId) query += `&subId=${encodeURIComponent(subId)}`;
   const auth = coupangHmacAuth('GET', `${path}?${query}`, secretKey, accessKey);
   const res = await fetch(`https://api-gateway.coupang.com${path}?${query}`, {
     headers: { Authorization: auth, 'Content-Type': 'application/json;charset=UTF-8' },
@@ -5909,7 +5926,10 @@ async function searchAliexpressProduct(keyword, appKey, appSecret, trackingId) {
 // 톤/설정/키 등록 여부를 검사해 조건이 맞을 때만 실제 상품을 검색해 반환.
 // 실패해도 예외를 던지지 않고 null 반환 — 광고는 부가 기능이므로, 검색
 // 실패가 발행 전체를 막아서는 안 됨(로그만 남기고 조용히 스킵).
-async function resolveAffiliateAd(keyword, tone) {
+// 2026-08-19 신규: subId — 발행 중인 네이버 계정의 naver_id를 넘겨받아
+// 쿠팡 검색 요청에 실어 보냄(채널 구분용). 알리익스프레스는 이미 별도
+// trackingId 설정이 있어 이 값을 쓰지 않음.
+async function resolveAffiliateAd(keyword, tone, subId) {
   try {
     if (tone !== 'review') return null;
     const s = getStore().get('settings', {});
@@ -5919,7 +5939,7 @@ async function resolveAffiliateAd(keyword, tone) {
     let product = null;
     if (platform === 'coupang') {
       if (!s.coupangAccessKey || !s.coupangSecretKey) return null;
-      product = await searchCoupangProduct(keyword, s.coupangAccessKey, s.coupangSecretKey);
+      product = await searchCoupangProduct(keyword, s.coupangAccessKey, s.coupangSecretKey, subId);
     } else {
       if (!s.aliAppKey || !s.aliAppSecret) return null;
       // 2026-07-24 1차 수정(사용자 실사용 지적 — "주제와 안 맞는 상품이
@@ -6036,9 +6056,9 @@ const THUMB_DESIGNS = [
   { id:'lux-line', label:'블랙 화이트 라인', group:'블랙 골드 럭셔리', kind:'thin-line-round',
     bg:'#141414', accent:'#f2f2f2', logoAccent:'#d4af37', logos:['tr','bl'] },
   { id:'lux-bars-panel', label:'블랙 골드 바+패널', group:'블랙 골드 럭셔리', kind:'bars-panel',
-    bg:'#141414', accent:'#d4af37', logos:['tl','tr','bl','br'] },
+    bg:'#141414', accent:'#d4af37', logos:['tl','tr','bl','br'], footerBottom:46 },
   { id:'lux-zigzag', label:'블랙 골드 지그재그', group:'블랙 골드 럭셔리', kind:'zigzag',
-    bg:'#141414', accent:'#d4af37', logos:['tl','br'] },
+    bg:'#141414', accent:'#d4af37', logos:['tl','br'], footerBottom:46 },
 
   // ── 파스텔 일러스트 (B1~B9) — 2026-07-13 재해석: 사진 배경 위 코너/테두리 장식으로 축소 ──
   { id:'pastel-memphis', label:'멤피스 도형', group:'파스텔 일러스트', kind:'memphis',
@@ -6046,7 +6066,7 @@ const THUMB_DESIGNS = [
   { id:'pastel-sunburst', label:'선버스트 하늘', group:'파스텔 일러스트', kind:'sunburst',
     bg:'#8fd3f4', accent:'#ffb347', flowerColor:'#ff8ba0', logos:[] },
   { id:'pastel-fabric', label:'테라코타 텍스처', group:'파스텔 일러스트', kind:'texture-fabric',
-    bg:'#b5502e', accent:'#e8c9a0', logos:[] },
+    bg:'#b5502e', accent:'#e8c9a0', logos:[], footerBottom:46 },
   { id:'pastel-mint-frame', label:'민트 화이트 프레임', group:'파스텔 일러스트', kind:'frame-square',
     bg:'#8fd9c4', accent:'#ffffff', borderWidth:2, double:false, cutCorners:false, logos:['tl','bl'] },
   { id:'pastel-doodle', label:'옐로우 별 도들', group:'파스텔 일러스트', kind:'doodle-stars',
@@ -6066,7 +6086,7 @@ const THUMB_DESIGNS = [
   { id:'color-charcoal-frame', label:'차콜 골드 컷코너', group:'컬러 + 골드', kind:'frame-square',
     bg:'#2b2b2b', accent:'#d4af37', borderWidth:2, double:true, cutCorners:true, logos:['tl','br'] },
   { id:'color-green-bars', label:'그린 골드 바', group:'컬러 + 골드', kind:'bars-only',
-    bg:'#0b3d24', accent:'#d4af37', logos:[] },
+    bg:'#0b3d24', accent:'#d4af37', logos:[], footerBottom:44 },
   { id:'color-gold-frame', label:'골드 그라데이션 프레임', group:'컬러 + 골드', kind:'frame-square',
     bg:'linear-gradient(135deg,#d9b876,#b8935a)', accent:'#f0dca0', borderWidth:1, double:false, cutCorners:false, logos:[] },
   { id:'color-white-frame', label:'화이트 골드 프레임', group:'컬러 + 골드', kind:'frame-square',
@@ -6079,6 +6099,15 @@ const THUMB_DESIGNS = [
     bg:'#a8d5c5', accent:'#d4af37', borderWidth:2, double:false, cutCorners:false, logos:['bl'] },
   { id:'color-purple-dots', label:'퍼플 골드 도트클러스터', group:'컬러 + 골드', kind:'dot-cluster',
     bg:'#4a3060', accent:'#d4af37', dotColor:'#d4af37', logos:['tr'] },
+
+  // ── 모던 컨셉 (D1~D2, 2026-08-19 신규) ──
+  // 기존 22종의 그룹/모티프와 겹치지 않는 새 방향 2종. 사용자가 시각적
+  // 샘플(HTML 미리보기)을 보고 직접 선택한 것 — 1번 "네온 그리드"와
+  // 7번 "다크 그린 보태니컬".
+  { id:'modern-neon', label:'네온 그리드', group:'모던 컨셉', kind:'neon-grid',
+    bg:'#1a2233', accent:'#00e5ff', logos:[] },
+  { id:'modern-botanical', label:'다크 그린 보태니컬', group:'모던 컨셉', kind:'botanical-corner',
+    bg:'#1f3a2a', accent:'#7fae86', logos:[] },
 ];
 
 // 선택된 코너들에 작은 'N' 로고 마크(이탤릭 세리프)를 배치하는 공용 헬퍼.
@@ -6260,6 +6289,27 @@ function renderThumbDesignChrome(design, accent) {
       }).join('');
     };
     const html = cluster(24, 24) + cluster(452, 452) + logos;
+    return { css, html };
+  }
+
+  // ── 모던 컨셉 (D1~D2, 2026-08-19 신규) ── 둘 다 하단 전체폭 밴드가
+  // 아니라 코너 장식만 쓰므로 footerBottom 보정이 필요 없음(가운데 정렬된
+  // "@ 네이버 블로그" 문구와 가로로 겹치지 않음).
+  if (design.kind === 'neon-grid') {
+    const css = '.d-ng-line{position:absolute;inset:14px;border:1.5px solid ' + acc + ';z-index:2;opacity:.85}' +
+      '.d-ng-corner{position:absolute;width:38px;height:38px;z-index:2;border-color:#ff2fd1}' +
+      '.d-ng-tl{top:6px;left:6px;border-top:3px solid #ff2fd1;border-left:3px solid #ff2fd1}' +
+      '.d-ng-br{bottom:6px;right:6px;border-bottom:3px solid #ff2fd1;border-right:3px solid #ff2fd1}';
+    const html = '<div class="d-ng-line"></div><div class="d-ng-corner d-ng-tl"></div><div class="d-ng-corner d-ng-br"></div>' + logos;
+    return { css, html };
+  }
+
+  if (design.kind === 'botanical-corner') {
+    const css = '.d-bot-line{position:absolute;inset:18px;border:1px solid ' + acc + ';z-index:2;opacity:.8}' +
+      '.d-bot-leaf{position:absolute;z-index:2;font-size:26px;color:' + acc + ';text-shadow:0 1px 2px rgba(0,0,0,.5)}';
+    const html = '<div class="d-bot-line"></div>' +
+      '<div class="d-bot-leaf" style="top:10px;left:10px">❀</div>' +
+      '<div class="d-bot-leaf" style="bottom:10px;right:10px">❀</div>' + logos;
     return { css, html };
   }
 
@@ -6564,7 +6614,7 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
         font-size:${titleFontSize}px;font-weight:800;text-align:center;line-height:1.12;padding:0 46px}
       .subtitle{position:absolute;left:0;right:0;z-index:3;text-align:center;
         color:#eee;font-size:16px;letter-spacing:3px;font-weight:500}
-      .footer{position:absolute;bottom:28px;left:0;right:0;text-align:center;
+      .footer{position:absolute;bottom:${design && design.footerBottom ? design.footerBottom : 28}px;left:0;right:0;text-align:center;
         color:rgba(255,255,255,0.7);font-size:13px;z-index:3}
     </style></head><body>
       <div class="overlay"></div>
@@ -7846,7 +7896,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 2026-08-07 신규: 사용자가 리뷰형 선택 시 입력한 제품명(reviewProductName)이
   // 있으면 제목 대신 그 제품명을 검색어로 우선 사용 — composePreviewSections와
   // 동일한 처리(미리보기와 실제 발행 결과가 어긋나지 않도록).
-  const affiliateAd = await resolveAffiliateAd((reviewProductName || title || '').trim(), content.tone);
+  // 2026-08-19 신규: 발행 중인 네이버 계정의 naver_id를 쿠팡 subId로 전달 —
+  // 쿠팡 파트너스 계정은 하나뿐이지만 실적 리포트에서 어느 네이버 계정
+  // 발행분인지 구분할 수 있게 함(사용자 요청).
+  const affiliateAd = await resolveAffiliateAd((reviewProductName || title || '').trim(), content.tone, account.naver_id);
   const affiliateAdHtml = affiliateAd ? buildAffiliateAdHtml(affiliateAd.product, affiliateAd.platform, editorFont) : '';
   const insertAffiliateAd = async (label) => {
     if (!affiliateAd) return;

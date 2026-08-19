@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import './Trends.css';
 
 // 2026-08-14 신규: 네이버 블로그 관리자용 "크리에이터 어드바이저"
@@ -18,6 +19,105 @@ function parseGenderAgeName(name) {
   const m = /^(.*?)\s*(남자|여자)\s*$/.exec(name || '');
   if (m) return { age: m[1].trim(), gender: m[2] };
   return { age: (name || '').trim(), gender: '' };
+}
+
+// 2026-08-19 신규: "주제별"/"성별,연령별" 드롭다운을 네이티브 <select>에서
+// 커스텀 드롭다운으로 교체. 원인 — Chromium은 select를 열 때 현재 선택된
+// 옵션을 클릭 지점에 맞추려고 목록을 위로 밀어올리는데, 주제별 목록이
+// 30개 안팎이라 랜덤 기본값([[keyword-intent-classify-2026-08-19]]와
+// 무관, 같은 날 추가한 다른 수정 — 초기 선택값 랜덤화)이 목록 뒤쪽 항목일
+// 때 드롭다운이 창 위로 넘쳐 보이는 버그가 사용자 리포트로 확인됨. 포털
+// 기반 커스텀 드롭다운은 항상 버튼 바로 아래(top: 버튼 bottom+4)에 고정
+// 렌더링되므로 선택된 항목 위치와 무관하게 항상 아래로 열림 — Settings.jsx
+// 의 NaverCategoryPicker/ThumbDesignPicker와 동일한 포지셔닝 패턴 재사용.
+// 2026-08-19 추가: 주제별 목록이 30개라 세로로 쭉 늘어놓으면 스크롤이
+// 길어짐 — 사용자 요청으로 항목이 많을 때(임계값 초과 시)만 2열 그리드로
+// 표시(15개씩 두 열). 성별/연령별처럼 항목이 적은 드롭다운은 지금처럼
+// 세로 한 줄 그대로 유지.
+const FILTER_MULTI_COL_THRESHOLD = 12;
+const FILTER_MULTI_COL_WIDTH = 340;
+const FILTER_SIDEBAR_MIN_LEFT = 216; // 사이드바 폭(200px)+여유 16px — Settings.jsx SIDEBAR_MIN_LEFT와 동일 값
+
+function FilterDropdown({ value, options, onChange, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 160 });
+  const btnRef = useRef(null);
+  const panelRef = useRef(null);
+  const twoCol = options.length > FILTER_MULTI_COL_THRESHOLD;
+
+  useEffect(() => {
+    if (!open) return;
+    const updateCoords = () => {
+      if (!btnRef.current) return;
+      const r = btnRef.current.getBoundingClientRect();
+      if (!twoCol) {
+        setCoords({ top: r.bottom + 4, left: r.left, width: r.width });
+        return;
+      }
+      // 2열 그리드일 땐 버튼 폭보다 넓게(고정 340px) 펼치되, 카드 우측
+      // 경계와 사이드바 영역을 넘지 않도록 ThumbDesignPicker와 동일하게
+      // clamp.
+      const cardEl = btnRef.current.closest('.card');
+      const rightBoundary = cardEl
+        ? cardEl.getBoundingClientRect().right - 8
+        : window.innerWidth - 8;
+      const maxAllowedWidth = Math.max(220, rightBoundary - FILTER_SIDEBAR_MIN_LEFT);
+      const width = Math.min(Math.max(FILTER_MULTI_COL_WIDTH, r.width), maxAllowedWidth);
+      let left = r.left;
+      if (left + width > rightBoundary) left = rightBoundary - width;
+      if (left < FILTER_SIDEBAR_MIN_LEFT) left = FILTER_SIDEBAR_MIN_LEFT;
+      setCoords({ top: r.bottom + 4, left, width });
+    };
+    updateCoords();
+    const handleOutside = (e) => {
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      if (panelRef.current && panelRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('resize', updateCoords);
+    window.addEventListener('scroll', updateCoords, true);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('resize', updateCoords);
+      window.removeEventListener('scroll', updateCoords, true);
+    };
+  }, [open, twoCol]);
+
+  // grid-auto-flow:column이 항목을 첫 열부터 위→아래로 채우게 하려면
+  // 행 개수를 명시해야 함(안 그러면 가로로 먼저 채워짐) — 30개면
+  // Math.ceil(30/2)=15행, 즉 "15개씩 두 열"이 정확히 맞아떨어짐.
+  const gridRows = twoCol ? Math.ceil(options.length / 2) : null;
+
+  const panel = open ? createPortal(
+    <div
+      className={`ca-filter-panel${twoCol ? ' ca-filter-panel-grid' : ''}`}
+      ref={panelRef}
+      style={{
+        top: coords.top, left: coords.left, width: coords.width,
+        ...(twoCol ? { gridTemplateRows: `repeat(${gridRows}, auto)` } : {}),
+      }}
+    >
+      {options.map(opt => (
+        <div
+          key={opt}
+          className={`ca-filter-panel-item${value === opt ? ' selected' : ''}`}
+          onClick={() => { onChange(opt); setOpen(false); }}
+        >{opt}</div>
+      ))}
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="ca-filter-dropdown">
+      <button type="button" ref={btnRef} className="ca-select ca-filter-btn" onClick={() => setOpen(o => !o)}>
+        <span className="ca-filter-btn-label">{value || placeholder || '선택'}</span>
+        <span className="ca-filter-btn-arrow">{open ? '▲' : '▼'}</span>
+      </button>
+      {panel}
+    </div>
+  );
 }
 
 export default function Trends() {
@@ -206,15 +306,11 @@ export default function Trends() {
               <div className="ca-panel-controls">
                 <div className="ca-panel-label">주제별</div>
                 {categories.length > 0 && (
-                  <select
-                    className="ca-select"
+                  <FilterDropdown
                     value={selectedCategory}
-                    onChange={e => setSelectedCategory(e.target.value)}
-                  >
-                    {categories.map(cat => (
-                      <option key={cat.name} value={cat.name}>{cat.name}</option>
-                    ))}
-                  </select>
+                    options={categories.map(cat => cat.name)}
+                    onChange={setSelectedCategory}
+                  />
                 )}
               </div>
               <div className="ca-panel">
@@ -233,20 +329,16 @@ export default function Trends() {
                 <div className="ca-panel-label">성별·연령별</div>
                 {genderAgeGroups.length > 0 && (
                   <div className="ca-select-row">
-                    <select
-                      className="ca-select"
+                    <FilterDropdown
                       value={selectedGender}
-                      onChange={e => setSelectedGender(e.target.value)}
-                    >
-                      {genderOptions.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                    <select
-                      className="ca-select"
+                      options={genderOptions}
+                      onChange={setSelectedGender}
+                    />
+                    <FilterDropdown
                       value={selectedAge}
-                      onChange={e => setSelectedAge(e.target.value)}
-                    >
-                      {ageOptions.map(a => <option key={a} value={a}>{a}</option>)}
-                    </select>
+                      options={ageOptions}
+                      onChange={setSelectedAge}
+                    />
                   </div>
                 )}
               </div>
