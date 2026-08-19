@@ -419,8 +419,20 @@ export default function Research() {
   // "규칙을 찾을 수 없음" 에러로 빌드 자체를 막는 문제가 있어 제거함.
   // loadTrends를 의존성 배열에 넣지 않아 콘솔 경고가 다시 뜰 수 있으나
   // 경고는 빌드를 막지 않고, 기능(진입 시 1회 자동 로드)은 동일함.
+  // 2026-08-19 수정(사용자 요청): 다른 화면 갔다가 돌아올 때마다(이 컴포넌트
+  // 재마운트) 매번 재스크래핑하던 문제 — 1시간 이내 캐시가 있으면 그걸 먼저
+  // 써서 대기 없이 바로 보여주고, 없거나 만료됐을 때만 실시간 재조회.
+  // "🔄 새로고침" 버튼은 이 캐시와 무관하게 항상 loadTrends()로 실시간 조회.
   useEffect(() => {
-    loadTrends();
+    (async () => {
+      const cached = await window.electronAPI.research.getTrendsCached();
+      if (cached.success) {
+        setTrends(cached.data || []);
+        setTrendsLoaded(true);
+      } else {
+        loadTrends();
+      }
+    })();
   }, []);
 
   // 트렌드/키워드 분석 결과를 등록된 키워드로 추가

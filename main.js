@@ -11211,6 +11211,48 @@ ipcMain.handle('research:toggleUsed', (event, id, val) => {
   } catch (err) { return { success: false, error: err.message }; }
 });
 
+// ── 실시간 트렌드 키워드(Google Trends) 캐시 (2026-08-19 신규) ──────
+// 배경: "인기 트렌드"(크리에이터 어드바이저)는 캐시가 있었는데 이쪽은
+// 아예 없어서, 다른 화면 갔다가 "글감 수집"으로 돌아올 때마다(Research.jsx
+// 재마운트) 매번 처음부터 다시 스크래핑하고 있었음(사용자 지적). 다만
+// 이름 그대로 "실시간" 트렌드라 인기 트렌드처럼 하루 종일 캐시하면
+// 오래된 순위를 계속 보여줄 위험이 있어, 사용자와 협의해 유효시간 1시간
+// 짜리 캐시로 결정(사용자 확인: 체감상 순위가 그렇게 자주 안 바뀌더라,
+// 오히려 1시간 단위로 재조회되면 변동을 체감할 수 있을 것 같다는 의견).
+// "🔄 새로고침" 버튼(research:getTrends)은 이 캐시와 무관하게 항상
+// 실시간으로 재조회 — [[trends-cache-disk-persist-2026-08-19]]와 동일한
+// 설계 원칙, TTL(하루→1시간)만 다름.
+let googleTrendsCache = null; // { success, data, fetchedAt }
+const GOOGLE_TRENDS_TTL_MS = 60 * 60 * 1000; // 1시간
+
+function loadPersistedGoogleTrendsCache() {
+  try {
+    const cached = getStore().get('googleTrendsCache', null);
+    if (cached && (Date.now() - cached.fetchedAt) < GOOGLE_TRENDS_TTL_MS) return cached;
+  } catch {}
+  return null;
+}
+
+function persistGoogleTrendsCache(data) {
+  const withMeta = { success: true, data, fetchedAt: Date.now() };
+  googleTrendsCache = withMeta;
+  try { getStore().set('googleTrendsCache', withMeta); } catch {}
+}
+
+// 캐시만 조회(유효시간 1시간 이내일 때만) — 없거나 만료됐으면 success:false로
+// 응답, 프런트에서 실시간 조회(research:getTrends)로 자연스럽게 폴백.
+ipcMain.handle('research:getTrendsCached', () => {
+  if (googleTrendsCache && (Date.now() - googleTrendsCache.fetchedAt) < GOOGLE_TRENDS_TTL_MS) {
+    return { ...googleTrendsCache, cached: true };
+  }
+  const persisted = loadPersistedGoogleTrendsCache();
+  if (persisted) {
+    googleTrendsCache = persisted; // 이번 세션 메모리에도 올려 다음 조회부터 더 빠르게
+    return { ...persisted, cached: true };
+  }
+  return { success: false, cached: false, error: '아직 유효한 캐시가 없습니다.' };
+});
+
 // ── IPC: research:getTrends (Google Trends 실시간 스크래핑) ──
 ipcMain.handle('research:getTrends', async () => {
   // 2026-07-04: 검색량 기준 재정렬(sortByTraffic) 제거 — 사용자가 웹에서 구글
@@ -11293,7 +11335,10 @@ ipcMain.handle('research:getTrends', async () => {
   // 1차: BrowserWindow 스크래핑
   try {
     const items = await scrapeViaWindow();
-    if (items.length >= 5) return { success: true, data: items };
+    if (items.length >= 5) {
+      persistGoogleTrendsCache(items); // 2026-08-19 신규: 1시간 캐시에 반영
+      return { success: true, data: items };
+    }
   } catch {}
 
   // 2차 fallback: RSS
@@ -11314,7 +11359,10 @@ ipcMain.handle('research:getTrends', async () => {
       const news    = (block.match(/<ht:news_item_title><!\[CDATA\[(.*?)\]\]>/) || block.match(/<ht:news_item_title>(.*?)<\/ht:news_item_title>/) || [])[1] || '';
       if (kw) items.push({ keyword: kw.trim(), traffic: traffic.trim(), news: news.trim() });
     }
-    if (items.length) return { success: true, data: items };
+    if (items.length) {
+      persistGoogleTrendsCache(items); // 2026-08-19 신규: 1시간 캐시에 반영
+      return { success: true, data: items };
+    }
   } catch {}
 
   return { success: false, error: '트렌드 데이터를 가져올 수 없습니다.' };

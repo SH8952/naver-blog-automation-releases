@@ -218,6 +218,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteKeyword:    (id)  => ipcRenderer.invoke('research:deleteKeyword', id),
     deleteAllKeywords: ()   => ipcRenderer.invoke('research:deleteAllKeywords'),
     getTrends:         ()   => ipcRenderer.invoke('research:getTrends'),
+    /** 실시간 트렌드 키워드 1시간 캐시 조회(2026-08-19 신규) */
+    getTrendsCached:   ()   => ipcRenderer.invoke('research:getTrendsCached'),
     toggleActive:  (id, val) => ipcRenderer.invoke('research:toggleActive', id, val),
     collect:       (id)      => ipcRenderer.invoke('research:collect', id),
     getItems:      (kwId)    => ipcRenderer.invoke('research:getItems', kwId),
