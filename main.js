@@ -3282,6 +3282,13 @@ ${reviewToneGuide}- 문체: ${styleMap[writingStyle] || styleMap.auto}
   가격에만 적용되는 것이며, 위에서 지정한 "글 톤"(예: 감성형)의 문체
   자체를 딱딱한 설명체로 바꾸라는 뜻이 아님 — 사실을 다룰 때만 신중하게
   쓰고, 감정 표현이나 개인적 소감은 선택된 톤에 맞게 자유롭게 표현할 것.
+  [예외 - 2026-08-19 신규] 단, 아래 "참고 자료"가 함께 제공된 경우 그
+  안에 등장하는 구체적 사실(기관명・지역명・제도명 등)은 이 규칙의 대상이
+  아님 — 실제 검색된 자료에 있는 내용이므로 확신 있게 활용해 "지자체
+  지원금"처럼 원래 구체적인 대상을 짚어야 유용한 주제라면 참고 자료에
+  나온 지역・기관명을 실제로 언급하며 구체적으로 서술할 것. 이 규칙은
+  참고 자료 등 근거가 전혀 없는데 그럴듯하게 지어내는 경우만 막기 위한
+  것이다.
 ${referenceContext}${AI_CLICHE_BAN}
 - JSON 형식으로만 응답할 것`;
 
@@ -4267,6 +4274,51 @@ function normalizeHashtags(tags) {
 
 // ── 글 전체 생성 (2026-07-05: 자동화 루프에서도 재사용할 수 있도록
 //    ipcMain.handle 본체를 일반 함수로 분리) ──────────────────────
+// 2026-08-19 신규: 글 생성 시점에 실제 검색으로 참고 자료를 보강 — 사용자가
+// "지자체 지원금" 등 특정 대상을 짚어줘야 유용한 주제인데도 글이 두루뭉실
+// 하게 나온다고 지적, 근본 원인은 AI가 참고할 구체적 사실 자체가 없어
+// "사실 정확성" 안전 규칙에 따라 일반 원칙으로만 서술하게 되는 것이었음
+// (기존엔 "글감 수집"에 미리 모아둔 항목이 keyword_text와 정확히 일치할
+// 때만 참고자료로 쓰였고, 없으면 참고자료 없이 생성됨). collectKeywordItems()
+// 와 동일한 네이버 Open API 블로그 검색 키(환경설정의 "글감 수집 안정성
+// 향상" API)를 재사용해 즉석 검색 — 별도 설정 불필요. 키 미설정/요청 실패
+// 시에도 조용히 빈 배열만 반환해 글 생성 자체는 항상 그대로 진행됨(기존
+// "참고자료 없을 때" 동작과 동일하게 자연 폴백).
+async function searchTopicSnippets(topic, limit = 5) {
+  try {
+    const store = getStore();
+    const clientId     = (store.get('settings.naverApiId', '') || '').trim();
+    const clientSecret = (store.get('settings.naverApiSecret', '') || '').trim();
+    if (!clientId || !clientSecret || !topic) return [];
+
+    const url = `https://openapi.naver.com/v1/search/blog.json?query=${encodeURIComponent(topic)}&display=${Math.max(1, limit)}&sort=sim`;
+    const items = await new Promise((resolve) => {
+      const req = net.request({ method: 'GET', url });
+      req.setHeader('X-Naver-Client-Id', clientId);
+      req.setHeader('X-Naver-Client-Secret', clientSecret);
+      let body = '';
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { body += chunk.toString(); });
+        res.on('end', () => {
+          try { resolve(JSON.parse(body).items || []); }
+          catch { resolve([]); }
+        });
+      });
+      req.on('error', () => resolve([]));
+      req.end();
+    });
+
+    return items
+      .map(item => ({
+        title:   (item.title || '').replace(/<[^>]*>/g, '').trim(),
+        summary: (item.description || '').replace(/<[^>]*>/g, '').trim(),
+      }))
+      .filter(r => r.title);
+  } catch {
+    return [];
+  }
+}
+
 async function generatePostContent(params) {
   try {
     writeLog('INFO', 'AI', `글 생성 시작 — 주제: ${params.topic}`);
@@ -4295,6 +4347,21 @@ async function generatePostContent(params) {
       }
     } catch (e) {
       writeLog('WARN', 'AI', '글감 수집 참고 자료 조회 실패 — 참고 자료 없이 진행', e.message);
+    }
+
+    // 2026-08-19 신규: DB 참고자료가 부족하면(3건 미만) 실시간 검색으로
+    // 보강 — 자동화 루프의 keyword_text 일치 케이스뿐 아니라, 글감 수집에
+    // 없는 주제로 수동 글 생성을 할 때도 동일하게 적용됨(사용자 지적,
+    // "지자체 지원금" 사례). searchTopicSnippets()는 키 미설정/실패 시
+    // 조용히 빈 배열을 반환하므로 실패해도 글 생성 흐름에는 영향 없음.
+    if (referenceItems.length < 3) {
+      const liveResults = await searchTopicSnippets(params.topic, 5 - referenceItems.length);
+      if (liveResults.length) {
+        const existingTitles = new Set(referenceItems.map(r => r.title));
+        const merged = liveResults.filter(r => !existingTitles.has(r.title));
+        referenceItems = [...referenceItems, ...merged];
+        writeLog('INFO', 'AI', `실시간 검색 참고 자료 ${merged.length}건 보강`, params.topic);
+      }
     }
 
     // 2026-07-29 신규(개발자 전용 테스트 기능): "글 가져오기"로 가져온 외부
