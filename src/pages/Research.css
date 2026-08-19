@@ -690,7 +690,8 @@
   align-items: center;
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 6px;
+  /* 2026-08-19 수정: 표 가로 스크롤 방지를 위해 여백 축소(6px→4px). */
+  padding: 1px 4px;
   border-radius: 10px;
   white-space: nowrap;
   flex-shrink: 0;
@@ -703,7 +704,8 @@
   font-weight: 400;
   opacity: 0.75;
   font-size: 9px;
-  margin-left: 3px;
+  /* 2026-08-19 수정: 표 가로 스크롤 방지를 위해 여백 축소(3px→2px). */
+  margin-left: 2px;
 }
 .eg-badge-empty { color: var(--text-secondary); font-size: 11px; }
 .btn-evergreen {
@@ -841,7 +843,10 @@
 
 .analyze-table th {
   text-align: center;
-  padding: 7px 10px;
+  /* 2026-08-19 수정(사용자 요청): 컬럼(경쟁도/평균순위/에버그린/등록)이
+     늘어나며 가로 스크롤이 생기는 문제 — 글자 크기·컬럼 수는 유지하고
+     여백만 타이트하게(10px→6px) 줄여 스크롤 없이 다 들어오게 함. */
+  padding: 7px 6px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -870,7 +875,8 @@
 .sort-active { color: var(--accent); opacity: 1; }
 
 .analyze-table td {
-  padding: 8px 10px;
+  /* 2026-08-19 수정: th와 동일한 이유로 여백만 축소(10px→6px). */
+  padding: 8px 6px;
   border-bottom: 1px solid var(--border);
   color: var(--text-primary);
   text-align: center;
@@ -895,11 +901,21 @@
   color: var(--accent) !important;
 }
 
+/* 2026-08-19 신규: 표 안의 "+ 등록" 버튼(.btn-sm 공용 클래스)만 여백을
+   좁힘(8px→5px). .btn-sm은 "등록된 키워드"/"수집된 글감" 목록에서도
+   재사용되는 공용 클래스라, 그쪽 크기까지 같이 줄어드는 걸 막기 위해
+   전역 .btn-sm 대신 .analyze-table 안에서만 적용되도록 스코프를 좁힘
+   (css-specificity-silent-override-pattern 메모 참고). */
+.analyze-table .btn-sm {
+  padding: 2px 5px;
+}
+
 .comp-badge {
   display: inline-block;
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 8px;
+  /* 2026-08-19 수정: 표 가로 스크롤 방지를 위해 여백 축소(8px→5px). */
+  padding: 2px 5px;
   border-radius: 99px;
   text-align: center;
 }
