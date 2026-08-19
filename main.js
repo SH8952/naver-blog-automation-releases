@@ -2655,22 +2655,55 @@ async function fetchCreatorAdvisorTrendsCore() {
   }
 }
 
-// 백그라운드 미리 불러오기 캐시(2026-08-14 신규) — 메모리에만 저장, 앱
-// 재시작 시 초기화됨. Trends.jsx는 진입 시 이 캐시를 먼저 확인해 있으면
-// 대기 없이 바로 보여주고, 없으면 기존처럼 실시간으로 불러온다.
-let creatorAdvisorTrendsCache = null; // { success, naverId, periodLabel, searchInflow, genderAgeInflow, mainInflow, fetchedAt }
+// 백그라운드 미리 불러오기 캐시(2026-08-14 신규, 2026-08-19 디스크 영속화) —
+// 원래는 메모리에만 저장돼 앱을 재시작하면(같은 날 안이어도) 무조건 초기화돼
+// 매번 느린 스크래핑을 다시 해야 했음(사용자 지적, 2026-08-19). 이제 메모리
+// 캐시는 그대로 두되(같은 세션 안에서는 여전히 가장 빠름), electron-store에도
+// 날짜와 함께 같이 저장해 "오늘 이미 불러온 적 있으면" 앱을 다시 켜도 재조회
+// 없이 바로 보여주도록 함 — 날짜가 바뀌면(자정 지남) 자동으로 무효화되어
+// 새로 스크래핑하게 됨. 화면의 "🔄 새로고침" 버튼(handleLoad→
+// trends:getCreatorAdvisor)은 이 캐시와 무관하게 항상 실시간으로 재조회함.
+let creatorAdvisorTrendsCache = null; // { success, naverId, periodLabel, searchInflow, genderAgeInflow, mainInflow, fetchedAt, date }
+
+function todayDateStr() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// 디스크(electron-store)에 저장된 캐시 중 "오늘 날짜"인 것만 유효하게 조회.
+// 날짜가 다르면(어제 이전 데이터) 무효로 취급해 null 반환.
+function loadPersistedTrendsCache() {
+  try {
+    const cached = getStore().get('trendsCache', null);
+    if (cached && cached.date === todayDateStr()) return cached;
+  } catch {}
+  return null;
+}
+
+function persistTrendsCache(result) {
+  const withMeta = { ...result, fetchedAt: Date.now(), date: todayDateStr() };
+  creatorAdvisorTrendsCache = withMeta;
+  try { getStore().set('trendsCache', withMeta); } catch {}
+}
 
 ipcMain.handle('trends:getCreatorAdvisor', async () => {
   const result = await fetchCreatorAdvisorTrendsCore();
-  if (result.success) creatorAdvisorTrendsCache = { ...result, fetchedAt: Date.now() };
+  if (result.success) persistTrendsCache(result);
   return result;
 });
 
 // 캐시만 조회(백그라운드 미리 불러오기 결과) — 없으면 success:false로
 // 응답, 프런트에서 실시간 조회(trends:getCreatorAdvisor)로 자연스럽게
-// 폴백하도록 함.
+// 폴백하도록 함. 2026-08-19 수정: 메모리 캐시가 없어도(=앱을 오늘 중
+// 재시작한 경우) 디스크에 오늘 날짜로 저장된 캐시가 있으면 그걸 대신 씀.
 ipcMain.handle('trends:getCached', () => {
   if (creatorAdvisorTrendsCache) return { ...creatorAdvisorTrendsCache, cached: true };
+  const persisted = loadPersistedTrendsCache();
+  if (persisted) {
+    creatorAdvisorTrendsCache = persisted; // 이번 세션 메모리에도 올려 다음 조회부터 더 빠르게
+    return { ...persisted, cached: true };
+  }
   return { success: false, cached: false, error: '아직 미리 불러온 트렌드가 없습니다.' };
 });
 
@@ -2678,12 +2711,21 @@ ipcMain.handle('trends:getCached', () => {
 // 가져와 캐시해 두는 함수(사용자 요청, 2026-08-14) — runStartupSessionCheck()
 // 끝에서 fire-and-forget으로 호출됨. 실패해도 조용히 로그만 남기고
 // 넘어감(사용자가 트렌드 페이지에서 직접 새로고침하면 됨).
+// 2026-08-19 수정: 오늘 날짜로 이미 디스크에 저장된 캐시가 있으면 굳이
+// 다시 느린 스크래핑을 하지 않고 그걸 메모리로 올리기만 하고 끝냄 —
+// 오늘 안에 앱을 여러 번 껐다 켜도 최초 1회만 실제로 불러오게 됨.
 async function prefetchCreatorAdvisorTrends() {
+  const persisted = loadPersistedTrendsCache();
+  if (persisted) {
+    creatorAdvisorTrendsCache = persisted;
+    writeLog('INFO', 'TRENDS', '오늘 저장된 캐시 재사용(재조회 생략)');
+    return;
+  }
   try {
     writeLog('INFO', 'TRENDS', '백그라운드 트렌드 미리 불러오기 시작');
     const result = await fetchCreatorAdvisorTrendsCore();
     if (result.success) {
-      creatorAdvisorTrendsCache = { ...result, fetchedAt: Date.now() };
+      persistTrendsCache(result);
       writeLog('INFO', 'TRENDS', '백그라운드 트렌드 미리 불러오기 완료');
     } else {
       writeLog('WARN', 'TRENDS', '백그라운드 트렌드 미리 불러오기 실패', result.error);
