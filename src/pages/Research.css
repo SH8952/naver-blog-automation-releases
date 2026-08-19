@@ -907,6 +907,91 @@
 .comp-mid  { background: rgba(251,191,36,0.15);  color: var(--warning); }
 .comp-high { background: rgba(248,113,113,0.15); color: var(--danger); }
 
+/* ── 키워드 인텐트 분류 섹션 (2026-08-19 신규) ─────────────────
+   "키워드 분석"과 "실시간 트렌드 키워드" 사이, 분석 결과가 있을 때만
+   표시. .trends-section처럼 고정 높이를 강제하지 않고 내용에 맞춰
+   자연스럽게 늘어나며, 넘치는 부분은 .main-inner(overflow-y:auto)가
+   페이지 전체를 스크롤해 처리(위 트렌드 섹션 주석과 동일한 원칙). */
+.intent-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  flex-shrink: 0;
+}
+
+.intent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.intent-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.intent-col {
+  background: var(--bg-secondary, rgba(255,255,255,0.03));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.intent-col-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.intent-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-left: auto;
+}
+
+.intent-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.intent-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.intent-chip {
+  font-size: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 3px 8px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.intent-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.intent-chip-plus {
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: 2px;
+}
+
 /* ── 트렌드 키워드 섹션 ───────────────────────────────────── */
 /* 2026-07-05 (정정): 이전 지시대로 이 섹션은 위쪽 콘텐츠(특히 키워드 분석
    결과 테이블)가 늘어나도 절대 크기가 줄어들면 안 됨 — flex:1은 공간이

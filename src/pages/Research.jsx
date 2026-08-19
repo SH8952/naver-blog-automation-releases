@@ -151,6 +151,12 @@ export default function Research() {
   const [sortKey, setSortKey]   = useState(null);   // 정렬 기준 컬럼
   const [sortDir, setSortDir]   = useState('desc'); // 'desc' | 'asc'
 
+  // ── 키워드 인텐트 분류 상태 (2026-08-19 신규) ────────────────
+  // "키워드 분석" 결과의 연관 키워드 전체를 롱테일/정보형/거래형/탐색형
+  // 으로 분류한 결과. "분석" 버튼 클릭 시 검색량 조회와 함께 실행됨.
+  const [intentResults, setIntentResults] = useState({ longtail: [], informational: [], transactional: [], navigational: [] });
+  const [intentLoading, setIntentLoading] = useState(false);
+
   // ── 에버그린 키워드 판별 상태 (2026-08-19 신규, 개발자 전용) ──
   // evergreenMap: 키워드 문자열 → 판정 결과({classification, method, cv, reason, monthsCount})
   // "등록된 키워드" 목록과 "키워드 분석" 표 양쪽에서 키워드 텍스트 기준으로 공유해서 씀.
@@ -263,8 +269,36 @@ export default function Research() {
       // 2026-08-19 신규(개발자 전용): 검색량 조회와 별개로 에버그린 판별도
       // 같이 실행 — 실패해도 검색량 결과 표시에는 영향 없음(fire-and-forget).
       if (isDevBuild) handleEvergreenAnalyze(kws);
+      // 2026-08-19 신규(개발자 전용 — 사용자 요청으로 재지정, 검증 전까지
+      // 배포판 제외): 연관 키워드 전체(검색량 결과의 keyword들)를 대상으로
+      // 롱테일/정보형/거래형/탐색형 분류도 같이 실행.
+      if (isDevBuild) {
+        const relatedKws = [...new Set((res.data || []).map(r => r.keyword).filter(Boolean))];
+        if (relatedKws.length) handleClassifyIntent(relatedKws);
+        else setIntentResults({ longtail: [], informational: [], transactional: [], navigational: [] });
+      }
     } else {
       setAnalyzeError(res.error || '오류가 발생했습니다.');
+      setIntentResults({ longtail: [], informational: [], transactional: [], navigational: [] });
+    }
+  };
+
+  // ── 키워드 인텐트 분류 실행 (2026-08-19 신규) ─────────────────
+  // 규칙 기반 매칭을 main.js 쪽에서 먼저 적용하고, 패턴에 안 걸린
+  // 키워드만 모아 AI에 단 1회(배치) 호출 — 결과만 받아 상태에 반영.
+  const handleClassifyIntent = async (keywordsArr) => {
+    const kws = (keywordsArr || []).filter(Boolean);
+    if (!isDevBuild || !kws.length) return;
+    setIntentLoading(true);
+    const res = await window.electronAPI.research.classifyIntent(kws);
+    setIntentLoading(false);
+    if (res.success) {
+      setIntentResults({
+        longtail: res.longtail || [],
+        informational: res.informational || [],
+        transactional: res.transactional || [],
+        navigational: res.navigational || [],
+      });
     }
   };
 
@@ -823,6 +857,7 @@ export default function Research() {
                 onClick={() => {
                   setAnalyzeInput('');
                   setAnalyzeResults([]); // 2026-07-06: 입력 지우면 펼쳐진 분석 결과도 원상태로 복귀
+                  setIntentResults({ longtail: [], informational: [], transactional: [], navigational: [] }); // 2026-08-19: 인텐트 분류 결과도 같이 초기화
                 }}
               >×</button>
             )}
@@ -894,6 +929,46 @@ export default function Research() {
           </div>
         )}
       </div>
+
+      {/* ── 키워드 인텐트 분류 섹션 (2026-08-19 신규) ──
+          "키워드 분석" 결과의 연관 키워드를 롱테일/정보형/거래형/탐색형으로
+          분류해 보여줌. 규칙 매칭 우선 + 미매칭분 AI 배치 호출(혼합 방식). */}
+      {isDevBuild && (intentLoading || intentResults.longtail.length || intentResults.informational.length || intentResults.transactional.length || intentResults.navigational.length) ? (
+        <div className="intent-section">
+          <div className="intent-header">
+            <span className="analyze-icon">🧭</span>
+            <span className="analyze-title">키워드 유형 분류</span>
+            <span className="analyze-sub">롱테일 · 정보형 · 거래형 · 탐색형 — 규칙 매칭 + AI 보완</span>
+            {intentLoading && <span className="spinner-sm" style={{ marginLeft: 8 }}/>}
+          </div>
+          <div className="intent-grid">
+            {[
+              { key: 'longtail', label: '롱테일 키워드', icon: '🔗' },
+              { key: 'informational', label: '정보형 키워드', icon: '📘' },
+              { key: 'transactional', label: '거래형 키워드', icon: '🛒' },
+              { key: 'navigational', label: '탐색형 키워드', icon: '🧭' },
+            ].map(col => (
+              <div className="intent-col" key={col.key}>
+                <div className="intent-col-title">{col.icon} {col.label} <span className="intent-count">{intentResults[col.key].length}</span></div>
+                <div className="intent-chip-list">
+                  {intentResults[col.key].length === 0 && !intentLoading && (
+                    <span className="intent-empty">-</span>
+                  )}
+                  {intentResults[col.key].map((kw, idx) => (
+                    <button
+                      type="button"
+                      key={`${col.key}-${idx}`}
+                      className="intent-chip"
+                      title="이 키워드를 글감 수집에 등록"
+                      onClick={() => handleAddTrendAsKeyword(kw)}
+                    >{kw} <span className="intent-chip-plus">+</span></button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* ── 트렌드 키워드 섹션 ── */}
       <div className="trends-section">

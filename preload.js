@@ -224,6 +224,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteItem:    (id)      => ipcRenderer.invoke('research:deleteItem', id),
     toggleUsed:      (id, val)  => ipcRenderer.invoke('research:toggleUsed', id, val),
     analyzeKeyword:  (keywords) => ipcRenderer.invoke('keyword:analyze', keywords),
+    /** 롱테일/정보형/거래형/탐색형 분류 (2026-08-19 신규) */
+    classifyIntent:  (keywords) => ipcRenderer.invoke('keyword:classifyIntent', keywords),
 
     /** 등록된 키워드에서 사용된 카테고리 목록(중복제거) 조회 (2026-07-05 신규) */
     getCategories: () => ipcRenderer.invoke('research:getCategories'),

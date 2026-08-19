@@ -10631,6 +10631,126 @@ ipcMain.handle('keyword:analyze', async (event, keywords) => {
   }
 });
 
+// ── 키워드 인텐트 분류: 롱테일/정보형/거래형/탐색형 (2026-08-19 신규) ──
+// 배경: 사용자가 "키워드 분석" 결과 옆에 롱테일/정보형/거래형/탐색형
+// 버킷을 보여달라 요청, 혼합 방식으로 합의: 규칙 기반 패턴 매칭을 먼저
+// 적용해 무료로 빠르게 분류하고, 패턴에 걸리지 않는 키워드만 모아 AI에
+// 단 1회(배치) 호출해 분류한다 — 키워드마다 개별 AI 호출을 피해 비용
+// 절감(에버그린 판별과는 다른 절약 철학: 여긴 키워드 수가 많아질 수 있어
+// 배치 자체가 필수적).
+
+// 롱테일 판별 — 엄밀한 정의 대신 실용적 휴리스틱: 공백 기준 2어절
+// 이상이거나, 공백 없이도 충분히 길면(6자 이상) 세부 의도가 담긴
+// 롱테일로 간주. 임계값은 잠정치 — 실사용 후 조정 여지.
+function isLongtailKeyword(keyword) {
+  const kw = (keyword || '').trim();
+  if (!kw) return false;
+  const words = kw.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return true;
+  return kw.length >= 6;
+}
+
+// 정보형/거래형/탐거형 규칙 기반 1차 분류 — 키워드에 패턴이 포함되어
+// 있으면 해당 의도로 즉시 분류(순서대로 검사, 첫 매칭 채택). 매칭되는
+// 패턴이 하나도 없으면 null → 호출부에서 AI 배치 분류로 폴백.
+const INTENT_RULES = {
+  transactional: ['가격', '구매', '최저가', '최저', '할인', '특가', '쿠폰', '무료배송', '주문', '예약', '신청', '판매', '직구', '대여', '렌탈', '견적', '순위'],
+  informational: ['방법', '이유', '원인', '효과', '뜻', '의미', '차이', '하는법', '증상', '종류', '정리', '총정리', '가이드', '팁', 'tip', '대처법', '해결', '후기', '리뷰'],
+  navigational: ['공식', '홈페이지', '로그인', '고객센터', '다운로드', '사이트', '앱'],
+};
+function classifyIntentByRule(keyword) {
+  const kw = (keyword || '');
+  for (const [intent, patterns] of Object.entries(INTENT_RULES)) {
+    if (patterns.some(p => kw.includes(p))) return intent;
+  }
+  return null;
+}
+
+// AI 배치 분류 — 규칙에 안 걸린 키워드 전체를 한 번의 프롬프트로 묶어
+// 호출(키워드마다 개별 호출 X, 비용 절감). JSON 전용 응답 요구(plain-text
+// 프롬프트는 callAI에서 조용히 실패한 전례, [[unsplash-korean-to-english-fallback]]).
+async function classifyIntentWithAI(keywords) {
+  if (!keywords || !keywords.length) return {};
+  const prompt = `다음 키워드 목록 각각의 검색 의도를 아래 세 가지 중 하나로 분류해줘.
+- informational: 정보 탐색 의도(방법/원인/비교/지식 습득 등)
+- transactional: 구매·신청·예약 등 행동·거래 의도
+- navigational: 특정 사이트·서비스·브랜드로 바로 이동하려는 의도
+
+키워드 목록: ${JSON.stringify(keywords)}
+
+반드시 아래 JSON 배열 형식으로만 답변해. 다른 설명은 절대 붙이지 마:
+[{"keyword":"키워드1","intent":"informational 또는 transactional 또는 navigational 중 하나"}]`;
+  try {
+    const raw = await callAI(prompt, 800);
+    const match = String(raw).match(/\[[\s\S]*\]/);
+    const parsed = JSON.parse(match ? match[0] : raw);
+    const map = {};
+    for (const item of (Array.isArray(parsed) ? parsed : [])) {
+      if (item && item.keyword && ['informational', 'transactional', 'navigational'].includes(item.intent)) {
+        map[item.keyword] = item.intent;
+      }
+    }
+    return map;
+  } catch (err) {
+    return {};
+  }
+}
+
+// ── IPC: keyword:classifyIntent ───────────────────────────────
+// "키워드 분석" 결과의 연관 키워드 전체를 대상으로 롱테일/정보형/거래형/
+// 탐색형으로 분류. 기존 키워드 검색량 조회와 같은 프리미엄 게이트 재사용
+// (같은 "분석" 버튼 클릭에서 함께 트리거되는 확장 기능이므로).
+ipcMain.handle('keyword:classifyIntent', async (event, keywordsInput) => {
+  // 2026-08-19 수정: 사용자 요청으로 개발자 전용 기능으로 재지정 —
+  // 오늘 신규 개발한 기능이라 검증 전까지는 배포판에 포함하지 않고
+  // 직접 써보며 판단(불필요하면 삭제 가능성도 있음). 프론트 UI 가드
+  // (isDevBuild)와 함께 2차 방어선(기존 dev 전용 IPC와 동일 패턴,
+  // [[dev-tier-override-toggle-2026-07-14]] 참고).
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    const tierLimits = await getTierLimits();
+    if (!tierLimits.keywordResearch) {
+      return { success: false, error: '키워드 검색량·수익성 조회는 프리미엄 전용 기능입니다.' };
+    }
+    const keywords = [...new Set(
+      (Array.isArray(keywordsInput) ? keywordsInput : [keywordsInput])
+        .map(k => (k || '').trim()).filter(Boolean)
+    )].slice(0, 30); // AI 프롬프트 크기 방지용 상한
+
+    if (!keywords.length) {
+      return { success: true, longtail: [], informational: [], transactional: [], navigational: [] };
+    }
+
+    const longtail = keywords.filter(isLongtailKeyword);
+
+    const buckets = { informational: [], transactional: [], navigational: [] };
+    const unmatched = [];
+    for (const kw of keywords) {
+      const rule = classifyIntentByRule(kw);
+      if (rule) buckets[rule].push(kw);
+      else unmatched.push(kw);
+    }
+
+    if (unmatched.length) {
+      const aiMap = await classifyIntentWithAI(unmatched);
+      for (const kw of unmatched) {
+        const intent = aiMap[kw];
+        if (intent && buckets[intent]) buckets[intent].push(kw);
+      }
+    }
+
+    return {
+      success: true,
+      longtail,
+      informational: buckets.informational,
+      transactional: buckets.transactional,
+      navigational: buckets.navigational,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ── 에버그린 키워드 판별 (2026-08-19 신규, 개발자 전용) ────────
 // 배경: [[evergreen-keyword-feature-2026-08-19]] — 시즌 무관 연중 꾸준
 // 검색어를 데이터랩 API의 과거 12개월 월별 상대 관심도(0~100)로 즉시
