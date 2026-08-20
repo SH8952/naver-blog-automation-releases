@@ -262,7 +262,22 @@ export default function Trends() {
 
   const genderAgeParsed = genderAgeGroups.map(g => ({ ...g, ...parseGenderAgeName(g.name) }));
   const genderOptions = Array.from(new Set(genderAgeParsed.map(g => g.gender))).filter(Boolean);
-  const ageOptions    = Array.from(new Set(genderAgeParsed.map(g => g.age))).filter(Boolean);
+  // 2026-08-20 수정(사용자 리포트): 연령대 드롭다운이 크리에이터 어드바이저
+  // API가 준 순서를 그대로 써서(정렬 로직 없음) 뒤죽박죽으로 보이던 버그.
+  // "30-34세"/"60세-"/"0-12세"처럼 형식이 제각각이라 문자열 정렬로는
+  // 안 되고, 앞쪽 숫자만 뽑아 오름차순 정렬해야 함 — "60세-"처럼 끝이
+  // 열린 항목은 가장 큰 값으로 취급해 맨 뒤로 보냄.
+  const ageOptions = Array.from(new Set(genderAgeParsed.map(g => g.age)))
+    .filter(Boolean)
+    .sort((a, b) => {
+      const numA = parseInt(a, 10);
+      const numB = parseInt(b, 10);
+      const openEndedA = /-\s*$/.test(a); // "60세-"처럼 끝이 "-"로 열린 형태
+      const openEndedB = /-\s*$/.test(b);
+      const valA = Number.isNaN(numA) ? Infinity : (openEndedA ? numA + 1000 : numA);
+      const valB = Number.isNaN(numB) ? Infinity : (openEndedB ? numB + 1000 : numB);
+      return valA - valB;
+    });
   const selectedGroup = genderAgeParsed.find(g => g.gender === selectedGender && g.age === selectedAge) || null;
 
   return (
