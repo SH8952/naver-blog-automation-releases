@@ -11024,6 +11024,54 @@ ipcMain.handle('keyword:analyze', async (event, keywords) => {
   }
 });
 
+// ── 네이버 연관 검색어(자동완성) 추천 (2026-08-20 신규) ────────
+// 배경: 사용자가 네이버 검색창 자동완성 스크린샷을 보여주며 "키워드
+// 분석" 전 단계의 키워드 발굴 도구로 가져올 수 있는지 문의 → 승인 후
+// 구현. ac.search.naver.com은 네이버가 공식 문서로 제공하는 개발자
+// API가 아니라 검색창 자체가 내부적으로 쓰는 비공식 엔드포인트라
+// (기존 [[google-trends-scraping]]과 같은 성격의 리스크), 정확한 응답
+// 스키마를 단정할 수 없음 — items를 재귀적으로 순회해 문자열만 뽑아내는
+// 방식으로 방어적으로 파싱해서, 응답 구조가 예상과 조금 달라도 최대한
+// 깨지지 않게 함. 검색량·경쟁도 같은 수치가 전혀 없는 순수 텍스트 후보
+// 목록이라는 점에서 keyword:analyze 결과와 성격이 다름(프론트에서도
+// 칩 형태로만 표시해 분석 결과 표와 구분).
+function extractAutocompleteStrings(node, out) {
+  if (!node) return;
+  if (typeof node === 'string') { out.push(node); return; }
+  if (Array.isArray(node)) {
+    // ["문자열", ...부가정보] 형태의 리프 노드는 첫 요소만 취하고 더
+    // 재귀하지 않음 — 부가정보(가중치 등 숫자)까지 섞여 들어가는 것 방지.
+    if (node.length && typeof node[0] === 'string') { out.push(node[0]); return; }
+    for (const child of node) extractAutocompleteStrings(child, out);
+  }
+}
+
+ipcMain.handle('keyword:autocomplete', async (event, keyword) => {
+  try {
+    const kw = (keyword || '').trim();
+    if (!kw) return { success: true, suggestions: [] };
+    const url = `https://ac.search.naver.com/nx/ac?q=${encodeURIComponent(kw)}&con=0&frm=nx&ans=2&r_format=json&r_enc=UTF-8&r_unicode=0&t_koreng=1&run=2&rev=4&q_enc=UTF-8&st=100`;
+    const body = await new Promise((resolve, reject) => {
+      const req = net.request({ method: 'GET', url });
+      req.setHeader('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
+      let data = '';
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { data += chunk.toString(); });
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', (e) => reject(e));
+      req.end();
+    });
+    const json = JSON.parse(body);
+    const raw = [];
+    extractAutocompleteStrings(json.items, raw);
+    const suggestions = [...new Set(raw)].filter(s => s && s !== kw).slice(0, 10);
+    return { success: true, suggestions };
+  } catch (err) {
+    return { success: false, error: '연관 검색어를 불러오지 못했습니다.' };
+  }
+});
+
 // ── 키워드 인텐트 분류: 롱테일/정보형/거래형/탐색형 (2026-08-19 신규) ──
 // 배경: 사용자가 "키워드 분석" 결과 옆에 롱테일/정보형/거래형/탐색형
 // 버킷을 보여달라 요청, 혼합 방식으로 합의: 규칙 기반 패턴 매칭을 먼저

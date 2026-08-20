@@ -151,6 +151,12 @@ export default function Research() {
   const [sortKey, setSortKey]   = useState(null);   // 정렬 기준 컬럼
   const [sortDir, setSortDir]   = useState('desc'); // 'desc' | 'asc'
 
+  // ── 연관 검색어 추천 상태 (네이버 자동완성, 2026-08-20 신규) ────
+  // 검색량 등 수치가 없는 순수 텍스트 후보 목록 — "키워드 분석" 결과
+  // 표와는 별개의 칩 형태로 보여줘 역할을 명확히 구분함(발굴 단계).
+  const [autocompleteList, setAutocompleteList] = useState([]);
+  const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+
   // ── 키워드 인텐트 분류 상태 (2026-08-19 신규) ────────────────
   // "키워드 분석" 결과의 연관 키워드 전체를 롱테일/정보형/거래형/탐색형
   // 으로 분류한 결과. "분석" 버튼 클릭 시 검색량 조회와 함께 실행됨.
@@ -282,6 +288,26 @@ export default function Research() {
       setIntentResults({ longtail: [], informational: [], transactional: [], navigational: [] });
     }
   };
+
+  // ── 연관 검색어 추천 (네이버 자동완성, 2026-08-20 신규) ──────────
+  // 배경: 사용자가 네이버 검색창 자동완성을 캡처해서 보여주며 "키워드
+  // 분석" 입력 전 단계의 키워드 발굴 도구로 가져올 수 있는지 문의 →
+  // 승인 후 구현. 쉼표로 여러 키워드를 입력 중일 때는 자동완성이 어느
+  // 키워드 기준인지 애매해지므로(네이버 자동완성 자체가 단일 검색어
+  // 기준) 첫 키워드 하나만 남아 있을 때만 동작. 타이핑할 때마다 바로
+  // 요청하지 않고 400ms 디바운스 — 비공식 엔드포인트에 불필요하게
+  // 자주 요청을 보내지 않기 위함.
+  useEffect(() => {
+    const seed = analyzeInput.trim();
+    if (!seed || seed.includes(',')) { setAutocompleteList([]); setAutocompleteLoading(false); return; }
+    setAutocompleteLoading(true);
+    const timer = setTimeout(async () => {
+      const res = await window.electronAPI.research.autocomplete(seed);
+      setAutocompleteLoading(false);
+      if (res.success) setAutocompleteList(res.suggestions || []);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [analyzeInput]);
 
   // ── 키워드 인텐트 분류 실행 (2026-08-19 신규) ─────────────────
   // 규칙 기반 매칭을 main.js 쪽에서 먼저 적용하고, 패턴에 안 걸린
@@ -451,6 +477,14 @@ export default function Research() {
     if (res.success) {
       await loadKeywords();
       showStatus(`"${keyword}" 키워드로 등록되었습니다.`);
+      // 2026-08-20 신규(사용자 요청, 개발자 전용): 키워드 등록과 동시에
+      // 에버그린 판별도 자동 실행 — 등록 후 "판별" 버튼을 따로 눌러야
+      // 하는 절차를 하나 줄임. 연관 검색어 칩·트렌드 칩·인텐트 칩·
+      // 분석표 "+ 등록" 버튼 등 이 함수를 쓰는 모든 등록 경로에 공통
+      // 적용됨(handleEvergreenAnalyze 내부에 이미 isDevBuild 가드가
+      // 있어 배포판에서는 자동으로 무시되지만, 기존 호출부와 동일하게
+      // 바깥에서도 한 번 더 가드).
+      if (isDevBuild) handleEvergreenAnalyze([keyword]);
     }
   };
 
@@ -870,6 +904,7 @@ export default function Research() {
                   setAnalyzeInput('');
                   setAnalyzeResults([]); // 2026-07-06: 입력 지우면 펼쳐진 분석 결과도 원상태로 복귀
                   setIntentResults({ longtail: [], informational: [], transactional: [], navigational: [] }); // 2026-08-19: 인텐트 분류 결과도 같이 초기화
+                  setAutocompleteList([]); // 2026-08-20: 연관 검색어 추천도 같이 초기화
                 }}
               >×</button>
             )}
@@ -886,6 +921,31 @@ export default function Research() {
             )}
           </button>
         </div>
+
+        {/* ── 연관 검색어 추천 (네이버 자동완성, 2026-08-20 신규) ──
+            검색량·경쟁도 같은 수치가 없는 순수 후보 텍스트라 분석 결과
+            표와는 다른 칩 형태로 표시. 2026-08-20 수정(사용자 요청):
+            검색광고 API가 공백 포함 롱테일 조회를 대부분 지원하지 않아
+            "분석 입력창 채우기" 흐름이 실효성이 없었음 — 대신 "키워드
+            유형 분류"의 롱테일 칩(.intent-chip)과 동일하게 클릭 시
+            바로 글감 수집 키워드로 등록되는 방식으로 전환, "등록" 문구
+            없이 "+" 아이콘만 붙임(.intent-chip-plus 재사용). */}
+        {analyzeInput.trim() && !analyzeInput.includes(',') && (autocompleteLoading || autocompleteList.length > 0) && (
+          <div className="autocomplete-chip-row">
+            <span className="autocomplete-chip-label">
+              연관 검색어{autocompleteLoading && <span className="spinner-sm" style={{ marginLeft: 6 }}/>}
+            </span>
+            {autocompleteList.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                className="autocomplete-chip"
+                onClick={() => handleAddTrendAsKeyword(s)}
+                title="이 키워드를 글감 수집에 등록"
+              >{s} <span className="intent-chip-plus">+</span></button>
+            ))}
+          </div>
+        )}
 
         {analyzeError && <div className="analyze-error">{analyzeError}</div>}
 

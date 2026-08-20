@@ -820,6 +820,44 @@
 .btn-analyze:hover:not(:disabled) { opacity: 0.85; }
 .btn-analyze:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* ── 연관 검색어 추천 (네이버 자동완성, 2026-08-20 신규) ──────────
+   .intent-chip와 같은 칩 스타일을 재사용하되, 색을 살짝 다르게 둬서
+   "분류 결과"가 아니라 "클릭해서 넣는 추천 후보"라는 느낌을 줌. */
+.autocomplete-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.autocomplete-chip-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.autocomplete-chip {
+  font-size: 11px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border);
+  border-radius: 99px;
+  padding: 3px 9px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.autocomplete-chip:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  color: var(--accent);
+}
+
 .analyze-error {
   font-size: 12px;
   color: var(--danger);

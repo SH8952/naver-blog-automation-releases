@@ -231,6 +231,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     analyzeKeyword:  (keywords) => ipcRenderer.invoke('keyword:analyze', keywords),
     /** 롱테일/정보형/거래형/탐색형 분류 (2026-08-19 신규) */
     classifyIntent:  (keywords) => ipcRenderer.invoke('keyword:classifyIntent', keywords),
+    /** 네이버 연관 검색어(자동완성) 추천 (2026-08-20 신규) */
+    autocomplete:    (keyword)  => ipcRenderer.invoke('keyword:autocomplete', keyword),
 
     /** 등록된 키워드에서 사용된 카테고리 목록(중복제거) 조회 (2026-07-05 신규) */
     getCategories: () => ipcRenderer.invoke('research:getCategories'),
