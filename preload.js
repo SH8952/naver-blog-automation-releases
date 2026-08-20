@@ -70,6 +70,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testAliexpress: (appKey, appSecret, trackingId) => ipcRenderer.invoke('settings:testAliexpress', appKey, appSecret, trackingId),
     /** 네이버 API HUB 검색어트렌드(데이터랩) 테스트 — 2026-08-19 신규(개발자 전용, 에버그린 키워드 판별 준비) */
     testDatalab:   (clientId, clientSecret) => ipcRenderer.invoke('settings:testDatalab', clientId, clientSecret),
+    /** Pexels/Pixabay API 테스트 — 2026-08-20 신규(개발자 전용, 이미지 플랫폼 다중화 실험) */
+    testPexels:    (key) => ipcRenderer.invoke('settings:testPexels', key),
+    testPixabay:   (key) => ipcRenderer.invoke('settings:testPixabay', key),
   },
 
   // ── 라이선스 (오프라인 서명 키, 2026-07-04 신규 / 2026-07-13 HWID 조회 추가) ──

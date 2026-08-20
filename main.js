@@ -1941,6 +1941,11 @@ ipcMain.handle('account:setCategoryPairNaverCategory', (event, { pairId, categor
 // ── IPC: 설정 조회 ───────────────────────────────────────────
 const SETTINGS_DEFAULTS = {
   geminiKey: '', groqKey: '', unsplashKey: '',
+  // 2026-08-20 신규(개발자 전용): Pexels/Pixabay 이미지 검색 비교 테스트용.
+  // imagePlatform: 'unsplash'|'pexels'|'pixabay'|'mixed'(복합선택). isDev가
+  // 아니면 항상 'unsplash'로만 동작(searchImagesMultiProvider 참고) —
+  // 배포판 동작은 이 값과 무관하게 100% 기존과 동일.
+  pexelsKey: '', pixabayKey: '', imagePlatform: 'unsplash',
   aiProvider: 'gemini',
   geminiModel: 'gemini-3.1-flash-lite',
   groqModel: 'openai/gpt-oss-120b',
@@ -3066,6 +3071,35 @@ ipcMain.handle('settings:testUnsplash', async (event, apiKey) => {
       headers: { Authorization: `Client-ID ${apiKey}` },
     });
     return { ok: res.ok };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── IPC: Pexels/Pixabay API 테스트 (2026-08-20 신규, 개발자 전용) ──────
+// 이미지 플랫폼 다중화 실험을 위한 키 연결 확인용 — isDev가 아니면 아예
+// 차단(다른 개발자 전용 IPC와 동일한 이중 가드 패턴).
+ipcMain.handle('settings:testPexels', async (event, apiKey) => {
+  if (!isDev) return { ok: false, error: '개발 모드 전용 기능입니다.' };
+  if (!apiKey) return { ok: false, error: 'API 키 없음' };
+  try {
+    const res = await fetch('https://api.pexels.com/v1/curated?per_page=1', {
+      headers: { Authorization: apiKey },
+    });
+    return { ok: res.ok };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('settings:testPixabay', async (event, apiKey) => {
+  if (!isDev) return { ok: false, error: '개발 모드 전용 기능입니다.' };
+  if (!apiKey) return { ok: false, error: 'API 키 없음' };
+  try {
+    const res = await fetch(`https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=test&per_page=3`);
+    if (!res.ok) return { ok: false };
+    const data = await res.json();
+    return { ok: Array.isArray(data.hits) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -4795,17 +4829,17 @@ async function searchUnsplash(apiKey, query, perPage = 30, page = 1) {
 }
 
 // ── IPC: 이미지 일괄 검색 (글 생성 후 3장 자동 추천) ─────────
+// 2026-08-20 수정(개발자 전용 실험): searchImagesMultiProvider()로 교체 —
+// isDev가 아니면 이 함수 내부에서 항상 'unsplash' 경로로만 동작하므로
+// 배포판 사용자 입장에서는 기존과 완전히 동일(에러 메시지 포함).
 ipcMain.handle('image:search', async (event, { keywords, excludeIds = [] }) => {
   try {
-    const store  = getStore();
-    const apiKey = store.get('settings.unsplashKey', '');
-    if (!apiKey) return { success: false, error: 'Unsplash API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.' };
-
     const query   = keywords.slice(0, 3).join(' ');
     // 2026-07-07: 한글 키워드 검색 결과 0건 시 단순화 → AI 영어 번역까지
     // 시도하는 공용 헬퍼로 교체(기존엔 재시도 없이 바로 빈 결과 반환).
     // 2026-08-04: 이미지 후보 5장→10장 확대에 맞춰 원본 풀도 30→40으로 소폭 확대
-    const pool    = await searchUnsplashWithFallback(apiKey, query, 40, 'IMAGE');
+    const { pool, error } = await searchImagesMultiProvider(query, 40, 'IMAGE');
+    if (error) return { success: false, error };
     const filtered = pool.filter(p => !excludeIds.includes(p.id));
 
     // 2026-07-07: 3장 → 5장으로 확대 (이미지 삽입 위치 5곳으로 변경)
@@ -6461,6 +6495,160 @@ async function searchUnsplashWithFallback(apiKey, query, perPage, context, page 
 
   writeLog('WARN', context, 'Unsplash 검색 결과 없음(단순화/영어 번역 재검색 모두 실패)', `검색어: "${query}"`);
   return [];
+}
+
+// ── 2026-08-20 신규(개발자 전용): 이미지 플랫폼 다중화 ───────────────
+// Pexels/Pixabay 검색 결과를 searchUnsplash()와 동일한 형태
+// ({id,url,thumb,alt,photographer,profileUrl})로 맞춰, pickImagesFromPool
+// 등 기존 후속 로직을 그대로 재사용할 수 있게 함. id는 플랫폼 접두어를
+// 붙여 "복합선택" 모드에서 여러 플랫폼 결과를 합쳤을 때 충돌하지 않게 함.
+async function searchPexels(apiKey, query, perPage = 30, page = 1) {
+  const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${perPage}&page=${page}`;
+  const res = await fetch(url, { headers: { Authorization: apiKey } });
+  if (!res.ok) throw new Error(`Pexels HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.photos || []).map(p => ({
+    id:           `pexels-${p.id}`,
+    url:          p.src?.large || p.src?.original || '',
+    thumb:        p.src?.medium || p.src?.small || '',
+    alt:          p.alt || query,
+    photographer: p.photographer || '',
+    profileUrl:   p.photographer_url || '',
+  }));
+}
+
+// Pixabay는 per_page 최소값이 3이라 하한을 맞춰줌. image_type=photo로
+// 일러스트/벡터를 제외해 실사 위주로 제한(Unsplash/Pexels와 성격을 맞춤).
+async function searchPixabay(apiKey, query, perPage = 30, page = 1) {
+  const safePerPage = Math.max(3, Math.min(200, perPage));
+  const url = `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(query)}&per_page=${safePerPage}&page=${page}&image_type=photo&safesearch=true`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Pixabay HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.hits || []).map(p => ({
+    id:           `pixabay-${p.id}`,
+    url:          p.largeImageURL || p.webformatURL || '',
+    thumb:        p.previewURL || p.webformatURL || '',
+    alt:          p.tags || query,
+    photographer: p.user || '',
+    profileUrl:   p.pageURL || '',
+  }));
+}
+
+// searchUnsplashWithFallback()와 동일한 3단계 폴백(사전 번역→원본→단순화→
+// 번역) 로직을 Pexels/Pixabay에도 각각 적용. 기존 searchUnsplashWithFallback
+// 은 이미 실사용 검증된 안정 경로라 건드리지 않고, 이 두 함수는 중복이더라도
+// 별도로 새로 작성해 기존 Unsplash 경로에 대한 리스크를 0으로 유지함.
+async function searchPexelsWithFallback(apiKey, query, perPage, context, page = 1) {
+  if (/[가-힣]/.test(query)) {
+    const preTranslated = await translateKeywordToEnglish(query);
+    if (preTranslated) {
+      const translatedPool = await searchPexels(apiKey, preTranslated, perPage, page);
+      if (translatedPool.length) {
+        writeLog('INFO', context, `[Pexels] 한글 키워드 사전 번역 후 검색 성공`, `"${query}" → "${preTranslated}"`);
+        return translatedPool;
+      }
+      writeLog('WARN', context, `[Pexels] 사전 번역 검색 결과 0건 — 원본 키워드로 재시도`, `"${preTranslated}"`);
+    }
+  }
+  let pool = await searchPexels(apiKey, query, perPage, page);
+  if (pool.length) return pool;
+  const simplified = simplifyKeywordQuery(query);
+  if (simplified && simplified !== query) {
+    writeLog('WARN', context, `[Pexels] 검색 결과 0건 — 키워드 단순화 후 재검색`, `"${query}" → "${simplified}"`);
+    pool = await searchPexels(apiKey, simplified, perPage, page);
+    if (pool.length) {
+      writeLog('INFO', context, `[Pexels] 단순화된 키워드로 이미지 확보 성공`, `"${simplified}"`);
+      return pool;
+    }
+  }
+  const translated = await translateKeywordToEnglish(simplified || query);
+  if (translated) {
+    writeLog('WARN', context, `[Pexels] 단순화 재검색도 0건 — AI 영어 번역 후 재검색 시도`, `"${simplified || query}" → "${translated}"`);
+    pool = await searchPexels(apiKey, translated, perPage, page);
+    if (pool.length) {
+      writeLog('INFO', context, `[Pexels] 영어 번역 키워드로 이미지 확보 성공`, `"${translated}"`);
+      return pool;
+    }
+  }
+  writeLog('WARN', context, '[Pexels] 검색 결과 없음(단순화/영어 번역 재검색 모두 실패)', `검색어: "${query}"`);
+  return [];
+}
+
+async function searchPixabayWithFallback(apiKey, query, perPage, context, page = 1) {
+  if (/[가-힣]/.test(query)) {
+    const preTranslated = await translateKeywordToEnglish(query);
+    if (preTranslated) {
+      const translatedPool = await searchPixabay(apiKey, preTranslated, perPage, page);
+      if (translatedPool.length) {
+        writeLog('INFO', context, `[Pixabay] 한글 키워드 사전 번역 후 검색 성공`, `"${query}" → "${preTranslated}"`);
+        return translatedPool;
+      }
+      writeLog('WARN', context, `[Pixabay] 사전 번역 검색 결과 0건 — 원본 키워드로 재시도`, `"${preTranslated}"`);
+    }
+  }
+  let pool = await searchPixabay(apiKey, query, perPage, page);
+  if (pool.length) return pool;
+  const simplified = simplifyKeywordQuery(query);
+  if (simplified && simplified !== query) {
+    writeLog('WARN', context, `[Pixabay] 검색 결과 0건 — 키워드 단순화 후 재검색`, `"${query}" → "${simplified}"`);
+    pool = await searchPixabay(apiKey, simplified, perPage, page);
+    if (pool.length) {
+      writeLog('INFO', context, `[Pixabay] 단순화된 키워드로 이미지 확보 성공`, `"${simplified}"`);
+      return pool;
+    }
+  }
+  const translated = await translateKeywordToEnglish(simplified || query);
+  if (translated) {
+    writeLog('WARN', context, `[Pixabay] 단순화 재검색도 0건 — AI 영어 번역 후 재검색 시도`, `"${simplified || query}" → "${translated}"`);
+    pool = await searchPixabay(apiKey, translated, perPage, page);
+    if (pool.length) {
+      writeLog('INFO', context, `[Pixabay] 영어 번역 키워드로 이미지 확보 성공`, `"${translated}"`);
+      return pool;
+    }
+  }
+  writeLog('WARN', context, '[Pixabay] 검색 결과 없음(단순화/영어 번역 재검색 모두 실패)', `검색어: "${query}"`);
+  return [];
+}
+
+// 호출부(예: image:search IPC)에서 이 함수 하나만 부르면, isDev+설정된
+// settings.imagePlatform에 따라 Unsplash/Pexels/Pixabay 중 하나 또는
+// 셋을 합친("mixed"=복합선택) 결과를 반환. isDev가 아니면(=배포판) 이
+// 설정값 자체를 무시하고 무조건 'unsplash' 경로만 타서, 일반 사용자
+// 입장에서는 이 기능 추가 이전과 100% 동일하게 동작함.
+async function searchImagesMultiProvider(query, perPage, context, page = 1) {
+  const store = getStore();
+  const platform = isDev ? (store.get('settings.imagePlatform', 'unsplash') || 'unsplash') : 'unsplash';
+
+  if (platform === 'pexels') {
+    const apiKey = store.get('settings.pexelsKey', '');
+    if (!apiKey) return { pool: [], error: 'Pexels API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.' };
+    return { pool: await searchPexelsWithFallback(apiKey, query, perPage, context, page), error: null };
+  }
+  if (platform === 'pixabay') {
+    const apiKey = store.get('settings.pixabayKey', '');
+    if (!apiKey) return { pool: [], error: 'Pixabay API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.' };
+    return { pool: await searchPixabayWithFallback(apiKey, query, perPage, context, page), error: null };
+  }
+  if (platform === 'mixed') {
+    const unsplashKey = store.get('settings.unsplashKey', '');
+    const pexelsKey    = store.get('settings.pexelsKey', '');
+    const pixabayKey   = store.get('settings.pixabayKey', '');
+    if (!unsplashKey && !pexelsKey && !pixabayKey) {
+      return { pool: [], error: '이미지 API 키가 하나도 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.' };
+    }
+    const tasks = [];
+    if (unsplashKey) tasks.push(searchUnsplashWithFallback(unsplashKey, query, perPage, context, page).catch(() => []));
+    if (pexelsKey)   tasks.push(searchPexelsWithFallback(pexelsKey, query, perPage, context, page).catch(() => []));
+    if (pixabayKey)  tasks.push(searchPixabayWithFallback(pixabayKey, query, perPage, context, page).catch(() => []));
+    const results = await Promise.all(tasks);
+    return { pool: results.flat(), error: null };
+  }
+
+  // 기본값: Unsplash — 배포판(isDev=false)은 항상 이 경로만 탐
+  const apiKey = store.get('settings.unsplashKey', '');
+  if (!apiKey) return { pool: [], error: 'Unsplash API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.' };
+  return { pool: await searchUnsplashWithFallback(apiKey, query, perPage, context, page), error: null };
 }
 
 // 주어진 이미지 URL을 다운로드해 base64 data URL로 변환. 실패 시 null.

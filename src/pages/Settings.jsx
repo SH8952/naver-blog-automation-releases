@@ -12,6 +12,9 @@ const DEFAULTS = {
   // "검색어트렌드"(Data Lab) API. 기존 검색광고 API(키워드 분석)와는
   // 완전히 별개 발급 체계(NCP 콘솔, X-NCP-APIGW 헤더 방식).
   datalabClientId: '', datalabClientSecret: '',
+  // 2026-08-20 신규(개발자 전용): 이미지 플랫폼 다중화 실험 — Pexels/Pixabay
+  // API 키 + 사용할 플랫폼 선택('unsplash'|'pexels'|'pixabay'|'mixed').
+  pexelsKey: '', pixabayKey: '', imagePlatform: 'unsplash',
   licenseKey: '',
   customThumbnail: true, thumbnailStyle: -1, thumbnailDesign: 'default',
   postStyle: -1,
@@ -663,6 +666,11 @@ export default function Settings() {
   // 2026-08-19 신규(개발자 전용): 에버그린 키워드 판별용 데이터랩 API
   const [showDatalabSecret, setShowDatalabSecret] = useState(false);
   const [datalabStatus, setDatalabStatus]         = useState(null);
+  // 2026-08-20 신규(개발자 전용): 이미지 플랫폼 다중화 실험
+  const [showPexels, setShowPexels]   = useState(false);
+  const [pexelsStatus, setPexelsStatus] = useState(null);
+  const [showPixabay, setShowPixabay] = useState(false);
+  const [pixabayStatus, setPixabayStatus] = useState(null);
   // 2026-07-24 신규: 쿠팡파트너스/알리익스프레스도 다른 API처럼 등록한
   // 키가 실제로 유효한지 "테스트" 버튼으로 확인할 수 있게 추가.
   const [coupangStatus, setCoupangStatus] = useState(null);
@@ -1152,6 +1160,17 @@ export default function Settings() {
     const res = await window.electronAPI.settings.testDatalab(form.datalabClientId, form.datalabClientSecret);
     setDatalabStatus(res.ok ? 'ok' : 'error');
   };
+  // 2026-08-20 신규(개발자 전용): 이미지 플랫폼 다중화 실험
+  const testPexels = async () => {
+    setPexelsStatus('testing');
+    const res = await window.electronAPI.settings.testPexels(form.pexelsKey);
+    setPexelsStatus(res.ok ? 'ok' : 'error');
+  };
+  const testPixabay = async () => {
+    setPixabayStatus('testing');
+    const res = await window.electronAPI.settings.testPixabay(form.pixabayKey);
+    setPixabayStatus(res.ok ? 'ok' : 'error');
+  };
   // 2026-07-24 신규
   const testCoupang = async () => {
     setCoupangStatus('testing');
@@ -1380,6 +1399,58 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* 2026-08-20 신규(개발자 전용): 이미지 플랫폼 다중화 실험 —
+            Unsplash 하나로는 게시글 주제에 딱 맞는 사진이 부족한 경우가
+            있어 Pexels/Pixabay도 후보군에 추가해 실사용 비교 테스트하기
+            위함. 일반 사용자에게 API 키를 추가로 준비하게 하는 부담을
+            주지 않기 위해 개발 모드에서만 노출(process.env.NODE_ENV 가드
+            — main.js의 testPexels/testPixabay·searchImagesMultiProvider도
+            isDev 2차 가드 적용). Unsplash 키 입력칸 바로 아래로 배치
+            (2026-08-20, 사용자 요청 — 이미지 API 3종을 한눈에 모아 보이게). */}
+        {process.env.NODE_ENV === 'development' && (<>
+          <hr className="api-divider" />
+          <div className="form-group">
+            <label>Pexels API Key <span style={{fontWeight:400, color:'var(--text-secondary)', fontSize:'12px'}}>— 이미지 플랫폼 다중화(개발자 전용)</span></label>
+            <div className="api-key-row">
+              <div className="input-with-toggle">
+                <input className="input" type={showPexels ? 'text' : 'password'} placeholder="Pexels API Key…"
+                  value={form.pexelsKey}
+                  onChange={e => { set('pexelsKey', e.target.value); setPexelsStatus(null); }} />
+                <button className="toggle-eye" onClick={() => setShowPexels(v => !v)}><EyeIcon open={showPexels} /></button>
+              </div>
+              <button className="btn btn-ghost" onClick={testPexels}
+                disabled={!form.pexelsKey || pexelsStatus === 'testing'}>
+                {pexelsStatus === 'testing' ? '확인 중…' : '테스트'}
+              </button>
+              {pexelsStatus === 'ok'    && <span className="api-status ok">✓ 연결됨</span>}
+              {pexelsStatus === 'error' && <span className="api-status error">✗ 오류</span>}
+            </div>
+            <p style={{fontSize:'11px',color:'var(--text-secondary)',marginTop:'5px'}}>
+              🔑 <a href="https://www.pexels.com/api/" target="_blank" rel="noreferrer" style={{color:'var(--accent)'}}>pexels.com/api</a> 에서 무료 발급
+            </p>
+          </div>
+          <div className="form-group">
+            <label>Pixabay API Key <span style={{fontWeight:400, color:'var(--text-secondary)', fontSize:'12px'}}>— 이미지 플랫폼 다중화(개발자 전용)</span></label>
+            <div className="api-key-row">
+              <div className="input-with-toggle">
+                <input className="input" type={showPixabay ? 'text' : 'password'} placeholder="Pixabay API Key…"
+                  value={form.pixabayKey}
+                  onChange={e => { set('pixabayKey', e.target.value); setPixabayStatus(null); }} />
+                <button className="toggle-eye" onClick={() => setShowPixabay(v => !v)}><EyeIcon open={showPixabay} /></button>
+              </div>
+              <button className="btn btn-ghost" onClick={testPixabay}
+                disabled={!form.pixabayKey || pixabayStatus === 'testing'}>
+                {pixabayStatus === 'testing' ? '확인 중…' : '테스트'}
+              </button>
+              {pixabayStatus === 'ok'    && <span className="api-status ok">✓ 연결됨</span>}
+              {pixabayStatus === 'error' && <span className="api-status error">✗ 오류</span>}
+            </div>
+            <p style={{fontSize:'11px',color:'var(--text-secondary)',marginTop:'5px'}}>
+              🔑 <a href="https://pixabay.com/api/docs/" target="_blank" rel="noreferrer" style={{color:'var(--accent)'}}>pixabay.com/api/docs</a> 에서 무료 발급
+            </p>
+          </div>
+        </>)}
+
         {/* ── 구분선 ── */}
         <hr className="api-divider" />
 
@@ -1555,6 +1626,48 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      {/* ── 이미지 플랫폼 (2026-08-20 신규, 개발자 전용) ─────────────
+          Unsplash 하나로는 게시글 주제에 딱 맞는 사진이 부족한 경우가
+          있어 Pexels/Pixabay를 실사용 비교 테스트하기 위한 항목. API
+          설정 탭의 두 키 입력칸과 마찬가지로 배포판에는 노출하지 않음. */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="card settings-section">
+          <h2 className="settings-section-title">
+            이미지 플랫폼
+            <span style={{fontWeight:400, fontSize:'12px', color:'var(--text-secondary)', marginLeft:'8px'}}>개발자 전용 — 배포판 미포함</span>
+          </h2>
+          <div className="settings-grid">
+            <div className="form-group" style={{ gridColumn:'1/-1' }}>
+              <p style={{ fontSize:'11px', color:'var(--text-secondary)', margin:'0 0 10px', lineHeight:1.6 }}>
+                본문 이미지 검색에 사용할 플랫폼을 고릅니다. "복합선택"은 API 설정 탭에 키를 입력한 플랫폼들의 검색 결과를 모두 합쳐서 후보로 씁니다(키가 없는 플랫폼은 자동 제외).
+              </p>
+              <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+                {[
+                  { id: 'mixed',   label: '복합선택' },
+                  { id: 'unsplash', label: 'Unsplash' },
+                  { id: 'pexels',   label: 'Pexels' },
+                  { id: 'pixabay',  label: 'Pixabay' },
+                ].map(({ id, label }) => {
+                  const selected = (form.imagePlatform || 'unsplash') === id;
+                  return (
+                    <button key={id} type="button" onClick={() => set('imagePlatform', id)}
+                      style={{
+                        background: selected ? 'var(--accent)' : 'var(--bg-elevated)',
+                        color: selected ? '#fff' : 'var(--text-primary)',
+                        border: selected ? '2px solid var(--accent)' : '2px solid var(--border)',
+                        borderRadius:'8px', padding:'8px 14px', fontSize:'12px', fontWeight:600,
+                        cursor:'pointer', transition:'all .15s',
+                      }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── 본문 서식 스타일 (2026-07-07 색상 신규, 2026-07-24 구조 축 분리) ── */}
       <div className="card settings-section">
