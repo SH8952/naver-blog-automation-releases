@@ -6611,6 +6611,24 @@ async function searchPixabayWithFallback(apiKey, query, perPage, context, page =
   return [];
 }
 
+// 2026-08-20 신규: "복합선택" 모드에서 여러 플랫폼 결과 배열을 그냥 이어
+// 붙이면(concat) 순서상 맨 앞 플랫폼(Unsplash) 결과만으로 앞쪽 구간이
+// 꽉 차버려서, pickImagesFromPool()이 그 앞쪽 구간(count*4~20장)만 보고
+// 무작위로 뽑는 구조상 뒤쪽 플랫폼(Pexels/Pixabay) 결과가 사실상 뽑힐
+// 기회를 못 얻는 문제가 사용자 리포트로 확인됨(Unsplash가 보통 40장을
+// 꽉 채워 반환하기 때문). concat 대신 라운드로빈으로 한 장씩 번갈아
+// 배치해, 앞쪽 구간 안에도 세 플랫폼이 고르게 섞이도록 함.
+function interleaveArrays(arrays) {
+  const out = [];
+  const maxLen = arrays.reduce((m, a) => Math.max(m, a.length), 0);
+  for (let i = 0; i < maxLen; i++) {
+    for (const arr of arrays) {
+      if (i < arr.length) out.push(arr[i]);
+    }
+  }
+  return out;
+}
+
 // 호출부(예: image:search IPC)에서 이 함수 하나만 부르면, isDev+설정된
 // settings.imagePlatform에 따라 Unsplash/Pexels/Pixabay 중 하나 또는
 // 셋을 합친("mixed"=복합선택) 결과를 반환. isDev가 아니면(=배포판) 이
@@ -6642,7 +6660,9 @@ async function searchImagesMultiProvider(query, perPage, context, page = 1) {
     if (pexelsKey)   tasks.push(searchPexelsWithFallback(pexelsKey, query, perPage, context, page).catch(() => []));
     if (pixabayKey)  tasks.push(searchPixabayWithFallback(pixabayKey, query, perPage, context, page).catch(() => []));
     const results = await Promise.all(tasks);
-    return { pool: results.flat(), error: null };
+    // 2026-08-20 수정: concat → 라운드로빈 인터리브(위 interleaveArrays
+    // 참고) — 앞쪽에 오는 플랫폼 결과만 뽑히던 문제 수정.
+    return { pool: interleaveArrays(results), error: null };
   }
 
   // 기본값: Unsplash — 배포판(isDev=false)은 항상 이 경로만 탐

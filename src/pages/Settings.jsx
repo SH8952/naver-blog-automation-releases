@@ -1640,11 +1640,11 @@ export default function Settings() {
           <div className="settings-grid">
             <div className="form-group" style={{ gridColumn:'1/-1' }}>
               <p style={{ fontSize:'11px', color:'var(--text-secondary)', margin:'0 0 10px', lineHeight:1.6 }}>
-                본문 이미지 검색에 사용할 플랫폼을 고릅니다. "복합선택"은 API 설정 탭에 키를 입력한 플랫폼들의 검색 결과를 모두 합쳐서 후보로 씁니다(키가 없는 플랫폼은 자동 제외).
+                본문 이미지 검색에 사용할 플랫폼을 고릅니다. "Random"은 API 설정 탭에 키를 입력한 플랫폼들의 검색 결과를 골고루 섞어서 후보로 씁니다(키가 없는 플랫폼은 자동 제외).
               </p>
               <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
                 {[
-                  { id: 'mixed',   label: '복합선택' },
+                  { id: 'mixed',   label: 'Random' },
                   { id: 'unsplash', label: 'Unsplash' },
                   { id: 'pexels',   label: 'Pexels' },
                   { id: 'pixabay',  label: 'Pixabay' },
