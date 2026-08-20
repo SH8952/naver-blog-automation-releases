@@ -196,22 +196,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
      * 프로세스에서 isDev가 아니면 무조건 거부하므로, 배포판에서 호출해도
      * 아무 효과 없음. */
     fetchUrlText: (params) => ipcRenderer.invoke('dev:fetchUrlText', params),
-
-    /** 크리에이터 어드바이저 트렌드 조사 1단계(2026-08-14 신규, 개발자 전용) —
-     * 화면 기능 없음, 진단 정보만 반환/로그 기록. */
-    investigateCreatorAdvisor: () => ipcRenderer.invoke('dev:investigateCreatorAdvisor'),
-
-    /** 크리에이터 어드바이저 트렌드 조사 2단계(2026-08-14 신규, 개발자 전용) —
-     * 카테고리 캐러셀 Swiper API 접근 가능 여부 + 메인 유입 트렌드 탭 구조 조사. */
-    investigateCreatorAdvisorPhase2: () => ipcRenderer.invoke('dev:investigateCreatorAdvisorPhase2'),
-
-    /** 크리에이터 어드바이저 "성별,연령별 인기유입검색어" 서브탭 조사(2026-08-14
-     * 신규, 개발자 전용) — 서브탭 전환/캐러셀 구조/연령·성별 조합 라벨 조사. */
-    investigateCreatorAdvisorGenderAge: () => ipcRenderer.invoke('dev:investigateCreatorAdvisorGenderAge'),
-
-    /** 성별,연령별 캐러셀 판별 재조사(2026-08-14 신규, 개발자 전용) — 실사용에서
-     * 여전히 주제별 데이터가 나오는 문제의 원인 파악(display/visibility/rect 비교). */
-    investigateCreatorAdvisorGenderAge2: () => ipcRenderer.invoke('dev:investigateCreatorAdvisorGenderAge2'),
   },
 
   // ── 글감 수집 ──────────────────────────────────────────────

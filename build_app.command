@@ -9,6 +9,15 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── 터미널 창 자동 숨김 (2026-08-20 신규, 사용자 요청) ────────────
+# Dock 아이콘으로 앱을 실행하면 터미널 창이 함께 뜨는데, 사용자가
+# 터미널을 직접 쓰지 않으므로 화면을 깔끔하게 유지하고 싶다고 요청.
+# "완전히 닫기"가 아니라 "최소화(Dock으로 내리기)"만 하므로, 필요할
+# 때(예: 오류 확인) Dock의 터미널 아이콘을 클릭하면 언제든 다시 펼쳐서
+# 로그를 볼 수 있다 — 숨기기/보이기 둘 다 macOS 기본 최소화 동작으로
+# 해결됨. front window(=지금 이 스크립트가 떠 있는 창) 기준으로 동작.
+osascript -e 'tell application "Terminal" to set miniaturized of front window to true' 2>/dev/null
+
 clear
 echo ""
 echo "╔══════════════════════════════════════════════╗"
