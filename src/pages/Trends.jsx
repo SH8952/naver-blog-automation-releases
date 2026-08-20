@@ -206,6 +206,16 @@ export default function Trends() {
     })();
   }, []);
 
+  // 2026-08-20 신규(개발자 전용, 사용자 요청): "+" 등록과 동시에 에버그린
+  // 판별도 자동 실행 — Research.jsx의 handleAddTrendAsKeyword(트렌드 칩/
+  // 인텐트 칩/연관 검색어 칩/키워드 분석표 "+ 등록")에는 이미 있던 동작인데,
+  // 이 "인기 트렌드"(크리에이터 어드바이저) 페이지의 "+" 버튼은 완전히
+  // 별도의 handleAddKeyword 함수를 써서 빠져 있었음(사용자가 실사용 중
+  // 배지가 안 뜨는 것으로 발견). evergreen:analyze는 결과를 DB에 바로
+  // 저장하므로, 여기서 배지 UI를 직접 그리지 않아도 이후 글감 수집
+  // 화면의 "등록된 키워드" 목록에서 자동으로 배지가 나타난다.
+  const isDevBuild = process.env.NODE_ENV === 'development';
+
   const handleAddKeyword = async (keyword, categoryName) => {
     if (addedKeywords[keyword] || addingKeyword) return;
     setAddingKeyword(keyword);
@@ -219,6 +229,7 @@ export default function Trends() {
       });
       if (res.success) {
         setAddedKeywords(prev => ({ ...prev, [keyword]: true }));
+        if (isDevBuild) window.electronAPI.evergreen.analyze([keyword]);
       } else if (res.error && res.error.includes('이미 등록')) {
         // 이미 글감 수집에 있는 키워드 — 사용자 입장에서는 성공과 동일하게 보여줌
         setAddedKeywords(prev => ({ ...prev, [keyword]: true }));

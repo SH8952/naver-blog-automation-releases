@@ -7622,10 +7622,18 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 도입부 (HTML 빌더 — 폰트 포함)
   await pasteHtml(buildIntroHtml(content.intro, editorFont, iconCycler, postStylePreset), '도입부');
   // 이미지 1 (도입부 아래, 본문 시작 전)
-  await insertImgSection(imgs[0], '이미지1');
+  // 2026-08-20 수정(실사용 버그 발견): 지금까지 본문 이미지는 명시적
+  // 가운데 정렬 클릭을 하지 않고, 언스플래시 regular(가로 1080px 고정)가
+  // 항상 본문 폭보다 넓어 100% 폭으로 꽉 차 보이는 "우연"에 기대고
+  // 있었음. Pexels/Pixabay는 세로형 사진일 때 실제 삽입 폭이 본문 폭보다
+  // 좁아질 수 있어 기본 좌측 정렬이 그대로 드러나는 문제가 실사용으로
+  // 확인됨. 썸네일/제휴 상품이미지에 이미 검증된 center:true(정렬 버튼
+  // 자동 클릭) 로직을 본문 이미지에도 동일하게 적용해 플랫폼/크기와
+  // 무관하게 항상 가운데 정렬되도록 수정.
+  await insertImgSection(imgs[0], '이미지1', { center: true });
   // 2026-08-04 신규: 보너스 이미지 — 이 지점(0)이 선택된 경우만 이미지1
   // 바로 뒤에 한 장 더 삽입(기존 이미지1 위치/순서는 변경하지 않음)
-  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스');
+  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스', { center: true });
   // 제휴 광고 — 도입부 아래(위치 설정 'intro'|'both'일 때만)
   if (affiliateAd && (affiliateAd.position === 'intro' || affiliateAd.position === 'both')) {
     await insertAffiliateAd('제휴 광고(도입부 아래)');
@@ -7642,30 +7650,30 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   let usedMidImages = false;
   if (part1) {
     await pasteHtml(buildBodyHtml(part1, editorFont, iconCycler, postStylePreset), '본문(대분류1 도입)');
-    await insertImgSection(imgs[1], '이미지2');
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스');
+    await insertImgSection(imgs[1], '이미지2', { center: true });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true });
     usedMidImages = true;
   }
   if (part2) {
     await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
-    await insertImgSection(imgs[2], '이미지3');
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스');
+    await insertImgSection(imgs[2], '이미지3', { center: true });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
     usedMidImages = true;
   }
   if (part3) {
     await pasteHtml(buildBodyHtml(part3, editorFont, iconCycler, postStylePreset), '본문(중분류2)');
-    await insertImgSection(imgs[3], '이미지4');
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스');
+    await insertImgSection(imgs[3], '이미지4', { center: true });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true });
     usedMidImages = true;
   }
   await pasteHtml(buildBodyHtml(part4, editorFont, iconCycler, postStylePreset), '본문(대분류2)');
   if (!usedMidImages) {
-    await insertImgSection(imgs[1], '이미지2');
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스');
-    await insertImgSection(imgs[2], '이미지3');
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스');
-    await insertImgSection(imgs[3], '이미지4');
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스');
+    await insertImgSection(imgs[1], '이미지2', { center: true });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true });
+    await insertImgSection(imgs[2], '이미지3', { center: true });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
+    await insertImgSection(imgs[3], '이미지4', { center: true });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true });
   }
 
   // 제휴 광고 — 본문 아래(위치 설정 'body'|'both'일 때만, 기본값)
@@ -7675,8 +7683,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
   // 이미지 5 (마무리 시작 지점 — 2026-07-07: 기존엔 마무리 "뒤"였으나
   // 마무리를 읽는 도중 시각적 전환을 주도록 마무리 "시작 지점"으로 변경)
-  await insertImgSection(imgs[4], '이미지5');
-  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스');
+  await insertImgSection(imgs[4], '이미지5', { center: true });
+  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스', { center: true });
   // 마무리
   await pasteHtml(buildConclusionHtml(content.conclusion, editorFont, iconCycler, postStylePreset), '마무리');
   // 관련 사이트 링크 섹션 — 2026-07-23: 게시 직전 실제 접속 가능한
