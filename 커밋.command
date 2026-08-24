@@ -1,14 +1,18 @@
 #!/bin/bash
-# 네이버 블로그 자동화 - 커밋 전용 스크립트 (배포/태그 없음)
+# 네이버 블로그 자동화 - 커밋 전용 스크립트 (배포/태그 없음, 완전 자동)
 # 더블클릭으로 실행하세요.
-# 하는 일: 변경된 파일 확인 → 커밋 → main push
+# 하는 일: 변경된 파일 확인 → 자동 커밋 → main push → 완료 확인 후
+#          이 스크립트 자신을 삭제 → 터미널 창 자동 종료
+# 질문 없이 곧바로 진행됩니다(사용자 요청, 2026-08-24).
+# 오류(git 잠금 충돌 등)로 중단되는 경우에는 안전을 위해 자동 삭제/
+# 종료를 하지 않고 창을 열어둔 채 원인을 보여줍니다.
 # (버전 태그 push + GitHub Actions 빌드까지 하려면 "업데이트 배포.command"를 사용하세요.)
 
-set -e
 cd "$(dirname "$0")"
+SCRIPT_PATH="$(pwd)/$(basename "$0")"
 
 echo "================================================"
-echo " 네이버 블로그 자동화 - 커밋"
+echo " 네이버 블로그 자동화 - 커밋(자동)"
 echo "================================================"
 echo ""
 
@@ -24,6 +28,7 @@ if [ -f "$LOCK_FILE" ]; then
     echo "$BLOCKING"
     echo ""
     echo "   위 프로그램을 종료한 뒤 다시 실행해주세요."
+    echo "   (오류로 중단되어 이 창은 자동으로 닫지 않습니다.)"
     read -p "엔터를 누르면 창이 닫힙니다..."
     exit 1
   else
@@ -49,38 +54,46 @@ echo ""
 
 CHANGES=$(git status --porcelain)
 if [ -z "$CHANGES" ]; then
-  echo "변경된 파일이 없습니다. 커밋할 내용이 없어 종료합니다."
-  read -p "엔터를 누르면 창이 닫힙니다..."
+  echo "변경된 파일이 없습니다. 커밋할 내용이 없어 3초 후 창을 닫습니다."
+  sleep 3
+  CURRENT_TTY=$(tty)
+  osascript -e "tell application \"Terminal\" to close (first window whose tty is \"$CURRENT_TTY\")" >/dev/null 2>&1 &
   exit 0
 fi
 
-read -p "위 변경사항을 커밋하고 push할까요? (y/n): " CONFIRM
-if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
-  echo "취소되었습니다."
-  read -p "엔터를 누르면 창이 닫힙니다..."
-  exit 0
-fi
-
-# 2. 커밋 메시지 입력
-echo ""
+# 2. 자동 커밋(질문 없이 곧바로 진행)
 DEFAULT_MSG="fix: 본문 이미지 가운데 정렬 안정화(정렬 물림/빈 줄/보너스 간격 수정)"
-read -p "커밋 메시지를 입력하세요 (엔터 시 기본값 사용): " MSG
-if [ -z "$MSG" ]; then
-  MSG="$DEFAULT_MSG"
-fi
-
-# 3. add + commit + push
+echo "[2/3] 아래 내용으로 자동 커밋합니다:"
+echo "   $DEFAULT_MSG"
 echo ""
-echo "[2/3] 변경사항 커밋 중..."
 git add -A
-git commit -m "$MSG"
+if ! git commit -m "$DEFAULT_MSG"; then
+  echo ""
+  echo "⚠️  커밋 중 오류가 발생했습니다. 이 창은 자동으로 닫지 않습니다."
+  read -p "엔터를 누르면 창이 닫힙니다..."
+  exit 1
+fi
 
 echo ""
 echo "[3/3] main 브랜치 push 중..."
-git push
+if ! git push; then
+  echo ""
+  echo "⚠️  push 중 오류가 발생했습니다(네트워크/충돌 등). 이 창은 자동으로 닫지 않습니다."
+  read -p "엔터를 누르면 창이 닫힙니다..."
+  exit 1
+fi
 
 echo ""
 echo "완료되었습니다. (버전 태그/자동 빌드는 진행하지 않았습니다.)"
 echo "배포가 필요하면 \"업데이트 배포.command\"를 별도로 실행하세요."
 echo ""
-read -p "엔터를 누르면 창이 닫힙니다..."
+echo "3초 후 이 스크립트를 삭제하고 창을 닫습니다..."
+sleep 3
+
+# 완료 후 자기 자신 삭제
+rm -f "$SCRIPT_PATH"
+
+# 이 스크립트를 실행 중인 터미널 창만 자동 종료(macOS Terminal.app 기준)
+CURRENT_TTY=$(tty)
+osascript -e "tell application \"Terminal\" to close (first window whose tty is \"$CURRENT_TTY\")" >/dev/null 2>&1 &
+exit 0
