@@ -4464,13 +4464,27 @@ async function insertImageViaClipboard(publishWin, imageUrl, scale = 1, fixedSiz
 
   try {
     writeLog('INFO', 'PUBLISH', '이미지 다운로드 시작', imageUrl.slice(0, 80));
-    const buf = await downloadImageBuffer(imageUrl);
+    let buf = await downloadImageBuffer(imageUrl);
     writeLog('INFO', 'PUBLISH', '이미지 다운로드 완료', `${buf.length} bytes`);
 
     let img = nativeImage.createFromBuffer(buf);
     if (img.isEmpty()) {
-      writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty)', `buf=${buf.length}`);
-      return false;
+      // 2026-08-24 추가: 실사용 테스트로 Pixabay 다운로드 URL이 간헐적으로
+      // 정상 이미지 대신 손상/빈 응답(예: 19바이트)을 주는 사례를 확인.
+      // 일시적 네트워크/CDN 이슈일 가능성이 높아 보여, 완전히 포기하기
+      // 전에 짧은 대기 후 재다운로드를 최대 2회 더 시도한다(총 3회).
+      writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty) — 재다운로드 시도', `buf=${buf.length}`);
+      for (let attempt = 1; attempt <= 2 && img.isEmpty(); attempt++) {
+        await sleep(500);
+        buf = await downloadImageBuffer(imageUrl);
+        writeLog('INFO', 'PUBLISH', `이미지 재다운로드(${attempt}/2)`, `${buf.length} bytes`);
+        img = nativeImage.createFromBuffer(buf);
+      }
+      if (img.isEmpty()) {
+        writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty) — 재다운로드 후에도 실패', `buf=${buf.length}`);
+        return false;
+      }
+      writeLog('INFO', 'PUBLISH', '이미지 재다운로드로 복구 성공');
     }
 
     // 2026-07-23: "원본 대비 %" 축소는 원본이 크면(예: 1200x1200 → 70%=840x840)
@@ -7241,6 +7255,98 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   const pasteHtml = async (html, label) => {
     if (!html) return true; // 붙여넣을 내용 자체가 없는 경우는 실패가 아님
 
+    // 2026-08-24 추가(사용자 리포트: 가운데 정렬된 이미지 바로 뒤에
+    // 붙는 첫 본문 텍스트가 함께 중앙정렬로 나오는 문제) — 원래
+    // insertImgSection() 끝에서 이미지마다 무조건 실행했었는데, 이미지
+    // 뒤에 바로 다른 이미지(보너스 등)가 이어질 때도 매번 실행되면서
+    // 보너스 이미지 사이 간격이 재발하는 부작용이 발견됨(사용자 실사용
+    // 로그로 확인). 이 처리는 "텍스트를 붙여넣기 직전"에만 필요하므로,
+    // 여기(pasteHtml 시작)로 옮기고 "마지막 이미지가 아직 선택된
+    // 상태인지"를 실시간으로 확인해 그럴 때만 실행하도록 함 — 이미지→
+    // 이미지 전환(보너스 포함, 랜덤 위치 여부와 무관)에는 전혀 영향을
+    // 주지 않음.
+    const lastImgSelected = await publishWin.webContents.executeJavaScript(`
+      (function() {
+        var imgs = document.querySelectorAll('.se-section-image');
+        if (!imgs.length) return false;
+        var sec = imgs[imgs.length - 1];
+        return (sec.className || '').indexOf('se-is-selected') !== -1;
+      })()
+    `).catch(() => false);
+
+    if (lastImgSelected) {
+      const resetAlignResult = await publishWin.webContents.executeJavaScript(`
+        (function() {
+          var imgs = document.querySelectorAll('.se-section-image');
+          if (!imgs.length) return { done:false, reason:'img_not_found' };
+          var img = imgs[imgs.length - 1];
+          var comp = img.closest ? img.closest('.se-component') : null;
+          var touched = [];
+          var next = comp ? comp.nextElementSibling : null;
+          var clickPos = null;
+          var scrolled = false;
+          if (next) {
+            next.style.textAlign = 'left';
+            var innerEls = next.querySelectorAll('p, span, div');
+            innerEls.forEach(function(el) { el.style.textAlign = 'left'; });
+            touched.push('next_sibling:' + next.tagName);
+            if (next.scrollIntoView) {
+              next.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+              scrolled = true;
+            }
+          }
+          if (comp) {
+            var innerP = comp.querySelectorAll('p, span');
+            innerP.forEach(function(el) {
+              if (el !== img && !img.contains(el)) { el.style.textAlign = 'left'; }
+            });
+          }
+          if (next) {
+            var r = next.getBoundingClientRect();
+            clickPos = { x: Math.round(r.left + 10), y: Math.round(r.top + (r.height > 0 ? r.height / 2 : 10)) };
+          }
+          return { done:true, hasNext: !!next, touched: touched, scrolled: scrolled, clickPos: clickPos, innerHeight: window.innerHeight };
+        })()
+      `).catch((e) => ({ done:false, reason:'js_err:' + e.message }));
+      writeLog('INFO', 'PUBLISH', label + ' 정렬 물림 방지(스타일 초기화+스크롤)', JSON.stringify(resetAlignResult));
+      if (resetAlignResult && resetAlignResult.scrolled) {
+        await sleep(400); // 스크롤 안정화 대기(다른 스크롤 보정과 동일한 패턴)
+      }
+
+      if (resetAlignResult && resetAlignResult.clickPos) {
+        // 스크롤 직후 좌표가 실제로 화면 안(0~innerHeight)에 들어왔는지
+        // 재확인 — 혹시라도 스크롤이 무효했던 경우 화면 밖 클릭을
+        // 다시 반복하지 않도록 재측정.
+        const recheckPos = await publishWin.webContents.executeJavaScript(`
+          (function() {
+            var imgs = document.querySelectorAll('.se-section-image');
+            if (!imgs.length) return null;
+            var img = imgs[imgs.length - 1];
+            var comp = img.closest ? img.closest('.se-component') : null;
+            var next = comp ? comp.nextElementSibling : null;
+            if (!next) return null;
+            var r = next.getBoundingClientRect();
+            return { x: Math.round(r.left + 10), y: Math.round(r.top + (r.height > 0 ? r.height / 2 : 10)), inView: r.top >= 0 && r.top <= window.innerHeight };
+          })()
+        `).catch(() => null);
+        const finalClickPos = (recheckPos && recheckPos.inView) ? recheckPos : resetAlignResult.clickPos;
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: finalClickPos.x, y: finalClickPos.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: finalClickPos.x, y: finalClickPos.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', label + ' 정렬 물림 방지(이미지 선택 해제 클릭)', JSON.stringify({ used: finalClickPos, recheckPos: recheckPos }));
+        await sleep(200);
+
+        const deselectCheck = await publishWin.webContents.executeJavaScript(`
+          (function() {
+            var imgs = document.querySelectorAll('.se-section-image');
+            if (!imgs.length) return { checked:false };
+            var sec = imgs[imgs.length - 1];
+            return { checked:true, stillSelected: (sec.className || '').indexOf('se-is-selected') !== -1 };
+          })()
+        `).catch((e) => ({ checked:false, err: e.message }));
+        writeLog('INFO', 'PUBLISH', label + ' 이미지 선택 해제 확인', JSON.stringify(deselectCheck));
+      }
+    }
+
     // SE3 — webContents 포커스 + JS 본문 포커스 + clipboard paste (표준 붙여넣기 경로)
     // 헤드리스 창에서 SE3가 document.hasFocus()=false 시 paste 무시 → webContents.focus()로 해결
     publishWin.webContents.focus();            // renderer 내부 포커스 활성화
@@ -7297,13 +7403,116 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           (function() {
             var imgs = document.querySelectorAll('.se-section-image');
             if (!imgs.length) return 'img_not_found';
-            imgs[imgs.length - 1].scrollIntoView({ block: 'center', inline: 'nearest' });
+            imgs[imgs.length - 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
             return 'scrolled';
           })()
         `).catch((e) => 'scroll_err:' + e.message),
         (v) => v === 'scrolled', 6, 500
       );
-      await sleep(400);
+      // 2026-08-24 추가(사용자 실측: 스크롤 후 정렬 버튼 클릭이 시간 내
+      // 반영되지 않는 사례 확인): SE3가 플로팅 정렬 툴바 위치를 스크롤에
+      // 맞춰 다시 그리는 데 걸리는 시간을 넉넉히 확보하기 위해 대기를
+      // 늘림(400ms → 600ms), scrollIntoView도 애니메이션 없이 즉시
+      // 이동하도록 behavior:'instant' 명시.
+      await sleep(600);
+
+      // 2026-08-24 추가(HARD LESSON, [[body-image-center-align-fix-2026-08-20]]
+      // 참고): 아래 두 클릭(이미지 선택 클릭 / 정렬 토글 버튼 클릭) 모두
+      // 좌표의 y값이 60 미만이면 상단 고정 발행 툴바(사진/MYBOX/.../장소/
+      // 쇼핑커넥트/글감 아이콘 행)와 겹쳐 클릭이 그쪽 아이콘으로 새어갈
+      // 수 있다. 예전에는 "위로 120px 스크롤 후 한 번만 재조회"하고
+      // 결과를 검증 없이 그대로 클릭했는데, 도입부가 짧아 이미지1이
+      // 문서 맨 위쪽에 오는 경우 이 한 번의 보정으로도 안전 구간을 못
+      // 벗어나 상단 툴바의 "장소" 아이콘이 대신 눌리고, 그 결과 열린
+      // 지도 팝업이 이후 발행 전체를 깨뜨리는 사고로 이어진 바 있다.
+      // resolveSafePos()는 보정→재검증을 최대 3회 반복하고, 그래도 안전
+      // 구간을 못 찾으면 클릭 자체를 생략해(좌측 정렬로 남음) 최악의
+      // 경우에도 "이미지 하나 정렬 실패"에 그치도록 한다.
+      // 2026-08-24 수정(실사용 테스트로 발견 — 사용자가 직접 화면을 캡처해
+      // 확인): "y >= 60이면 안전하다"는 고정 임계값 자체가 틀렸음이 확인됨.
+      // 이미지 삽입 직후 스크롤 위치에 따라 정렬 툴바가 y=60 이상인데도
+      // 상단 고정 툴바(아이콘 행 + 서식 행, 실제 높이가 60px보다 훨씬 큼)에
+      // 여전히 가려진 채로 렌더링되는 경우가 있었음 — 이 경우 좌표 자체는
+      // "찾음"으로 기록되고 클릭도 정상 디스패치되지만, 실제로는 클릭이
+      // 가려진 버튼이 아니라 그 위에 얹힌 상단 고정 툴바(또는 그 사이의
+      // 투명 영역)에 먹혀 아무 효과가 없었던 것으로 추정됨. 따라서 "y<60"
+      // 같은 임의의 숫자 대신, 그 좌표를 실제로 클릭했을 때 무엇이 맞는지를
+      // document.elementFromPoint()로 직접 확인하는 방식으로 교체함 —
+      // queryJs가 { found, x, y, safe, ... } 형태로 safe(진짜 클릭 가능
+      // 여부)까지 계산해 반환하고, 여기서는 그 safe 값만 확인한다.
+      // 2026-08-24 추가 재수정(실사용 테스트로 발견 — 사용자가 테스트
+      // 발행 도중 실시간으로 보고): elementFromPoint 실측 자체는 정확했지만,
+      // 가려짐이 확인된 뒤의 보정 스크롤을 여전히 "-120px 고정, 최대 3회"
+      // 라는 짐작값으로 하고 있었음. 세로로 긴 이미지일수록 필요한 보정량이
+      // -120px×3(=−360px)로도 부족할 수 있어, 여러 장 모두 "가려짐"이
+      // 해소되지 않은 채 안전하게 클릭을 생략(=정렬 실패)하는 사례가 계속
+      // 발생함. 고정값 대신, 실제로 가리고 있는 요소(hit)의 화면상 하단
+      // 경계(hitBottom, 아래 쿼리에서 함께 반환)를 이용해 "그 요소를 딱
+      // 벗어날 만큼만" 정확히 계산해서 스크롤하도록 변경 — 매 시도마다
+      // 새로 측정하므로 한 번에 부족했더라도 다음 시도에서 나머지를 마저
+      // 보정한다. hitBottom을 못 구한 경우(예외적 상황 대비)에만 기존처럼
+      // 넉넉한 고정값(-150)을 사용.
+      // 2026-08-24 추가 재재수정(사용자가 앱 재시작 후에도 재현 확인, 직접
+      // 수동 조작으로 원인까지 특정해줌): 위 delta 계산은 맞았지만
+      // `window.scrollBy()`가 애초에 아무 효과가 없었음 — 사용자가 "사진
+      // 추가 후 스크롤이 전혀 올라갈 기미가 없다"고 확인했고, 반면
+      // 키보드 위쪽 화살표를 누르면 스크롤이 실제로 움직였다고 확인해 줌.
+      // 즉 이 SE3 에디터의 실제 스크롤 컨테이너는 `window`/`document`가
+      // 아니라 내부의 별도 스크롤 가능 요소이고, `window.scrollBy()`는
+      // 그 요소에 아무 영향을 주지 못해 계속 "가려짐"이 그대로 남았던
+      // 것으로 확정. 이미지 조상 요소를 거슬러 올라가며 실제로 스크롤
+      // 가능한(overflow:auto/scroll이면서 scrollHeight>clientHeight인)
+      // 요소를 찾아 그 요소의 scrollTop을 직접 조정하도록 교체(못 찾으면
+      // document.scrollingElement로 폴백 + window.scrollBy도 안전망으로
+      // 함께 시도 — 어느 쪽이 맞든 무해하게 둘 다 시도).
+      const resolveSafePos = async (queryJs, label2, existAttempts, existIntervalMs) => {
+        let pos = null;
+        for (let i = 0; i < existAttempts; i++) {
+          pos = await publishWin.webContents.executeJavaScript(queryJs).catch((e) => ({ found: false, reason: 'js_err:' + e.message }));
+          if (pos && pos.found) break;
+          if (i < existAttempts - 1) await sleep(existIntervalMs);
+        }
+        let attempts = 0;
+        while (pos && pos.found && !pos.safe && attempts < 4) {
+          attempts++;
+          const margin = 20;
+          const delta = (typeof pos.hitBottom === 'number')
+            ? -(pos.hitBottom - pos.y + margin)
+            : -150;
+          writeLog('WARN', 'PUBLISH', label2 + ' 좌표가 다른 요소(상단 고정 툴바 등)에 가려져 클릭 불가 — 보정 스크롤(' + attempts + '/4, delta=' + delta + ')', JSON.stringify(pos));
+          const scrollResult = await publishWin.webContents.executeJavaScript(`
+            (function() {
+              var imgs = document.querySelectorAll('.se-section-image');
+              var anchor = imgs.length ? imgs[imgs.length - 1] : document.body;
+              var node = anchor;
+              var scroller = null;
+              while (node && node !== document.documentElement && node !== document.body) {
+                var cs = window.getComputedStyle(node);
+                if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+                  scroller = node;
+                  break;
+                }
+                node = node.parentElement;
+              }
+              if (!scroller) scroller = document.scrollingElement || document.documentElement;
+              var before = scroller.scrollTop;
+              scroller.scrollTop = scroller.scrollTop + (${delta});
+              window.scrollBy({ top: ${delta}, left: 0, behavior: 'instant' });
+              return { scrollerTag: scroller.tagName, scrollerClass: (scroller.className || '').toString().slice(0, 60), scrollTopBefore: before, scrollTopAfter: scroller.scrollTop };
+            })()
+          `).catch((e) => ({ err: e.message }));
+          writeLog('INFO', 'PUBLISH', label2 + ' 실제 스크롤 대상/결과', JSON.stringify(scrollResult));
+          // 2026-08-24 추가(사용자 실측: "스크롤은 올라가지만 정렬 버튼을
+          // 누를 시간이 안 된다"): 스크롤 자체는 이제 실제 컨테이너에
+          // 반영되지만, SE3가 플로팅 정렬 툴바 위치를 스크롤에 맞춰
+          // 다시 계산해 그리는 데 300ms로는 부족할 수 있음(레이아웃/
+          // 리스너 반응 지연). 이후 클릭이 아직 재배치 전인 좌표를 보고
+          // 나가 헛클릭이 되는 것을 막기 위해 대기 시간을 늘림.
+          await sleep(600);
+          pos = await publishWin.webContents.executeJavaScript(queryJs).catch((e) => ({ found: false, reason: 'js_err_after_correction:' + e.message }));
+        }
+        return pos;
+      };
 
       // 2026-07-29 수정(실사용 테스트로 발견 — container_not_found 지속
       // 발생): "방금 삽입된 이미지는 SE3가 자동으로 선택 상태를 유지한다"는
@@ -7312,84 +7521,240 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       // 이 문제를 실사용으로 확인해 정렬 버튼을 찾기 전에 이미지를 한 번
       // 클릭해 선택 상태를 보장하는 안전장치가 있었는데, 이 경로(제휴
       // 상품이미지 가운데 정렬)만 빠져 있었음. 동일한 안전장치를 추가.
-      const productImgClickPos = await retryUntilFound(
-        () => publishWin.webContents.executeJavaScript(`
-          (function() {
-            var imgs = document.querySelectorAll('.se-section-image');
-            if (!imgs.length) return null;
-            var img = imgs[imgs.length - 1];
-            var r = img.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) return null;
-            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + Math.min(r.height / 2, 40)) };
-          })()
-        `).catch(() => null),
-        (v) => !!v,
-        3, 300
-      );
-      if (productImgClickPos) {
+      const productImgClickPos = await resolveSafePos(`
+        (function() {
+          var imgs = document.querySelectorAll('.se-section-image');
+          if (!imgs.length) return { found:false, reason:'img_not_found' };
+          var img = imgs[imgs.length - 1];
+          var r = img.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'zero_size' };
+          var x = Math.round(r.left + r.width / 2);
+          var y = Math.round(r.top + Math.min(r.height / 2, 40));
+          var hit = document.elementFromPoint(x, y);
+          var safe = !!(hit && (hit === img || img.contains(hit) || (hit.closest && hit.closest('.se-section-image') === img)));
+          var hitRect = (!safe && hit) ? hit.getBoundingClientRect() : null;
+          return { found:true, x:x, y:y, safe:safe, hitTag: hit ? hit.tagName : null, hitClass: hit ? (hit.className || '').toString().slice(0, 60) : null, hitBottom: hitRect ? Math.round(hitRect.bottom) : null };
+        })()
+      `, label + ' 이미지 선택 클릭', 3, 300);
+      if (productImgClickPos && productImgClickPos.found && productImgClickPos.safe) {
         publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: productImgClickPos.x, y: productImgClickPos.y, button: 'left', clickCount: 1 });
         publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: productImgClickPos.x, y: productImgClickPos.y, button: 'left', clickCount: 1 });
         writeLog('INFO', 'PUBLISH', label + ' 클릭(선택)', JSON.stringify(productImgClickPos));
-        await sleep(400);
+        // 2026-08-24 축소(사용자 리포트: 발행 지연): 스크롤/정렬 관련
+        // 600ms 대기들은 방금 해결한 타이밍 버그 재발 위험이 있어 그대로
+        // 두고, 상대적으로 덜 민감한 이 대기만 400ms→250ms로 축소.
+        await sleep(250);
       } else {
-        writeLog('WARN', 'PUBLISH', label + ' 요소 좌표 획득 실패 — 클릭 생략');
+        writeLog('WARN', 'PUBLISH', label + ' 요소 좌표 획득/안전구간 확보 실패 — 클릭 생략', JSON.stringify(productImgClickPos));
       }
 
       // 썸네일 가운데 정렬 때 검증된 것과 동일한 방식(선택 → 정렬 토글
       // 버튼 클릭) 재사용.
-      const centerAlignResult = await retryUntilFound(
-        () => publishWin.webContents.executeJavaScript(`
+      // 2026-08-24 추가: 실사용 테스트에서 이미지1은 정렬에 성공했지만
+      // 이후 이미지들(3/4/5 등)에서 container_not_found가 반복 발생하는
+      // 새로운 패턴이 확인됨(y<60 위험구간과는 무관 — 애초에 컨테이너
+      // 자체가 없음). 정확한 원인을 다음 테스트 로그로 특정하기 위해
+      // 썸네일 정렬 진단 로직(2026-07-17)과 동일한 수준의 진단 정보를
+      // 함께 수집한다(원인 확정 전까지는 동작 자체를 바꾸지 않음).
+      const finalCenterAlign = await resolveSafePos(`
+        (function() {
+          var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
+          var allContainers = document.querySelectorAll('.se-context-toolbar-cycle-toggle-container');
+          var imgs = document.querySelectorAll('.se-section-image');
+          var lastImg = imgs.length ? imgs[imgs.length - 1] : null;
+          var imgRect = lastImg ? lastImg.getBoundingClientRect() : null;
+          var base = {
+            scrollY: window.scrollY,
+            innerHeight: window.innerHeight,
+            docHeight: document.documentElement.scrollHeight,
+            imgCount: imgs.length,
+            imgRect: imgRect ? { top: Math.round(imgRect.top), left: Math.round(imgRect.left), width: Math.round(imgRect.width), height: Math.round(imgRect.height) } : null,
+            otherContainerCount: allContainers.length,
+            otherContainerNames: Array.from(allContainers).map(function(c) { return c.getAttribute('data-name') || ''; }),
+            activeElementTag: document.activeElement ? document.activeElement.tagName : null,
+            activeElementClass: document.activeElement ? (document.activeElement.className || '').toString().slice(0, 60) : null,
+          };
+          if (!container) return Object.assign({ found:false, reason:'container_not_found' }, base);
+          var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
+            var r = b.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          });
+          if (!btn) return Object.assign({ found:false, reason:'no_visible_button' }, base);
+          var r = btn.getBoundingClientRect();
+          var x = Math.round(r.left + r.width/2);
+          var y = Math.round(r.top + r.height/2);
+          var hit = document.elementFromPoint(x, y);
+          var safe = !!(hit && (hit === btn || btn.contains(hit) || (hit.closest && hit.closest('button') === btn)));
+          var hitRect = (!safe && hit) ? hit.getBoundingClientRect() : null;
+          return Object.assign({ found:true, x:x, y:y, safe:safe, hitTag: hit ? hit.tagName : null, hitClass: hit ? (hit.className || '').toString().slice(0, 80) : null, hitBottom: hitRect ? Math.round(hitRect.bottom) : null }, base);
+        })()
+      `, label + ' 정렬 버튼', 6, 500);
+      writeLog('INFO', 'PUBLISH', label + ' 정렬 버튼 조회', JSON.stringify(finalCenterAlign));
+
+      // 2026-08-24 추가(사용자 질문 계기로 재분석): 썸네일 정렬 코드는
+      // elementFromPoint 안전검증 자체가 없어 계산된 좌표를 그냥 믿고
+      // 클릭하는데, 본문 이미지는 과거 "장소" 아이콘 오클릭(지도 팝업 →
+      // 발행 전체 실패) 사고를 막으려고 이 안전검증을 추가했었다. 그런데
+      // 실사용 로그를 보면, 보정을 4회 다 써도 safe:false로 남는 "마지막"
+      // 장애물이 매번 SPAN.se-toolbar-icon(위험한 상단 삽입 아이콘이 아니라
+      // 그냥 흔한 아이콘 하나)인 사례가 반복 확인됨 — 반면 실제 사고를 냈던
+      // 진짜 위험군(장소/링크 등 se-toolbar-item-* 계열)은 이미 1~2회
+      // 보정 안에서 대부분 벗어나고 있었다. 즉 "100% 확실하지 않으면 아예
+      // 클릭 안 함"이라는 원칙이 이런 애매한(위험하지 않은) 경우까지
+      // 지나치게 막아 정렬 실패로 이어지고 있던 것. 그래서 마지막 장애물이
+      // 정확히 이 특정 패턴(SPAN.se-toolbar-icon)일 때만, 썸네일처럼
+      // 좌표를 믿고 클릭을 강행하는 최후 수단을 추가한다 — 그 외의(진짜
+      // 위험할 수 있는) 장애물은 여전히 클릭을 막는다.
+      const benignMiss = !!(finalCenterAlign && finalCenterAlign.found && !finalCenterAlign.safe
+        && finalCenterAlign.hitTag === 'SPAN' && finalCenterAlign.hitClass === 'se-toolbar-icon');
+
+      if (finalCenterAlign && finalCenterAlign.found && (finalCenterAlign.safe || benignMiss)) {
+        if (benignMiss) {
+          writeLog('WARN', 'PUBLISH', label + ' 정렬 버튼 안전 확인 실패했으나 위험하지 않은 장애물(아이콘)로 판단 — 클릭 강행', JSON.stringify(finalCenterAlign));
+        }
+        // 2026-08-24 추가(실사용 테스트로 발견, 이후 사용자가 화면 캡처로
+        // 확정): 로그상으로는 이 버튼이 정상 좌표(found:true)에서 클릭까지
+        // 디스패치됐다고 기록되는데도, 실제 화면에서는 좌측 정렬이 그대로
+        // 남아있는 사례가 확인됨. 사용자가 직접 캡처한 화면을 보니, 이미지
+        // 삽입 직후 스크롤 위치에 따라 정렬 툴바가 상단 고정 툴바(아이콘
+        // 행+서식 행)에 가려 사실상 클릭이 그 위에 얹힌 다른 요소에 먹히고
+        // 있었던 것 — 좌표 자체는 "찾음"으로 기록되지만 실제로 클릭 가능한
+        // 상태는 아니었던 것으로 확정. resolveSafePos()가 이제 y<60 같은
+        // 임의의 숫자 대신 elementFromPoint() 실측으로 이 문제를 걸러내므로,
+        // 이 지점에 도달했다면 최소한 "가려짐" 문제는 해소된 상태다.
+        // 다만 만약을 위해(다른 미확인 원인 대비) 클릭 반영 여부를 한 번 더
+        // 검증하는 지문 비교 안전망은 그대로 유지한다. 사용자가 같은 위치의
+        // 버튼을 직접 클릭하면 정렬이 바뀌는 것도 확인됨 — 즉 버튼 자체는
+        // 유효하고, 이 컨테이너는 (여러 개의 정렬 버튼이 아니라) 클릭할
+        // 때마다 좌→가운데→우 순으로 넘어가는 단일 cycle-toggle 버튼이
+        // 맞음(스크린샷으로 재확인). 클릭 전/후 이미지의 정렬 상태를 나타낼
+        // 만한 지문(조상 요소 class/style, computed text-align/margin,
+        // 화면상 left 좌표)을 비교해 반영 여부를 확인한다.
+        // 지문이 "바뀌지 않았다"면 클릭 자체가 안 먹은 것으로 보고 안전하게
+        // 한 번 더 재시도한다(이 경우는 상태 전환이 안 일어난 것이므로
+        // 추가 클릭이 잘못된 상태로 넘길 위험이 없음). 반대로 지문이
+        // "바뀌었다"면 이미 cycle이 한 칸 넘어간 것이므로 그 상태가
+        // 정확히 "가운데"인지는 알 수 없어도(모르는 상태에서 추가로 또
+        // 클릭하면 우측 정렬 등 엉뚱한 상태로 또 넘어갈 위험이 있음)
+        // 여기서 멈추고 지문을 로그로 남긴다 — 다음 테스트의 시각 확인과
+        // 이 지문을 대조하면 "가운데 정렬 상태의 지문"을 정확히 특정할
+        // 수 있고, 그 후에 최종적으로 이 검증 로직을 "지문이 이 특정
+        // 값과 일치하는지"로 확정할 수 있다.
+        const captureAlignFingerprint = `
           (function() {
-            var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
-            if (!container) return { found:false, reason:'container_not_found' };
-            var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
-              var r = b.getBoundingClientRect();
-              return r.width > 0 && r.height > 0;
-            });
-            if (!btn) return { found:false, reason:'no_visible_button' };
-            var r = btn.getBoundingClientRect();
-            return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+            var imgs = document.querySelectorAll('.se-section-image');
+            if (!imgs.length) return null;
+            var img = imgs[imgs.length - 1];
+            var chain = [];
+            var el = img;
+            for (var i = 0; i < 4 && el; i++) {
+              chain.push({ tag: el.tagName, cls: (el.className || '').toString(), style: (el.getAttribute('style') || '') });
+              el = el.parentElement;
+            }
+            var cs = window.getComputedStyle(img);
+            var r = img.getBoundingClientRect();
+            return { chain: chain, textAlign: cs.textAlign, marginLeft: cs.marginLeft, marginRight: cs.marginRight, left: Math.round(r.left) };
           })()
-        `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
-        (v) => v && v.found, 6, 500
-      );
-      writeLog('INFO', 'PUBLISH', label + ' 정렬 버튼 조회', JSON.stringify(centerAlignResult));
-      // 썸네일 정렬 때와 동일한 보정: 이미지가 문서 맨 위쪽에 가까우면
-      // 정렬 버튼이 상단 고정 발행 툴바와 겹쳐 클릭이 무반응일 수 있음.
-      let finalCenterAlign = centerAlignResult;
-      if (finalCenterAlign && finalCenterAlign.found && finalCenterAlign.y < 60) {
-        writeLog('WARN', 'PUBLISH', label + ' 정렬 버튼이 상단 고정 툴바와 겹침 — 보정 스크롤', JSON.stringify(finalCenterAlign));
-        await publishWin.webContents.executeJavaScript(`window.scrollBy(0, -120);`).catch(() => {});
-        await sleep(300);
-        finalCenterAlign = await publishWin.webContents.executeJavaScript(`
-          (function() {
-            var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
-            if (!container) return { found:false, reason:'container_not_found_after_correction' };
-            var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
-              var r = b.getBoundingClientRect();
-              return r.width > 0 && r.height > 0;
-            });
-            if (!btn) return { found:false, reason:'no_visible_button_after_correction' };
-            var r = btn.getBoundingClientRect();
-            return { found:true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
-          })()
-        `).catch((e) => ({ found:false, reason:'js_err_after_correction:' + e.message }));
-        writeLog('INFO', 'PUBLISH', label + ' 정렬 버튼 보정 후 재조회', JSON.stringify(finalCenterAlign));
-      }
-      if (finalCenterAlign && finalCenterAlign.found) {
-        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: finalCenterAlign.x, y: finalCenterAlign.y, button: 'left', clickCount: 1 });
-        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: finalCenterAlign.x, y: finalCenterAlign.y, button: 'left', clickCount: 1 });
-        writeLog('INFO', 'PUBLISH', label + ' 가운데 정렬 클릭', JSON.stringify(finalCenterAlign));
-        await sleep(300);
+        `;
+        const fpBefore = await publishWin.webContents.executeJavaScript(captureAlignFingerprint).catch(() => null);
+
+        let clickPos = finalCenterAlign;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          if (attempt > 1) {
+            // 재시도 직전 좌표를 한 번 더 재조회(그 사이 애니메이션/레이아웃이
+            // 움직였을 가능성 대비). 실패하면 직전 좌표를 그대로 사용.
+            const recheck = await publishWin.webContents.executeJavaScript(`
+              (function() {
+                var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
+                if (!container) return { found:false };
+                var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
+                  var r = b.getBoundingClientRect();
+                  return r.width > 0 && r.height > 0;
+                });
+                if (!btn) return { found:false };
+                var r = btn.getBoundingClientRect();
+                var x = Math.round(r.left + r.width/2);
+                var y = Math.round(r.top + r.height/2);
+                var hit = document.elementFromPoint(x, y);
+                var safe = !!(hit && (hit === btn || btn.contains(hit) || (hit.closest && hit.closest('button') === btn)));
+                return { found:true, x:x, y:y, safe:safe };
+              })()
+            `).catch(() => ({ found: false }));
+            if (recheck && recheck.found && recheck.safe) clickPos = recheck;
+          }
+
+          publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: clickPos.x, y: clickPos.y, button: 'left', clickCount: 1 });
+          publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: clickPos.x, y: clickPos.y, button: 'left', clickCount: 1 });
+          writeLog('INFO', 'PUBLISH', label + ' 가운데 정렬 클릭(시도 ' + attempt + '/2)', JSON.stringify(clickPos));
+          await sleep(300);
+
+          // 2026-08-24 추가: 위 예방책에도 불구하고 혹시 모를 오클릭으로
+          // 예상치 못한 SE3 팝업(지도/장소 팝업 등)이 열렸다면 자동으로
+          // 감지해 닫는 복구 안전망. 기존 코드에서 이미 검증되어 쓰이고
+          // 있는 SE3 팝업 닫기 버튼 선택자(.se-popup-close-button)를 그대로
+          // 재사용한다.
+          const popupCheck = await publishWin.webContents.executeJavaScript(`
+            (function() {
+              var btn = document.querySelector('.se-popup-close-button');
+              if (!btn) return { found:false };
+              var r = btn.getBoundingClientRect();
+              return { found: r.width > 0 && r.height > 0 };
+            })()
+          `).catch(() => ({ found: false }));
+          if (popupCheck && popupCheck.found) {
+            writeLog('WARN', 'PUBLISH', label + ' 정렬 클릭 후 예상치 못한 팝업 감지 — 자동으로 닫음');
+            await publishWin.webContents.executeJavaScript(`
+              (function() {
+                var btn = document.querySelector('.se-popup-close-button');
+                if (btn) btn.click();
+              })()
+            `).catch(() => {});
+            await sleep(300);
+          }
+
+          const fpAfter = await publishWin.webContents.executeJavaScript(captureAlignFingerprint).catch(() => null);
+          const changed = JSON.stringify(fpBefore) !== JSON.stringify(fpAfter);
+          writeLog('INFO', 'PUBLISH', label + ' 정렬 클릭 반영 여부(지문 비교)', JSON.stringify({ changed: changed, fpBefore: fpBefore, fpAfter: fpAfter }));
+
+          if (changed) {
+            break; // 상태 전환 확인됨 — cycle 특성상 추가 클릭은 하지 않음
+          }
+          if (attempt === 1) {
+            writeLog('WARN', 'PUBLISH', label + ' 정렬 클릭이 반영되지 않음(지문 변화 없음) — 재시도');
+          } else {
+            writeLog('WARN', 'PUBLISH', label + ' 정렬 클릭 재시도 후에도 반영되지 않음 — 좌측 정렬 상태로 남을 수 있음');
+          }
+        }
       } else {
-        writeLog('WARN', 'PUBLISH', label + ' 정렬 버튼 찾기 실패 — 좌측 정렬 상태로 유지됨');
+        writeLog('WARN', 'PUBLISH', label + ' 정렬 버튼 안전 위치 확보 실패 — 좌측 정렬 상태로 유지됨', JSON.stringify(finalCenterAlign));
       }
+      // 2026-08-24: 정렬 후 이미지 선택 해제(정렬 물림 방지) 로직은
+      // 이 함수가 아니라 pasteHtml() 시작 부분으로 이동됨 — 이미지 뒤에
+      // 바로 다른 이미지(보너스 등)가 올 때도 매번 실행되면서 보너스
+      // 이미지 사이 간격이 재발하는 부작용이 있었음. pasteHtml()은
+      // 실제로 텍스트를 붙여넣기 직전이라, 거기서 "마지막 이미지가
+      // 아직 선택 상태인지"를 확인해 필요한 경우에만 해제하도록 수정
+      // (상세 사유는 pasteHtml() 쪽 주석 참고). 이미지-이미지 전환에는
+      // 전혀 영향 없음.
     }
 
     // 이미지 뒤 줄바꿈 (다음 섹션을 위해)
-    publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-    publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Return' });
-    await sleep(200);
+    // 2026-08-24 수정(사용자 리포트 2건 종합): 직전에 시도했던 "Right
+    // 방향키로 선택 해제 후 Return" 방식은 오히려 빈 줄을 1개→2개로
+    // 악화시킴이 확인됨(잘못된 진단이었음, 되돌림). 재분석 결과: 이미지
+    // 클릭 선택 → 정렬 버튼 클릭이라는 흐름 자체가 SE3에서 이미지 뒤에
+    // 빈 문단을 자동으로 하나 만들어 두는데, 그 위에 우리가 수동으로
+    // 보내는 이 Return이 하나 더 겹쳐 빈 줄이 생기는 것으로 판단됨
+    // (center:false였던 예전엔 이미지 클릭 자체가 없어 이 자동 빈 문단이
+    // 생기지 않았음). center:true(=클릭 기반 정렬을 탄 경우)일 때만 이
+    // 수동 Return을 생략 — 다음 섹션의 leading Return(또는 pasteHtml의
+    // 자체 블록 삽입)만으로 구분이 충분할 것으로 예상. center:false
+    // 경로는 기존 동작 그대로 유지.
+    if (!center) {
+      publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+      publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Return' });
+      await sleep(200);
+    }
   };
 
   // ── 썸네일 생성 및 삽입 (본문 맨 앞) ────────────────────────
@@ -7622,17 +7987,24 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 도입부 (HTML 빌더 — 폰트 포함)
   await pasteHtml(buildIntroHtml(content.intro, editorFont, iconCycler, postStylePreset), '도입부');
   // 이미지 1 (도입부 아래, 본문 시작 전)
-  // 2026-08-20 임시 롤백: center:true 추가(가운데 정렬 자동 클릭) 이후
-  // 게시글이 정상 발행되지 않는 문제가 실사용으로 확인돼, 원인 파악
-  // 전까지 우선 롤백. 주간 작업 한도가 남지 않아 언스플래시만 쓰기로
-  // 결정(언스플래시는 이 옵션 없이도 폭이 항상 넓어 가운데처럼 보임).
+  // 2026-08-20 임시 롤백 → 2026-08-24 원인 진단 후 재적용: center:true
+  // 추가(가운데 정렬 자동 클릭) 이후 게시글이 정상 발행되지 않는 문제가
+  // 실사용으로 확인돼 원인 파악 전까지 롤백했었음. 이미지1이 도입부
+  // 바로 다음(문서 맨 위쪽)에 위치해 정렬 버튼 좌표가 상단 고정 툴바와
+  // 겹치는 위험 구간(y<60)에 걸리기 쉬웠고, 그 경우 보정 없이 클릭을
+  // 강행해 상단 툴바의 다른 아이콘("장소")이 잘못 눌리는 것이 원인으로
+  // 진단됨. insertImgSection() 내부에 보정→재검증 반복 + 팝업 자동 복구
+  // 안전장치를 추가한 뒤 재적용 ([[body-image-center-align-fix-2026-08-20]]
+  // 참고, 실사용 재검증 전까지는 신중히 지켜볼 것).
   // 백업: backups/2026-08-20/main.js_backup_2026-08-20
-  // _pre-body-image-center-align.js(수정 전) /
-  // _pre-revert-body-image-center-align.js(롤백 직전, center:true 버전).
-  await insertImgSection(imgs[0], '이미지1');
+  // _pre-body-image-center-align.js(최초 수정 전) /
+  // _pre-revert-body-image-center-align.js(1차 롤백 직전, center:true 버전) /
+  // backups/2026-08-24/main.js_backup_2026-08-24_pre-body-image-align-hardening.js
+  // (이번 하드닝 수정 전, 즉 "언스플래시만 안전하게 쓰던" 롤백 상태 지점).
+  await insertImgSection(imgs[0], '이미지1', { center: true });
   // 2026-08-04 신규: 보너스 이미지 — 이 지점(0)이 선택된 경우만 이미지1
   // 바로 뒤에 한 장 더 삽입(기존 이미지1 위치/순서는 변경하지 않음)
-  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스');
+  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스', { center: true });
   // 제휴 광고 — 도입부 아래(위치 설정 'intro'|'both'일 때만)
   if (affiliateAd && (affiliateAd.position === 'intro' || affiliateAd.position === 'both')) {
     await insertAffiliateAd('제휴 광고(도입부 아래)');
@@ -7649,30 +8021,30 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   let usedMidImages = false;
   if (part1) {
     await pasteHtml(buildBodyHtml(part1, editorFont, iconCycler, postStylePreset), '본문(대분류1 도입)');
-    await insertImgSection(imgs[1], '이미지2');
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스');
+    await insertImgSection(imgs[1], '이미지2', { center: true });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true });
     usedMidImages = true;
   }
   if (part2) {
     await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
-    await insertImgSection(imgs[2], '이미지3');
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스');
+    await insertImgSection(imgs[2], '이미지3', { center: true });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
     usedMidImages = true;
   }
   if (part3) {
     await pasteHtml(buildBodyHtml(part3, editorFont, iconCycler, postStylePreset), '본문(중분류2)');
-    await insertImgSection(imgs[3], '이미지4');
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스');
+    await insertImgSection(imgs[3], '이미지4', { center: true });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true });
     usedMidImages = true;
   }
   await pasteHtml(buildBodyHtml(part4, editorFont, iconCycler, postStylePreset), '본문(대분류2)');
   if (!usedMidImages) {
-    await insertImgSection(imgs[1], '이미지2');
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스');
-    await insertImgSection(imgs[2], '이미지3');
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스');
-    await insertImgSection(imgs[3], '이미지4');
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스');
+    await insertImgSection(imgs[1], '이미지2', { center: true });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true });
+    await insertImgSection(imgs[2], '이미지3', { center: true });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
+    await insertImgSection(imgs[3], '이미지4', { center: true });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true });
   }
 
   // 제휴 광고 — 본문 아래(위치 설정 'body'|'both'일 때만, 기본값)
@@ -7682,8 +8054,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
   // 이미지 5 (마무리 시작 지점 — 2026-07-07: 기존엔 마무리 "뒤"였으나
   // 마무리를 읽는 도중 시각적 전환을 주도록 마무리 "시작 지점"으로 변경)
-  await insertImgSection(imgs[4], '이미지5');
-  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스');
+  await insertImgSection(imgs[4], '이미지5', { center: true });
+  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스', { center: true });
   // 마무리
   await pasteHtml(buildConclusionHtml(content.conclusion, editorFont, iconCycler, postStylePreset), '마무리');
   // 관련 사이트 링크 섹션 — 2026-07-23: 게시 직전 실제 접속 가능한
