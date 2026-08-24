@@ -69,6 +69,12 @@ export default function History() {
   const [loading, setLoading]   = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [searchQ, setSearchQ]   = useState('');
+  // 2026-08-25 신규(개발자 전용): 조회수 새로고침 진행 상태 + 마지막 결과
+  // 메시지(계정별 매칭 성공/실패 요약) — 크리에이터 어드바이저 DOM 구조를
+  // 실제 화면 캡처만 보고 만들어서, 첫 실사용 시 결과를 눈으로 바로
+  // 확인할 수 있도록 메시지를 남겨둠.
+  const [collectingViews, setCollectingViews] = useState(false);
+  const [collectMsg, setCollectMsg] = useState('');
 
   const loadPosts = () => {
     setLoading(true);
@@ -84,7 +90,46 @@ export default function History() {
     loadPosts();
   };
 
+  // 2026-08-25 신규(개발자 전용): 등록된 모든 계정을 순회하며 크리에이터
+  // 어드바이저 조회수를 수집 — 계정이 여러 개여도 버튼 하나로 한 번에 처리.
+  const handleCollectViews = async () => {
+    setCollectingViews(true);
+    setCollectMsg('');
+    try {
+      const accRes = await window.electronAPI.account.getAll();
+      const accounts = accRes?.success ? (accRes.accounts || []) : (accRes || []);
+      let totalMatched = 0, totalItems = 0;
+      const errors = [];
+      for (const acc of accounts) {
+        const res = await window.electronAPI.stats.collectPostViews(acc.id);
+        if (res.success) {
+          totalMatched += res.matched || 0;
+          totalItems += res.total || 0;
+        } else {
+          errors.push(`${acc.nickname || acc.naver_id}: ${res.error}`);
+        }
+      }
+      setCollectMsg(
+        errors.length
+          ? `일부 실패 — 성공 매칭 ${totalMatched}/${totalItems}건, 오류: ${errors.join(' / ')}`
+          : `조회수 수집 완료 — ${totalMatched}/${totalItems}건 매칭됨`
+      );
+      loadPosts();
+    } catch (e) {
+      setCollectMsg(`조회수 수집 실패: ${e.message}`);
+    } finally {
+      setCollectingViews(false);
+    }
+  };
+
   useEffect(() => { loadPosts(); }, [filterStatus]);
+
+  // 2026-08-25 신규: 조회수 수집 결과 메시지는 3초 후 자동으로 사라짐
+  useEffect(() => {
+    if (!collectMsg) return;
+    const t = setTimeout(() => setCollectMsg(''), 3000);
+    return () => clearTimeout(t);
+  }, [collectMsg]);
 
   const filtered = posts.filter(p => {
     if (!searchQ) return true;
@@ -99,6 +144,9 @@ export default function History() {
           <h1>발행 이력</h1>
           <p>발행된 모든 글의 기록을 확인합니다.</p>
         </div>
+        {collectMsg && (
+          <p className="history-collect-msg" style={{ fontSize: 13, color: '#666', margin: 0, textAlign: 'right' }}>{collectMsg}</p>
+        )}
       </div>
 
       {/* 필터 바 */}
@@ -124,6 +172,18 @@ export default function History() {
           <option value="cancelled">취소</option>
         </select>
         <span className="history-count">{filtered.length}건</span>
+        {/* 2026-08-25 신규(개발자 전용): 크리에이터 어드바이저에서 게시물별
+            조회수를 수집해 아래 표의 "조회수" 열에 반영 */}
+        {process.env.NODE_ENV === 'development' && (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleCollectViews}
+            disabled={collectingViews}
+            title="크리에이터 어드바이저에서 게시물별 조회수를 가져옵니다"
+          >
+            {collectingViews ? '조회수 수집 중…' : '📊 조회수 새로고침'}
+          </button>
+        )}
         <button
           className="btn btn-ghost btn-sm history-export-btn"
           onClick={() => exportCSV(filtered)}
@@ -150,7 +210,7 @@ export default function History() {
         <div className="history-table-wrap card">
           <table className="history-table">
             <colgroup>
-              <col /><col /><col /><col /><col /><col />
+              <col /><col /><col /><col /><col /><col /><col />
             </colgroup>
             <thead>
               <tr>
@@ -159,6 +219,7 @@ export default function History() {
                 <th>계정</th>
                 <th>예약일시</th>
                 <th>발행일시</th>
+                <th>조회수</th>
                 <th>삭제</th>
               </tr>
             </thead>
@@ -185,6 +246,9 @@ export default function History() {
                       </td>
                       <td className="history-date">{fmtDt(post.scheduled_at) || '—'}</td>
                       <td className="history-date">{fmtDt(effectivePublishedAt) || '—'}</td>
+                      <td className="history-views" title={post.latest_views_date ? `기준일 ${post.latest_views_date}` : ''}>
+                        {post.latest_views != null ? post.latest_views.toLocaleString() : '—'}
+                      </td>
                       <td>
                         <button
                           className="history-delete-btn"

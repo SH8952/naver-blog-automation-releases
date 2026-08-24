@@ -208,6 +208,22 @@ function getDB() {
     )
   `).run();
 
+  // 게시물별 조회수 통계 (2026-08-25 신규, 개발자 전용) — 크리에이터
+  // 어드바이저(통합 데이터 > 조회수 순위 > 글)에서 자동 수집한 값을
+  // (post_id, stat_date) 단위로 저장. 같은 날 재수집 시 값만 갱신되도록
+  // UNIQUE 제약 + upsert(INSERT ... ON CONFLICT)로 사용.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS post_view_stats (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id       INTEGER NOT NULL,
+      naver_id      TEXT    NOT NULL DEFAULT '',
+      views         INTEGER NOT NULL DEFAULT 0,
+      stat_date     TEXT    NOT NULL,
+      collected_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+      UNIQUE(post_id, stat_date)
+    )
+  `).run();
+
   return db;
 }
 

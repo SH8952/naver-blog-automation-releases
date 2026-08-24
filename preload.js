@@ -123,6 +123,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveDraft: (params) => ipcRenderer.invoke('post:saveDraft', params),
   },
 
+  // ── 게시물별 조회수 통계 (2026-08-25 신규, 개발자 전용) ──────────
+  stats: {
+    /** 계정 하나의 크리에이터 어드바이저 조회수를 수집해 posts와 매칭 후 저장 */
+    collectPostViews: (accountId) => ipcRenderer.invoke('stats:collectPostViews', { accountId }),
+  },
+
   // ── 자동화 루프 (2026-07-05 신규) ────────────────────────────
   automationLoop: {
     /** 자동화 루프 세부 설정 조회 */

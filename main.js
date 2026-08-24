@@ -2502,6 +2502,301 @@ async function fetchCreatorAdvisorTrendsCore() {
   }
 }
 
+// ── 게시물별 조회수 자동 수집 (2026-08-25 신규, 개발자 전용) ────────────
+// 배경: 이 앱은 지금까지 발행한 글이 실제로 얼마나 조회되는지 전혀 추적
+// 하지 못해, 어떤 키워드/톤/카테고리가 실제로 효과가 있는지 "감"으로만
+// 판단해야 했음(사용자 지적). 크리에이터 어드바이저의 "통합 데이터 > 조회수
+// 순위 > 글" 탭이 게시물별 조회수를 보여준다는 것을 사용자가 실제 화면
+// 캡처로 확인해줘서(2026-08-25), 그 화면을 자동으로 열어 읽어온다.
+// 정확한 DOM 클래스명은 알 수 없으므로(스크린샷만으로 설계), 클래스
+// 선택자 대신 화면에 보이는 텍스트 패턴("13 · 2026. 08. 22. 08:31" 같은
+// "조회수 · 발행일시" 줄)을 innerText에서 정규식으로 찾고 그 바로 윗줄을
+// 제목으로 간주하는 방식으로 스크래핑한다 — 클래스명이 바뀌어도 안 깨지는
+// 대신, 화면 문구("조회수 순위"/"글"/"더보기") 자체가 바뀌면 다시 손봐야
+// 함(기존 구글 트렌드/크리에이터 어드바이저 트렌드 스크래핑과 동일한 한계).
+// 실사용 테스트 전까지는 최초 실행 시 조정이 필요할 수 있음.
+async function fetchCreatorAdvisorPostViewsCore(naverId, cookies) {
+  let win = null;
+  try {
+    const partition = `noinit:creator-advisor-views-${Date.now()}`;
+    const ses = electronSession.fromPartition(partition);
+    for (const cookie of cookies) {
+      try {
+        const urlBase = cookie.domain?.startsWith('.')
+          ? `https://www${cookie.domain}`
+          : `https://${cookie.domain || 'naver.com'}`;
+        await ses.cookies.set({
+          url: urlBase, name: cookie.name, value: cookie.value,
+          domain: cookie.domain, path: cookie.path || '/',
+          secure: !!cookie.secure, httpOnly: !!cookie.httpOnly,
+          expirationDate: cookie.expirationDate,
+        });
+      } catch { /* 개별 쿠키 오류 무시 */ }
+    }
+
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 1200,
+      webPreferences: {
+        session: ses, javascript: true, nodeIntegration: false,
+        contextIsolation: true, webSecurity: true, backgroundThrottling: false,
+      },
+    });
+
+    const targetUrl = `https://creator-advisor.naver.com/naver_blog/${naverId}/integrated-analysis`;
+    writeLog('INFO', 'STATS', '게시물별 조회수 조회 시작', targetUrl);
+
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ success: false, error: '타임아웃(90초) — 네이버 서버 응답이 늦거나 로그인 세션이 만료됐을 수 있습니다.' }), 90000);
+      win.webContents.loadURL(targetUrl, {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      });
+      win.webContents.on('did-finish-load', () => {
+        setTimeout(async () => {
+          try {
+            const isLoginPage = /nid\.naver\.com|login/i.test(win.webContents.getURL());
+            if (isLoginPage) {
+              clearTimeout(timer);
+              resolve({ success: false, error: '로그인 세션이 만료된 것 같습니다. 계정 관리에서 해당 계정을 다시 로그인해주세요.' });
+              return;
+            }
+            const data = await win.webContents.executeJavaScript(`
+              (async function() {
+                // 2026-08-25 후속 수정: 1차 실사용 테스트에서 skysmoga/
+                // skysmogs66 둘 다 페이지 로딩·날짜 추출은 성공했는데 항목이
+                // 0개였음(로그: items=0, dateLabel은 정상). 원인 후보 1 —
+                // "조회수 순위"/"글"/"더보기" 버튼 텍스트 옆에 화살표・아이콘이
+                // 붙어있으면 정확히 일치하는 리프 요소가 없어 클릭 자체가
+                // 실패했을 가능성. normText로 앞뒤 기호를 떼고 비교 + 리프가
+                // 아니어도 직접 텍스트 노드가 일치하면 인정 + 그래도 없으면
+                // 자손이 가장 적은 완전일치 요소로 폴백, 3단계로 강화.
+                function normText(s) {
+                  return (s || '').trim().replace(/^[^가-힣a-zA-Z0-9]+|[^가-힣a-zA-Z0-9]+$/g, '');
+                }
+                function findClickableByText(text) {
+                  const all = Array.from(document.querySelectorAll('button, a, li, div, span, [role="tab"]'));
+                  let el = all.find(function(e) { return e.children.length === 0 && normText(e.textContent) === text; });
+                  if (el) return el;
+                  el = all.find(function(e) {
+                    return Array.from(e.childNodes).some(function(n) { return n.nodeType === 3 && normText(n.textContent) === text; });
+                  });
+                  if (el) return el;
+                  const exact = all.filter(function(e) { return normText(e.textContent) === text; });
+                  if (exact.length) {
+                    exact.sort(function(a, b) { return a.querySelectorAll('*').length - b.querySelectorAll('*').length; });
+                    return exact[0];
+                  }
+                  return null;
+                }
+
+                const out = { dateLabel: null, items: [], clicked: {}, debugLines: [] };
+
+                // "조회수 순위" 서브탭 클릭(이미 선택돼 있을 수도 있음)
+                const viewRankTab = findClickableByText('조회수 순위');
+                if (viewRankTab) { viewRankTab.click(); out.clicked.viewRankTab = true; }
+                await new Promise(r => setTimeout(r, 1200));
+
+                // "글" 서브서브탭 클릭(바로 옆에 "주제" 토글이 있는 탭)
+                const postTab = findClickableByText('글');
+                if (postTab) { postTab.click(); out.clicked.postTab = true; }
+                await new Promise(r => setTimeout(r, 1200));
+
+                // 상단에 표시된 기준 날짜(예: "2026. 08. 24.", 시:분 없음) 추출
+                try {
+                  const dateMatch = document.body.innerText.match(/\\d{4}\\.\\s*\\d{2}\\.\\s*\\d{2}\\.(?!\\s*\\d{2}:)/);
+                  out.dateLabel = dateMatch ? dateMatch[0].replace(/\\s+/g, '') : null;
+                } catch {}
+
+                // "더보기"를 최대 5회 눌러 목록을 최대한 펼침
+                for (let i = 0; i < 5; i++) {
+                  const moreBtn = findClickableByText('더보기');
+                  if (!moreBtn) break;
+                  moreBtn.click();
+                  out.clicked.more = (out.clicked.more || 0) + 1;
+                  await new Promise(r => setTimeout(r, 900));
+                }
+
+                // 화면 텍스트에서 "조회수 · 발행일시" 줄과 그 바로 윗줄(제목)을 추출
+                const lines = document.body.innerText.split('\\n').map(function(s) { return s.trim(); }).filter(Boolean);
+                // 2026-08-25 후속 수정(2차 실사용 로그로 확인): 화면에 보이는
+                // 가운데 점(·)은 실제 텍스트가 아니라 CSS로 그려지는 장식이라
+                // innerText에는 나타나지 않음 — "13"과 "2026. 08. 22. 08:31"이
+                // 구분자 없이 "132026. 08. 22. 08:31"처럼 그대로 붙어 있었음.
+                // 점/공백이 있든 없든 다 받아들이도록 구분자를 전부 선택적으로 변경.
+                const metaRe = /^(\\d+?)[\\s·ㆍ]*(\\d{4})\\.\\s*(\\d{2})\\.\\s*(\\d{2})\\.\\s*(\\d{2}):(\\d{2})$/;
+                for (let i = 1; i < lines.length; i++) {
+                  const m = lines[i].match(metaRe);
+                  if (!m) continue;
+                  const title = lines[i - 1];
+                  const cleanTitle = /^\\d+$/.test(title) ? (lines[i - 2] || '') : title;
+                  if (!cleanTitle || cleanTitle.length < 2) continue;
+                  out.items.push({
+                    title: cleanTitle,
+                    views: parseInt(m[1], 10),
+                    postDate: m[2] + '-' + m[3] + '-' + m[4] + ' ' + m[5] + ':' + m[6],
+                  });
+                }
+
+                // 2026-08-25 신규: 항목을 하나도 못 찾았을 때 진단용으로 화면
+                // 텍스트 앞부분을 그대로 로그에 남겨, 실제 문구가 예상과
+                // 어떻게 다른지 다음 시도 없이 바로 확인할 수 있게 함.
+                if (out.items.length === 0) {
+                  out.debugLines = lines.slice(0, 40);
+                }
+
+                return out;
+              })()
+            `);
+            clearTimeout(timer);
+            resolve({ success: true, naverId, ...data });
+          } catch (e) {
+            clearTimeout(timer);
+            resolve({ success: false, error: e.message });
+          }
+        }, 3500);
+      });
+      // 2026-08-25 수정: did-fail-load는 메인 페이지가 아니라 페이지 안의
+      // 부속 리소스(광고/통계 스크립트 등) 하나만 실패해도 발생한다. 이걸
+      // 무조건 전체 실패로 처리하면, 메인 페이지 자체는 정상 로딩 중이어도
+      // 성급하게 중단되는 문제가 실사용에서 확인됨(오류: "로드 실패(-3)").
+      // isMainFrame이 아니면 무시하고 did-finish-load를 계속 기다린다.
+      win.webContents.on('did-fail-load', (e, code, desc, validatedURL, isMainFrame) => {
+        if (!isMainFrame) {
+          writeLog('WARN', 'STATS', '서브 리소스 로드 실패(무시)', `code=${code} url=${validatedURL}`);
+          return;
+        }
+        clearTimeout(timer);
+        // 2026-08-25 후속 수정: 세션이 만료된 계정은 로그인 페이지로
+        // 리다이렉트되는 도중 원 요청이 취소돼(-3) did-finish-load 없이
+        // 곧바로 여기로 와버리는 경우가 실사용으로 확인됨(로그인 리다이렉트가
+        // did-finish-load까지 못 가고 중간에 abort됨) — 이 경우 원인을 알 수
+        // 없는 "로드 실패"가 아니라 다른 세션만료 안내와 동일한 문구로 표시.
+        const isLoginRedirect = /nid\.naver\.com|login/i.test(validatedURL || '');
+        resolve(isLoginRedirect
+          ? { success: false, error: '로그인 세션이 만료된 것 같습니다. 계정 관리에서 해당 계정을 다시 로그인해주세요.' }
+          : { success: false, error: `로드 실패(${code}): ${desc} (${validatedURL})` });
+      });
+    });
+
+    if (result.success) {
+      writeLog('INFO', 'STATS', '게시물별 조회수 조회 완료',
+        `items=${result.items?.length || 0} dateLabel=${result.dateLabel} clicked=${JSON.stringify(result.clicked)}`);
+      // 2026-08-25 신규: 항목 0개일 때 화면 텍스트 앞부분을 그대로 남겨
+      // 다음 실사용 테스트 없이 로그만으로 정규식/선택자를 맞출 수 있게 함.
+      if (!result.items?.length && result.debugLines?.length) {
+        writeLog('WARN', 'STATS', '항목 0개 — 화면 텍스트 진단', result.debugLines.join(' | '));
+      }
+    } else {
+      writeLog('WARN', 'STATS', '게시물별 조회수 조회 실패', result.error);
+    }
+    return result;
+  } catch (err) {
+    writeLog('WARN', 'STATS', '게시물별 조회수 조회 예외', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+  }
+}
+
+// 제목 매칭용 정규화 — 공백/문장부호 제거 + 소문자화(대소문자 영향 최소화)
+function normalizeTitleForMatch(s) {
+  return (s || '').replace(/\s+/g, '').replace(/[·ㆍ.,!?"'()\[\]{}]/g, '').toLowerCase();
+}
+
+// 계정 하나의 조회수를 수집해 posts와 제목으로 매칭한 뒤 post_view_stats에
+// upsert. 발행 이력 화면의 "조회수 새로고침" 버튼에서 호출.
+async function collectPostViewsForAccount(accountId) {
+  const { getDB } = require('./src/db');
+  const db = getDB();
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+  if (!account?.cookies_encrypted) return { success: false, error: '로그인된 계정이 없습니다.' };
+  const naverId = account.naver_id;
+  if (!naverId) return { success: false, error: '계정에 네이버 아이디 정보가 없습니다.' };
+  const cookies = JSON.parse(decrypt(account.cookies_encrypted) || '[]');
+
+  const scraped = await fetchCreatorAdvisorPostViewsCore(naverId, cookies);
+  if (!scraped.success) return scraped;
+
+  const statDate = (() => {
+    const m = (scraped.dateLabel || '').match(/(\d{4})\.(\d{2})\.(\d{2})/);
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : todayDateStr();
+  })();
+
+  // 이 계정의 발행된(또는 네이버 자체 예약 완료된) 글만 매칭 후보로 사용
+  const candidates = db.prepare(
+    "SELECT id, title FROM posts WHERE account_id = ? AND status IN ('published','reserved')"
+  ).all(accountId);
+  const candidateMap = new Map(candidates.map(p => [normalizeTitleForMatch(p.title), p]));
+
+  const upsert = db.prepare(`
+    INSERT INTO post_view_stats (post_id, naver_id, views, stat_date, collected_at)
+    VALUES (?, ?, ?, ?, datetime('now','localtime'))
+    ON CONFLICT(post_id, stat_date) DO UPDATE SET
+      views = excluded.views, collected_at = excluded.collected_at
+  `);
+
+  let matched = 0;
+  const unmatched = [];
+  for (const item of (scraped.items || [])) {
+    const key = normalizeTitleForMatch(item.title);
+    const post = candidateMap.get(key);
+    if (post) {
+      upsert.run(post.id, naverId, item.views, statDate);
+      matched++;
+    } else {
+      unmatched.push(item.title);
+    }
+  }
+
+  writeLog('INFO', 'STATS', `조회수 매칭 완료(계정 ${accountId})`, `matched=${matched}/${scraped.items?.length || 0} statDate=${statDate}`);
+  return { success: true, matched, total: scraped.items?.length || 0, statDate, unmatched };
+}
+
+// isDev 이중 가드 — 배포판(app.isPackaged)에서는 isDev가 항상 false라
+// 이 핸들러는 무조건 차단된다(다른 개발자 전용 기능과 동일한 패턴).
+ipcMain.handle('stats:collectPostViews', async (event, { accountId }) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    return await collectPostViewsForAccount(accountId);
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// 게시물별 조회수 자동 미리 수집(2026-08-25 신규, 개발자 전용) — 트렌드
+// 미리 불러오기(prefetchCreatorAdvisorTrends)와 동일한 패턴: 오늘 이미
+// 수집했으면 건너뛰고, 아니면 등록된 모든 계정을 순회해 조용히 한 번
+// 수집해둔다. 발행 이력 화면(History.jsx)은 이 결과가 이미 반영된 posts
+// 조회 결과를 그대로 보여주기만 하면 되므로, 화면 진입 시 "조회수
+// 새로고침" 버튼을 누를 필요 없이 바로 보이게 된다(사용자 요청,
+// 2026-08-25 — 인기 트렌드 화면과 동일한 사용 경험).
+async function prefetchPostViewStats() {
+  if (!isDev) return; // 개발자 전용 기능이므로 배포판에서는 조용히 건너뜀
+  try {
+    const store = getStore();
+    const lastDate = store.get('postViewStats.lastCollectedDate', null);
+    if (lastDate === todayDateStr()) {
+      writeLog('INFO', 'STATS', '오늘 이미 조회수 수집함(재수집 생략)');
+      return;
+    }
+    const { getDB } = require('./src/db');
+    const accounts = getDB().prepare('SELECT id, nickname, naver_id FROM accounts').all();
+    let totalMatched = 0, totalItems = 0;
+    for (const acc of accounts) {
+      const res = await collectPostViewsForAccount(acc.id);
+      if (res.success) {
+        totalMatched += res.matched || 0;
+        totalItems += res.total || 0;
+      } else {
+        writeLog('WARN', 'STATS', `백그라운드 조회수 수집 실패(계정 ${acc.nickname || acc.naver_id})`, res.error);
+      }
+    }
+    store.set('postViewStats.lastCollectedDate', todayDateStr());
+    writeLog('INFO', 'STATS', '백그라운드 조회수 미리 수집 완료', `matched=${totalMatched}/${totalItems}`);
+  } catch (e) {
+    writeLog('WARN', 'STATS', '백그라운드 조회수 미리 수집 예외', e.message);
+  }
+}
+
 // 백그라운드 미리 불러오기 캐시(2026-08-14 신규, 2026-08-19 디스크 영속화) —
 // 원래는 메모리에만 저장돼 앱을 재시작하면(같은 날 안이어도) 무조건 초기화돼
 // 매번 느린 스크래핑을 다시 해야 했음(사용자 지적, 2026-08-19). 이제 메모리
@@ -2885,9 +3180,12 @@ ${referenceItems.map((r, i) => `  ${i + 1}. ${r.title}${r.summary ? ` — ${r.su
   · 중분류: ### 제목명  (회색 박스로 표시됨)
   · 소분류: #### 제목명 (밑줄 텍스트로 표시됨)
   · 불릿: ▪ 내용       (줄 시작에 ▪ 한 칸 띄고 내용)
+  · 인용구(2026-08-25 신규): ❝ 내용 ❞ (본문(body)에서만, 섹션당 최대 1회만
+    사용 — 남용하지 말고 정말 핵심을 찌르는 한 문장·명언 같은 문장에만 쓸 것.
+    예: ❝ 습도만 잘 맞춰줘도 반은 성공이다 ❞)
   · 일반 문단: 마크다운 기호 없이 순수 한글 텍스트
-  · **, \`, —, *, _ 기호 절대 사용 금지 (## ### #### ▪ 만 허용)
-  · 제목 마커(## ### ####)는 반드시 줄의 맨 앞에 단독으로 작성할 것
+  · **, \`, —, *, _ 기호 절대 사용 금지 (## ### #### ▪ ❝❞ 만 허용)
+  · 제목 마커(## ### ####)와 인용구(❝❞)는 반드시 줄의 맨 앞에 단독으로 작성할 것
 - [글 톤 - 필수 준수, 문체 전체에 반영] ${toneLabel}
 ${reviewToneGuide}- 문체: ${styleMap[writingStyle] || styleMap.auto}
 - 개인 경험담: ${expMap[personalExp] || expMap.auto}
@@ -2904,6 +3202,12 @@ ${reviewToneGuide}- 문체: ${styleMap[writingStyle] || styleMap.auto}
     삽입은 연도를 뺀 형태(예: "2026 식자재마트 할인" → "식자재마트 할인")로
     자연스럽게 풀어서 쓸 것. 3~5회 삽입 규칙을 지키려고 연도 포함 문자열을
     억지로 반복하지 말 것
+- [핵심 답변 우선 배치 - 2026-08-25 신규] 독자가 이 글을 찾은 이유(가장 궁금해할
+  질문)에 대한 핵심 답변이나 결론을 도입부(intro) 안에서 최대한 일찍 명확하게
+  제시할 것 — 배경 설명이나 군더더기를 먼저 늘어놓고 나중에야 본론을 꺼내는 구성은
+  피할 것. "결론 먼저 → 근거·디테일·경험담으로 확장"하는 순서를 지킬 것(뒤에
+  이어지는 상세 설명까지 생략하라는 뜻은 아님). 이렇게 써야 독자가 빠르게 필요한
+  정보를 얻어 이탈하지 않고, 검색 요약(AI 브리핑 등)에도 인용되기 쉬워짐.
 - [마무리 작성 규칙 - SEO] 마무리(conclusion) 문단에는 핵심 키워드를 다시 한 번
   자연스럽게 언급하고, 마지막 문장은 독자의 댓글・공감을 유도하는 질문형
   문장으로 마무리할 것
@@ -2951,7 +3255,7 @@ ${TITLE_RULE_BLOCK}
   "title": "SEO 최적화된 제목 (30~50자, 한글만)",
   "thumbText": "썸네일 이미지에 들어갈 별도 문구 — 공백 제외 글자 수를 반드시 세어서 정확히 18~20자 범위로 작성(17자 이하·21자 이상 금지), 핵심 키워드 최소 1개 포함(키워드에 연도가 있어도 억지로 넣지 말고 자연스러울 때만 사용), 제목과 똑같은 문장이 아니라 더 짧고 임팩트 있게 축약, 조사나 연결어미(~는/~와/~에/~하고 등)로 끝나 미완성처럼 보이지 않도록 반드시 자연스럽게 완결된 형태로 마무리, 마크다운 기호 없는 한 줄 평문, 한글만",
   "intro": "도입부 — ## 대분류 소제목과 문단으로 구성 (한글만, 외국어·한자 금지)",
-  "body": "본문 — ## 대분류, ### 중분류, #### 소분류, ▪ 불릿으로 3단계 구조화 (한글만)",
+  "body": "본문 — ## 대분류, ### 중분류, #### 소분류, ▪ 불릿으로 3단계 구조화, 꼭 필요한 곳 1회만 ❝ 인용구 ❞ 사용 가능 (한글만)",
   "conclusion": "마무리 — ## 대분류 소제목과 문단으로 구성 (한글만, 외국어·한자 금지)",
   "hashtags": ["#한글해시태그1", "#한글해시태그2", ...],
   "links": [
@@ -3029,11 +3333,11 @@ ${AI_CLICHE_BAN}
     // 스타일(### 소제목·▪ 불릿)을 섞어 넣는 문제가 있었음(2026-07-03 확인) — 섹션별로
     // 전체 생성 때와 동일한 구조 제한을 재생성 프롬프트에도 명시해 방지.
     const structureNote = (section === 'intro' || section === 'conclusion')
-      ? `\n- [이 섹션 전용 형식 제한 - 절대 준수] "${sectionMap[section]}"는 ## 대분류 소제목 1개와 문단들로만 구성할 것 — ### #### 소제목이나 ▪ 불릿은 본문(body)에서만 쓰는 형식이므로 이 섹션에는 사용하지 말 것`
+      ? `\n- [이 섹션 전용 형식 제한 - 절대 준수] "${sectionMap[section]}"는 ## 대분류 소제목 1개와 문단들로만 구성할 것 — ### #### 소제목이나 ▪ 불릿, ❝❞ 인용구는 본문(body)에서만 쓰는 형식이므로 이 섹션에는 사용하지 말 것`
       : '';
     const responseHint = section === 'body'
-      ? '## 대분류·### 중분류·#### 소분류·▪ 불릿 3단계 구조 포함'
-      : '## 대분류 소제목과 문단으로만 구성 (### #### ▪ 사용 금지)';
+      ? '## 대분류·### 중분류·#### 소분류·▪ 불릿 3단계 구조 포함, 꼭 필요하면 ❝ 인용구 ❞ 1회 가능'
+      : '## 대분류 소제목과 문단으로만 구성 (### #### ▪ ❝❞ 사용 금지)';
     // body 재생성만 구조 개수 고정 규칙 포함 — intro/conclusion은 애초에
     // 소제목 1개+문단 구조라 이 규칙이 적용될 여지가 없고, 같이 보내면
     // 서로 안 맞는 지시가 섞여 혼란만 준다.
@@ -4897,7 +5201,8 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
   // 마커 시퀀스 내부를 잘못 쪼개지 않도록 수정.
   const preprocessed = (text || '')
     .replace(/([^\n#])(#{2,4}\s)/g, '$1\n$2')  // 줄 중간 ## ### #### → 줄바꿈
-    .replace(/([^\n])(▪\s)/g,     '$1\n$2');  // 줄 중간 ▪ → 줄바꿈
+    .replace(/([^\n])(▪\s)/g,     '$1\n$2')   // 줄 중간 ▪ → 줄바꿈
+    .replace(/([^\n])(❝\s)/g,     '$1\n$2');  // 줄 중간 ❝(인용구, 2026-08-25 신규) → 줄바꿈
 
   const lines = preprocessed.split(/\r?\n/);
   let html = '';
@@ -5112,6 +5417,22 @@ function toNaverHtml(text, fontName, iconCycler, boxHeadings, style) {
       } else {
         html += tableBox(titleP + mergedExtra, `border-left:5px solid ${st.h2.border};`, st.h2.bg);
       }
+      justInsertedHr = false;
+      isFirstLine = false;
+      continue;
+    }
+
+    // 인용구 (❝ 마커, 2026-08-25 신규) — 실제 블로거들이 자주 쓰는 "인용구"
+    // 효과를 재현. 네이버 SE3 에디터에는 별도 "인용구" 토글 버튼이 있지만,
+    // 그 버튼을 클릭해 컴포넌트를 삽입하는 자동화는 실사용 검증 없이는
+    // 위험 부담이 커서(에디터 상태 오염 위험), 이미 h2/h3 박스에서 검증된
+    // tableBox 방식(위/아래 얇은 테두리 + 이탤릭체)으로 시각적 인용구 효과를
+    // 재현하는 더 안전한 방식을 택함 — 실제 SE3 "인용구" 컴포넌트는 아니지만
+    // 발행된 글에서는 동일하게 인용구처럼 보임.
+    if (/^❝\s+/.test(tok)) {
+      const t = tok.replace(/^❝\s+/, '').replace(/\s*❞\s*$/, '');
+      const inner = `<p style="${font}margin:0;font-style:italic;line-height:1.8;text-align:center;"><span style="color:rgb(90,90,90);font-size:15px;">❝ ${inline(t)} ❞</span></p>`;
+      html += tableBox(inner, `border-top:1px solid ${st.h2.border};border-bottom:1px solid ${st.h2.border};`, 'transparent');
       justInsertedHr = false;
       isFirstLine = false;
       continue;
@@ -9317,7 +9638,9 @@ ipcMain.handle('publish:getAll', (event, filters = {}) => {
   try {
     const { getDB } = require('./src/db');
     let sql = `
-      SELECT p.*, a.nickname AS account_nickname
+      SELECT p.*, a.nickname AS account_nickname,
+        (SELECT views FROM post_view_stats v WHERE v.post_id = p.id ORDER BY v.stat_date DESC LIMIT 1) AS latest_views,
+        (SELECT stat_date FROM post_view_stats v WHERE v.post_id = p.id ORDER BY v.stat_date DESC LIMIT 1) AS latest_views_date
       FROM posts p
       LEFT JOIN accounts a ON p.account_id = a.id
     `;
@@ -10468,6 +10791,10 @@ async function runStartupSessionCheck() {
     // 대기 없이 바로 보이도록 함. await 없이 fire-and-forget(세션 확인
     // 완료 처리를 지연시키지 않음).
     prefetchCreatorAdvisorTrends();
+    // 2026-08-25 신규(사용자 요청): 게시물별 조회수도 트렌드와 동일하게
+    // 백그라운드에서 미리 수집 — 발행 이력 화면 진입 시 새로고침 없이
+    // 바로 보이도록 함. fire-and-forget.
+    prefetchPostViewStats();
   } catch (e) {
     writeLog('WARN', 'SESSION_CHECK', '앱 시작 세션 확인 실패', e.message);
   }
