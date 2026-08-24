@@ -115,6 +115,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 검수 대기 글 삭제 */
     deleteReview: (id) => ipcRenderer.invoke('post:deleteReview', { id }),
 
+    /** 검수 대기 글을 "발행 완료"로 수동 표시 (2026-08-25 신규, 개발자 전용 —
+     * 테스트 발행 후 사용자가 직접 발행 버튼을 눌렀을 때 집계 반영용) */
+    markPublished: (id) => ipcRenderer.invoke('post:markPublished', { id }),
+
     /** 발행 전 미리보기에서 임시저장 → 검수 대기로 저장 (2026-08-09 신규) */
     saveDraft: (params) => ipcRenderer.invoke('post:saveDraft', params),
   },

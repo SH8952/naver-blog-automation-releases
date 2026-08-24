@@ -29,6 +29,7 @@ export default function ReviewQueue() {
   const [publishingId, setPublishingId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [movingId, setMovingId] = useState(null);
+  const [markingId, setMarkingId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +53,22 @@ export default function ReviewQueue() {
     } else {
       window.alert(`발행 실패: ${res.error || '알 수 없는 오류'}`);
       load();
+    }
+  };
+
+  // 2026-08-25 신규(개발자 전용): 테스트 발행(발행 버튼만 생략)으로 SE3 렌더링
+  // 결과를 확인한 뒤, 사용자가 편집기에서 직접 "발행"을 눌러 실제로 게시를
+  // 마쳤을 때 사용하는 수동 확인 버튼. 테스트 발행은 DB를 건드리지 않으므로
+  // 앱이 자동으로는 이 사실을 알 수 없어, 사용자 본인이 확정해 준다.
+  const handleMarkPublished = async (post) => {
+    if (!window.confirm(`"${post.title}"\n\n테스트 발행 후 직접 발행까지 완료하셨나요?\n확인하면 검수 대기 목록에서 사라지고 발행 완료로 집계됩니다.`)) return;
+    setMarkingId(post.id);
+    const res = await window.electronAPI.post.markPublished(post.id);
+    setMarkingId(null);
+    if (res.success) {
+      load();
+    } else {
+      window.alert(`처리 실패: ${res.error || '알 수 없는 오류'}`);
     }
   };
 
@@ -230,10 +247,22 @@ export default function ReviewQueue() {
                   >
                     {movingId === post.id ? '이동 중…' : '✏️ 글 생성으로 이동'}
                   </button>
+                  {/* 2026-08-25 신규(개발자 전용): 테스트 발행 후 사용자가 직접
+                      발행까지 마쳤을 때 눌러서 검수 대기 목록/집계를 동기화 —
+                      🧪 테스트로 열기와 동일하게 개발 모드에서만 노출 */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => handleMarkPublished(post)}
+                      disabled={markingId === post.id || publishingId === post.id || deletingId === post.id || movingId === post.id}
+                    >
+                      {markingId === post.id ? '처리 중…' : '✅ 발행 완료'}
+                    </button>
+                  )}
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={() => handlePublish(post)}
-                    disabled={publishingId === post.id || deletingId === post.id || movingId === post.id}
+                    disabled={publishingId === post.id || deletingId === post.id || movingId === post.id || markingId === post.id}
                   >
                     {publishingId === post.id ? '발행 중…' : '✓ 발행하기'}
                   </button>

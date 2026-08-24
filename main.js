@@ -10322,6 +10322,30 @@ ipcMain.handle('post:deleteReview', (event, { id }) => {
   }
 });
 
+// ── IPC: 검수 대기 글을 "발행 완료"로 수동 표시 (2026-08-25 신규, 개발자 전용) ──
+// 테스트 발행(publish:test)은 postId 없이 동작하고 DB를 전혀 건드리지 않으므로,
+// 사용자가 테스트 발행 결과에 만족해 SE3 편집기에서 "발행"을 직접(수동으로)
+// 눌러 실제로 게시했더라도 앱은 그 사실을 알 방법이 없어 검수 대기 화면에
+// 원본 글이 계속 REVIEW 상태로 남는 문제가 있었음. 이 핸들러는 그 간극을
+// 메우기 위해 사용자가 직접 "발행 완료" 버튼을 눌렀을 때만 상태를 갱신한다
+// (자동 감지가 아닌 수동 확인 — 실제 발행 여부는 사용자 본인만 알 수 있음).
+// status를 'published'로 바꾸면 post:getReviewQueue가 WHERE status='review'로
+// 필터링하므로 검수 대기 목록에서는 자동으로 사라지고, 대시보드/발행 이력에는
+// published_at 기준으로 정상 집계된다 — 행을 DELETE하지 않는 이유는 집계 유지.
+ipcMain.handle('post:markPublished', (event, { id }) => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    const { getDB } = require('./src/db');
+    const db = getDB();
+    const post = db.prepare("SELECT id FROM posts WHERE id = ? AND status = 'review'").get(id);
+    if (!post) return { success: false, error: '대상 글을 찾을 수 없습니다.' };
+    db.prepare("UPDATE posts SET status='published', published_at=datetime('now','localtime') WHERE id=?").run(id);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ── 계정 세션 라이브 체크 (2026-07-22 신규) ───────────────────────
 // 배경: 계정 관리 화면에 활성/만료/오류 상태 배지는 이미 있었지만, 이를
 // 갱신하는 account:checkStatus 핸들러가 preload.js/렌더러 어디에서도 호출
