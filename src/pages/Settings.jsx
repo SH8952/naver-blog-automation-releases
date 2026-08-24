@@ -678,6 +678,24 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved]   = useState(false);
 
+  // 2026-08-24 신규(개발자 전용): "글 가져오기" 모달에서 파일을 가져와
+  // 학습해둔 문체 프로필 — 조회/초기화만 이 화면에서 담당.
+  const [styleProfile, setStyleProfile] = useState(null);
+  const [styleProfileLoading, setStyleProfileLoading] = useState(false);
+
+  const loadStyleProfile = () => {
+    if (process.env.NODE_ENV !== 'development') return;
+    setStyleProfileLoading(true);
+    window.electronAPI.style.getProfile()
+      .then(res => { if (res.success) setStyleProfile(res.profile); })
+      .finally(() => setStyleProfileLoading(false));
+  };
+
+  const handleResetStyleProfile = async () => {
+    await window.electronAPI.style.resetProfile();
+    setStyleProfile(null);
+  };
+
   // 로그 기록 (구 "오류 로그" — 실제로는 전체 로그였음, 2026-07-14 명칭 정리)
   const [logContent, setLogContent]   = useState('');
   const [logPath, setLogPath]         = useState('');
@@ -901,6 +919,7 @@ export default function Settings() {
     });
     loadLoopAccounts();
     loadLoopCategories();
+    loadStyleProfile();
   }, []);
 
   const setLoop = (key, value) => {
@@ -1714,9 +1733,47 @@ export default function Settings() {
               <option value="daily">일상형</option>
               <option value="review">리뷰형</option>
               <option value="emotional">감성형</option>
+              {/* 2026-08-24 신규(개발자 전용): 아래 문체 학습 UI로 저장한
+                  프로필이 있을 때만 의미 있는 톤이지만, 드롭다운 자체는
+                  항상 보여줘도 무해함(프로필 없으면 백엔드가 정보형으로
+                  폴백). */}
+              <option value="custom">사용자</option>
             </select>
           </div>
         </div>
+
+        {/* ── 학습된 문체 확인/초기화(2026-08-24 신규, 개발자 전용) ──
+            "글 생성" 화면의 "글 가져오기" 모달에서 파일을 가져와 학습한
+            문체 프로필을 여기서 확인하고 초기화할 수 있다. 학습(가져오기)
+            자체는 이 화면이 아니라 글 생성 화면에서만 가능 — 여기는
+            조회/초기화 전용. */}
+        {process.env.NODE_ENV === 'development' && (
+          <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+            <label style={{ display: 'block', marginBottom: '8px' }}>
+              학습된 문체(사용자 톤)
+              <span style={{fontWeight:400, fontSize:'12px', color:'var(--text-secondary)', marginLeft:'8px'}}>개발자 전용 — 배포판 미포함</span>
+            </label>
+            {styleProfileLoading ? (
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>불러오는 중…</p>
+            ) : styleProfile ? (
+              <div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '8px' }}>
+                  "{styleProfile.sample_filename}" 파일에서 학습됨 (마지막 갱신: {(styleProfile.updated_at || '').slice(0, 16)})
+                </p>
+                <p style={{ fontSize: '12px', color: 'var(--text-primary)', lineHeight: 1.6, background: 'var(--bg-elevated)', borderRadius: '8px', padding: '10px', marginBottom: '8px' }}>
+                  {styleProfile.style_summary}
+                </p>
+                <button type="button" className="btn btn-ghost btn-xs" onClick={handleResetStyleProfile}>
+                  🗑️ 학습된 문체 초기화
+                </button>
+              </div>
+            ) : (
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                아직 학습된 문체가 없습니다. "글 생성" 화면의 "글 가져오기" 모달에서 파일을 가져오면 여기에 표시됩니다.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       </div>}

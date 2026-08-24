@@ -198,6 +198,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchUrlText: (params) => ipcRenderer.invoke('dev:fetchUrlText', params),
   },
 
+  // ── 사용자 문체 학습(2026-08-24 신규, 개발자 전용 기능) ────────
+  // importFile은 메인 프로세스에서 isDev가 아니면 무조건 거부하므로,
+  // 배포판에서 호출해도 아무 효과 없음. getProfile/resetProfile은
+  // 저장된 결과를 보여주고/지우는 용도라 별도 isDev 가드는 없음(단,
+  // 이 값을 UI에 노출하는 화면 자체가 개발자 전용 영역에만 있음).
+  style: {
+    importFile:    () => ipcRenderer.invoke('style:importFile'),
+    getProfile:    () => ipcRenderer.invoke('style:getProfile'),
+    resetProfile:  () => ipcRenderer.invoke('style:resetProfile'),
+  },
+
   // ── 글감 수집 ──────────────────────────────────────────────
   research: {
     getKeywords:   ()        => ipcRenderer.invoke('research:getKeywords'),

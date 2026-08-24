@@ -190,6 +190,24 @@ function getDB() {
     )
   `).run();
 
+  // 사용자 문체 학습 프로필 (2026-08-24 신규, 개발자 전용 기능)
+  // - "글 가져오기" 모달에서 사용자가 직접 쓴 글(txt/docx) 파일을
+  //   가져오면, AI가 그 글의 어투・문장 습관・표현 등을 분석해 이 테이블에
+  //   저장한다. 이후 "글 톤" 드롭다운에서 "사용자"를 선택하면 파일을
+  //   매번 다시 올리지 않아도 이 저장된 문체를 프롬프트에 반영해 글을
+  //   생성한다. 지금은 프로필 1개만 유지(가장 최근 것)하지만, 나중에
+  //   여러 프로필(용도별)을 지원할 수 있도록 단순 설정값이 아니라
+  //   테이블 구조로 둔다.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS writing_style_profile (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      style_summary   TEXT    NOT NULL DEFAULT '',
+      sample_text     TEXT    NOT NULL DEFAULT '',
+      sample_filename TEXT    NOT NULL DEFAULT '',
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+    )
+  `).run();
+
   return db;
 }
 

@@ -9,6 +9,10 @@ const TONE_OPTIONS = [
   { value: 'daily',     label: '일상형',  desc: '친근한 말투, 일기·후기 형식' },
   { value: 'review',    label: '리뷰형',  desc: '장단점 분석, 별점·총평 포함' },
   { value: 'emotional', label: '감성형',  desc: '감정 표현 풍부, 분위기·느낌 위주' },
+  // 2026-08-24 신규(개발자 전용): "글 가져오기" 모달에서 파일을 가져와
+  // 학습해둔 문체를 사용. 학습된 프로필이 없으면 백엔드가 정보형으로
+  // 안전하게 폴백함.
+  { value: 'custom',    label: '사용자',  desc: '가져온 파일에서 학습한 나만의 문체로 작성' },
 ];
 const STYLE_OPTIONS = [
   { value: 'auto',       label: '자동 혼합',   desc: '구어체+문어체 자연스럽게 혼합 (권장)' },
@@ -250,6 +254,10 @@ export default function PostCreate() {
   const [sourceMaterial, setSourceMaterial] = useState(null); // { url, title, text, tone } | null
   // 2026-07-29 신규: 가져오기 성공 시 잠깐 떴다가(3초) 자동으로 사라지는 알림
   const [importToast, setImportToast] = useState(false);
+  // 2026-08-24 신규(개발자 전용): "파일 가져오기" — 직접 쓴 글(txt/docx)을
+  // 가져와 문체를 학습(writing_style_profile에 저장)하고, 그 내용을
+  // 참고자료 삼아 곧바로 글을 생성. handleImportUrl과 동일한 패턴.
+  const [importingFile, setImportingFile] = useState(false);
 
   // 환경설정 기본값 로드 (최초 1회)
   useEffect(() => {
@@ -619,6 +627,48 @@ export default function PostCreate() {
       }
     } finally {
       setImporting(false);
+    }
+  };
+
+  // ── [개발자 전용 테스트] 파일로 문체 학습 후 글 가져오기 ──────
+  // 2026-08-24 신규(사용자 요청): 직접 쓴 글(txt/docx) 파일을 가져오면
+  // (1) main.js가 AI로 문체를 분석해 writing_style_profile에 저장하고,
+  // (2) 그 원문을 참고자료로 삼아 "사용자" 톤으로 곧바로 글을 생성한다.
+  // handleImportUrl과 거의 동일한 흐름이라 최대한 그대로 재사용.
+  const handleImportFile = async () => {
+    setImportingFile(true);
+    setImportError('');
+    try {
+      const res = await window.electronAPI.style.importFile();
+      if (res.canceled) return; // 파일 선택 취소 — 에러 아님, 조용히 종료
+      if (res.success) {
+        const shortTopic = (res.topic && res.topic.trim()) || topic;
+        const material = { url: '', title: res.filename || '', text: res.sampleText || '', tone: 'custom' };
+
+        let kwArray = [];
+        try {
+          const kwRes = await window.electronAPI.post.suggestKeywords({ topic: shortTopic });
+          if (kwRes.success && kwRes.keywords?.length) kwArray = kwRes.keywords;
+        } catch (e) {
+          // 키워드 자동 생성이 실패해도 글 생성 자체는 계속 진행
+        }
+
+        setTopic(shortTopic);
+        setKeywords(kwArray.join(', '));
+        setTone('custom');
+        setImportTone('custom');
+        setSourceMaterial(material);
+        setShowUrlImport(false);
+
+        setImportToast(true);
+        setTimeout(() => setImportToast(false), 3000);
+
+        await handleGenerate({ topic: shortTopic, keywords: kwArray, tone: 'custom', sourceMaterial: material });
+      } else {
+        setImportError(res.error || '파일 가져오기 실패');
+      }
+    } finally {
+      setImportingFile(false);
     }
   };
 
@@ -1736,7 +1786,23 @@ export default function PostCreate() {
                   좌측 정렬로 배치. */}
               <div className="modal-field url-import-tone-field">
                 <label className="panel-label">글 톤</label>
-                <DescSelect options={TONE_OPTIONS} value={importTone} onChange={setImportTone} disabled={importing} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ flex: 1 }}>
+                    <DescSelect options={TONE_OPTIONS} value={importTone} onChange={setImportTone} disabled={importing || importingFile} />
+                  </div>
+                  {/* 2026-08-24 신규(개발자 전용): 직접 쓴 글 파일(txt/docx)을
+                      가져와 문체를 학습 — 학습 결과는 "사용자" 톤으로 저장돼
+                      이후에도 재사용됨. */}
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ whiteSpace: 'nowrap' }}
+                    onClick={handleImportFile}
+                    disabled={importing || importingFile}
+                  >
+                    {importingFile ? <><span className="spinner-sm" />가져오는 중…</> : '📄 파일 가져오기'}
+                  </button>
+                </div>
               </div>
             </div>
             <div className="modal-footer">

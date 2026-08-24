@@ -2196,6 +2196,113 @@ ipcMain.handle('dev:fetchUrlText', async (event, { url }) => {
   }
 });
 
+// ── 사용자 문체 학습(2026-08-24 신규, 개발자 전용 기능) ──────────
+// "글 가져오기" 모달에 추가된 "파일 가져오기" 버튼에서 호출. 사용자가
+// 직접 쓴 글(txt/docx) 파일을 선택하면, AI가 어투・문장 습관・자주 쓰는
+// 표현 등을 분석해 writing_style_profile 테이블에 저장한다. 이후 "글
+// 톤"에서 "사용자"를 선택하면(재업로드 없이도) 이 요약을 프롬프트에
+// 반영한다. callAI()는 JSON 전용 프롬프트만 안정적으로 동작하므로
+// (plain-text 프롬프트는 조용히 실패하는 과거 이력 있음) 반드시 JSON
+// 응답 형식으로 요청한다.
+async function analyzeWritingStyle(text) {
+  const prompt = `다음은 어떤 사람이 직접 쓴 블로그 글(또는 글의 일부)입니다. 이 글만의 문체적 특징을 분석해 주세요.
+
+[글 내용]
+${text.slice(0, 3000)}
+
+요구사항:
+- 어투(예: 친근한 구어체 / 정중한 문어체 등), 문장 길이 습관(짧게 끊는지/길게 이어가는지),
+  자주 쓰는 표현이나 말버릇, 이모지・특수문자 사용 여부, 감탄사・구어체 어미 사용 정도를
+  중심으로 분석할 것
+- 다른 사람이 이 요약만 보고도 비슷한 문체로 글을 쓸 수 있을 만큼 구체적으로 작성할 것
+- 순수 한국어로, 3~5문장 정도의 설명 문단으로 작성(마크다운 기호 없이)
+
+다음 JSON 형식으로만 응답하세요: {"styleSummary": "문체 분석 설명"}`;
+  const result = await callAI(prompt, 500);
+  return String(result.styleSummary || '').trim();
+}
+
+ipcMain.handle('style:importFile', async () => {
+  if (!isDev) return { success: false, error: '개발 모드 전용 기능입니다.' };
+  try {
+    const result = await dialog.showOpenDialog({
+      title: '문체를 학습할 글 파일 선택',
+      properties: ['openFile'],
+      filters: [{ name: '문서 파일', extensions: ['txt', 'docx'] }],
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { success: false, canceled: true };
+    }
+    const filePath = result.filePaths[0];
+    const filename = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    let text = '';
+    if (ext === '.txt') {
+      text = fs.readFileSync(filePath, 'utf8');
+    } else if (ext === '.docx') {
+      // mammoth는 순수 JS 구현이라 별도 네이티브 빌드 없이 Mac/Windows
+      // 양쪽에서 동일하게 동작함(사용자 요청 — 확장자는 Windows 호환도
+      // 고려해서 정할 것).
+      const mammoth = require('mammoth');
+      const { value } = await mammoth.extractRawText({ path: filePath });
+      text = value || '';
+    } else {
+      return { success: false, error: '지원하지 않는 파일 형식입니다 (.txt, .docx만 가능)' };
+    }
+
+    text = String(text || '').trim();
+    if (!text || text.length < 20) {
+      return { success: false, error: '파일에서 텍스트를 충분히 추출하지 못했습니다.' };
+    }
+
+    const [styleSummary, shortTopic] = await Promise.all([
+      analyzeWritingStyle(text),
+      generateShortTopicFromText(text),
+    ]);
+    if (!styleSummary) {
+      return { success: false, error: '문체 분석에 실패했습니다. 다시 시도해주세요.' };
+    }
+
+    const sampleText = text.slice(0, 6000);
+
+    // 프로필은 1개만 유지(단순화) — 새로 가져오면 이전 것을 대체.
+    const db = require('./src/db').getDB();
+    db.prepare('DELETE FROM writing_style_profile').run();
+    db.prepare(
+      `INSERT INTO writing_style_profile (style_summary, sample_text, sample_filename)
+       VALUES (?, ?, ?)`
+    ).run(styleSummary, sampleText, filename);
+
+    writeLog('INFO', 'DEV', '문체 학습 완료(개발자 전용 테스트)', `${filename} — ${text.length}자 분석`);
+    return { success: true, filename, styleSummary, sampleText, topic: shortTopic };
+  } catch (e) {
+    writeLog('WARN', 'DEV', '문체 학습 실패(개발자 전용 테스트)', e.message);
+    return { success: false, error: `파일을 가져오지 못했습니다: ${e.message}` };
+  }
+});
+
+ipcMain.handle('style:getProfile', async () => {
+  try {
+    const db = require('./src/db').getDB();
+    const row = db.prepare('SELECT style_summary, sample_filename, updated_at FROM writing_style_profile ORDER BY id DESC LIMIT 1').get();
+    return { success: true, profile: row || null };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('style:resetProfile', async () => {
+  try {
+    const db = require('./src/db').getDB();
+    db.prepare('DELETE FROM writing_style_profile').run();
+    writeLog('INFO', 'DEV', '문체 프로필 초기화(개발자 전용 테스트)');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
 // ── trends:getCreatorAdvisor 핵심 로직 (2026-08-14 신규, 2026-08-14 재수정) ──
 // 1~2단계 조사로 확정된 구조를 바탕으로 한 실제 기능. 최초 로그인 계정
 // (accounts 테이블 id 최솟값)의 세션으로 크리에이터 어드바이저 트렌드
@@ -2694,7 +2801,7 @@ const structureCountRule = `
     제시할 것.`;
 
 // ── Gemini 프롬프트 빌더 ─────────────────────────────────────
-function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax, section, currentResult, referenceItems }) {
+function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenceStyle, targetMin, targetMax, section, currentResult, referenceItems, customStyleSummary }) {
   // 2026-07-22 신규: 사용자가 "감성형으로 설정했는데 정보형처럼 딱딱하게
   // 나온다"고 지적 — 기존엔 "감성형(감정 표현 풍부)" 한 줄뿐이라 AI에게
   // 실제로 문체를 바꿀 구체적 지침이 없었음. 각 톤에 실행 가능한 구체적
@@ -2705,6 +2812,13 @@ function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenc
     review: '리뷰형(장단점 분석) — 실제로 써본 사람처럼 장점과 단점을 솔직하게 비교 평가',
     emotional: '감성형(감정 표현 풍부) — 딱딱한 설명체를 피하고 1인칭 감탄·소감·오감 묘사를 자주 사용해 사람 냄새 나는 문장으로 작성. "정말 좋았다", "생각보다 훨씬" 처럼 감정이 드러나는 표현을 적극 사용할 것',
   };
+  // 2026-08-24 신규: "사용자" 톤 — 가져온 파일에서 학습해 저장해둔
+  // 문체 요약(customStyleSummary)이 있으면 그걸 그대로 지침으로 사용.
+  // 학습된 프로필이 없는 상태에서 "사용자" 톤이 선택된 경우(예외적
+  // 상황)에는 정보형으로 안전하게 폴백.
+  const toneLabel = (tone === 'custom' && customStyleSummary)
+    ? `사용자 지정 문체 — 아래는 이 사용자가 실제로 쓴 글을 분석해 학습한 문체 특징이다. 이 특징을 최대한 그대로 따라 글을 쓸 것: ${customStyleSummary}`
+    : (toneMap[tone] || toneMap.info);
   const styleMap   = { auto: '구어체와 문어체를 자연스럽게 혼합', colloquial: '구어체 위주(~했어요, ~인데요)', formal: '문어체 위주(~합니다, ~됩니다)' };
   const expMap     = { auto: '자연스럽게 적당히 삽입', many: '많이 삽입(리뷰 느낌)', few: '최소한으로 삽입', none: '경험담 없이 순수 정보 중심' };
   const sentMap    = { auto: '짧은 문장과 긴 문장을 랜덤하게 혼합', short: '짧은 문장 위주로 템포감 있게', long: '긴 문장 위주로 상세하게' };
@@ -2774,7 +2888,7 @@ ${referenceItems.map((r, i) => `  ${i + 1}. ${r.title}${r.summary ? ` — ${r.su
   · 일반 문단: 마크다운 기호 없이 순수 한글 텍스트
   · **, \`, —, *, _ 기호 절대 사용 금지 (## ### #### ▪ 만 허용)
   · 제목 마커(## ### ####)는 반드시 줄의 맨 앞에 단독으로 작성할 것
-- [글 톤 - 필수 준수, 문체 전체에 반영] ${toneMap[tone] || toneMap.info}
+- [글 톤 - 필수 준수, 문체 전체에 반영] ${toneLabel}
 ${reviewToneGuide}- 문체: ${styleMap[writingStyle] || styleMap.auto}
 - 개인 경험담: ${expMap[personalExp] || expMap.auto}
 - 문장 길이: ${sentMap[sentenceStyle] || sentMap.auto}
@@ -3899,7 +4013,23 @@ async function generatePostContent(params) {
       writeLog('INFO', 'AI', '외부 URL 가져오기 참고자료 활용(개발자 전용 테스트)', params.sourceMaterial.url || '');
     }
 
-    const prompt = buildPrompt({ ...params, referenceItems });
+    // 2026-08-24 신규: 글 톤이 "사용자"(custom)이면 writing_style_profile에
+    // 저장된 학습 결과를 프롬프트에 반영. 파일을 매번 다시 올리지 않아도
+    // 이전에 학습한 문체가 계속 재사용되도록 하기 위함(사용자 요청 —
+    // "한번 고정되면 안 바뀌는 방향"으로 저장).
+    let customStyleSummary = '';
+    if (params.tone === 'custom') {
+      try {
+        const row = require('./src/db').getDB()
+          .prepare('SELECT style_summary FROM writing_style_profile ORDER BY id DESC LIMIT 1')
+          .get();
+        customStyleSummary = row ? row.style_summary : '';
+      } catch (e) {
+        writeLog('WARN', 'AI', '사용자 문체 프로필 조회 실패 — 기본 톤으로 진행', e.message);
+      }
+    }
+
+    const prompt = buildPrompt({ ...params, referenceItems, customStyleSummary });
     let result = await callAI(prompt);
 
     // 후처리
