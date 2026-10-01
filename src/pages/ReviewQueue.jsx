@@ -117,6 +117,11 @@ export default function ReviewQueue() {
       keywords: content.keywords || '',
       // 2026-08-09 신규: "관련 사이트를 게시글에 삽입" 체크 여부도 함께 복원
       insertLinks: !!content.insertLinks,
+      // 2026-10-01 신규: 본문 중간 링크 카드 — 이름/URL은 재사용 시에도
+      // 저장된 값 그대로 복원(자동 생성 없음, 매번 직접 입력하는 값이라 보존).
+      bodyLinkName: content.bodyLinkName || '',
+      bodyLinkUrl: content.bodyLinkUrl || '',
+      insertBodyLink: !!content.insertBodyLink,
     };
   };
 
@@ -156,6 +161,9 @@ export default function ReviewQueue() {
       topic: content.topic || '',
       keywords: content.keywords || '',
       insertLinks: !!content.insertLinks,
+      bodyLinkName: content.bodyLinkName || '',
+      bodyLinkUrl: content.bodyLinkUrl || '',
+      insertBodyLink: !!content.insertBodyLink,
     };
     await window.electronAPI.post.deleteReview(post.id);
     setMovingId(null);

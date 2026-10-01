@@ -36,6 +36,9 @@ const DEFAULTS = {
   aliAppKey: '', aliAppSecret: '', aliTrackingId: '', affiliateAdPosition: 'body',
   // 2026-07-23 신규: 완전자동/예약 발행 전용 브라우저 표시 설정(자동화 루프 탭으로 이동)
   autoShowPublishWindow: false,
+  // 2026-09-13 신규: 스톡 사진(Unsplash 등) 자동 가공 토글 기본값(main.js
+  // SETTINGS_DEFAULTS와 동일하게 true로 맞춤).
+  stockPhotoAutoProcess: true,
 };
 
 // ── 썸네일 디자인 24종 미리보기 옵션 (2026-07-13, 2026-08-19 2종 추가) ──
@@ -1220,8 +1223,12 @@ export default function Settings() {
           <div className="form-group">
             <label>Gemini 모델</label>
             <select className="input" value={form.geminiModel} onChange={e => set('geminiModel', e.target.value)}>
+              <option value="gemini-3.8-flash">Gemini 3.8 Flash — 최신 세대 (무료, 2026-09 확인)</option>
+              <option value="gemini-3.7-flash">Gemini 3.7 Flash — 최신 세대 (무료, 2026-09 확인)</option>
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash — 최신 세대 (무료, 2026-09 확인)</option>
               <option value="gemini-3.5-flash">Gemini 3.5 Flash — 최고지능, 에이전틱·코딩 특화 (무료)</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite — 절약·빠름 (무료)</option>
+              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — 절약형 신형 (무료, 2026-09 확인)</option>
+              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite — 절약·빠름 (무료, 권장)</option>
               <option value="gemini-3-flash-preview">Gemini 3 Flash — 신형 균형 (무료)</option>
               <option value="gemini-2.5-flash">Gemini 2.5 Flash — 구세대 안정적 가성비 (무료)</option>
               <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite — 구세대 초저가·최고속 (무료)</option>
@@ -1259,7 +1266,7 @@ export default function Settings() {
               <option value="openai/gpt-oss-20b">GPT-OSS 20B — 초경량·초고속</option>
               <option value="groq/compound">Compound — 에이전트 시스템 (웹검색·코드실행 자동판단)</option>
               <option disabled>── 프리미엄(고비용) 모델 ──</option>
-              <option value="qwen/qwen3.6-27b">Qwen3.6 27B — Groq 내 최고지능 추론 (Preview)</option>
+              <option value="qwen/qwen3.8-27b">Qwen3.8 27B — Groq 내 최고지능 추론 (Preview, 2026-09 확인)</option>
             </select>
           </div>
         </>)}
@@ -1290,11 +1297,14 @@ export default function Settings() {
           <div className="form-group">
             <label>OpenAI 모델</label>
             <select className="input" value={form.openaiModel} onChange={e => set('openaiModel', e.target.value)}>
+              <option value="gpt-6-luna">GPT-6 Luna — 신세대 경량·저비용 (2026-09 확인)</option>
+              <option value="gpt-6-sol">GPT-6 Sol — 신세대 코딩·에이전틱 특화 (2026-09 확인)</option>
               <option value="gpt-5.6-luna">GPT-5.6 Luna — 최신 경량·저비용</option>
               <option value="gpt-5.6-terra">GPT-5.6 Terra — 최신 균형 (권장)</option>
               <option value="gpt-4o">GPT-4o — 안정적 고품질 (한국어 우수)</option>
               <option value="gpt-4o-mini">GPT-4o Mini — 빠름·저렴</option>
               <option disabled>── 프리미엄(고비용) 모델 ──</option>
+              <option value="gpt-6-astra">GPT-6 Astra — 신세대 최상위 플래그십 (2026-09 확인)</option>
               <option value="gpt-5.6-sol">GPT-5.6 Sol — 최고 성능 플래그십</option>
             </select>
           </div>
@@ -1328,9 +1338,12 @@ export default function Settings() {
             <select className="input" value={form.claudeModel} onChange={e => set('claudeModel', e.target.value)}>
               <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — 빠름·저렴</option>
               <option value="claude-sonnet-5">Claude Sonnet 5 — 균형 (권장)</option>
+              <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — 신세대 균형 (2026-09 확인)</option>
               <option disabled>── 프리미엄(고비용) 모델 ──</option>
               <option value="claude-opus-4-8">Claude Opus 4.8 — 최고품질 (느림·고비용)</option>
+              <option value="claude-opus-5-5">Claude Opus 5.5 — 신세대 최고품질 (2026-09 확인)</option>
               <option value="claude-fable-5">Claude Fable 5 — 최상위 플래그십 (최고비용)</option>
+              <option value="claude-fable-5-1">Claude Fable 5.1 — 신세대 최상위 플래그십 (2026-09 확인)</option>
             </select>
           </div>
         </>)}
@@ -2058,6 +2071,26 @@ export default function Settings() {
           </label>
           <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'6px', lineHeight:1.6}}>
             "글 생성" 화면의 수동 발행 시 브라우저 표시 여부는 이 설정과 별개로, 발행할 때마다 직접 선택합니다(기본값 해제).
+          </p>
+        </div>
+
+        {/* 2026-09-13 신규: 스톡 사진(Unsplash 등 원격 검색 사진) 자동 가공.
+            다른 블로그도 동일한 스톡 사진을 그대로 쓰면 네이버가 유사(중복)
+            이미지로 인식해 노출에 불리할 수 있다는 우려에 따라 도입.
+            무작위 크롭(85~95%)/좌우반전(50%)/밝기·대비·채도 미세조정을
+            사진마다 독립적으로 적용해 매번 다른 결과물을 만든다. 로컬
+            업로드(직접 촬영) 사진과 제휴 광고 상품 이미지는 이 설정과
+            무관하게 항상 원본 그대로 유지된다. */}
+        <div className="form-group" style={{ marginTop: '18px' }}>
+          <label style={{ display:'flex', alignItems:'center', gap:'10px', cursor:'pointer' }}>
+            <input type="checkbox" checked={!!form.stockPhotoAutoProcess}
+              onChange={e => set('stockPhotoAutoProcess', e.target.checked)}
+              style={{ width:'16px', height:'16px', accentColor:'var(--accent)' }} />
+            <span>스톡 사진 자동 가공(크롭/좌우반전/색감 조정)</span>
+          </label>
+          <p style={{fontSize:'11px', color:'var(--text-secondary)', marginTop:'6px', lineHeight:1.6}}>
+            Unsplash 등에서 자동으로 받아온 스톡 사진에 무작위 크롭·좌우반전·색감 조정을 적용해, 다른 블로그와 동일한 이미지를 그대로 사용하는 것으로 인식될 위험을 줄입니다.
+            직접 촬영해 업로드한 사진과 제휴 광고 상품 이미지에는 적용되지 않습니다.
           </p>
         </div>
 

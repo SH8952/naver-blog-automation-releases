@@ -1042,3 +1042,13 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* 2026-10-01 신규: 본문 중간 링크 카드 전용 입력칸 + 구분선 — 아래
+   "관련 사이트" 목록과 시각적으로 분리해 용도가 다름을 명확히 함. */
+.links-row-bodylink {
+  margin-bottom: 10px;
+}
+.links-bodylink-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0 0 12px 0;
+}

@@ -4,11 +4,14 @@ import './PostCreate.css';
 import useLicenseLimits, { PREMIUM_ONLY_TOOLTIP } from '../hooks/useLicenseLimits';
 
 // ── 기본값 ────────────────────────────────────────────────────
+// 2026-08-25 수정: 일상형/감성형이 실사용에서 거의 구분되지 않는다는
+// 지적에 따라 톤 정의를 종결어미까지 구체화([[tone-definitions-rework-2026-08-25]]
+// 참고) — 화면에 보이는 짧은 설명도 그 차이가 드러나도록 수정.
 const TONE_OPTIONS = [
-  { value: 'info',      label: '정보형',  desc: '객관적 정보 중심, "~입니다", 수치·데이터 포함' },
-  { value: 'daily',     label: '일상형',  desc: '친근한 말투, 일기·후기 형식' },
-  { value: 'review',    label: '리뷰형',  desc: '장단점 분석, 별점·총평 포함' },
-  { value: 'emotional', label: '감성형',  desc: '감정 표현 풍부, 분위기·느낌 위주' },
+  { value: 'info',      label: '정보형',  desc: '문어체("~합니다") 중심, 사실·수치 위주' },
+  { value: 'daily',     label: '일상형',  desc: '해요체, 있었던 일을 편하게 이야기하듯' },
+  { value: 'review',    label: '리뷰형',  desc: '해요체, 장단점 솔직 비교' },
+  { value: 'emotional', label: '감성형',  desc: '해요체 + 오감·감탄 표현, 분위기 위주' },
   // 2026-08-24 신규(개발자 전용): "글 가져오기" 모달에서 파일을 가져와
   // 학습해둔 문체를 사용. 학습된 프로필이 없으면 백엔드가 정보형으로
   // 안전하게 폴백함.
@@ -141,6 +144,13 @@ export default function PostCreate() {
   // AI가 3개를 생성해 보여주는 것과는 별개로, 사용자가 확인 후 체크해야만
   // 미리보기/발행 결과에 반영된다.
   const [insertLinks, setInsertLinks] = useState(false);
+  // 2026-10-01 신규: 본문 중간 링크 카드(네이버 에디터 "링크" 버튼으로
+  // 생성되는 미리보기 카드) — AI 자동 생성 없이 매번 사용자가 직접
+  // 입력하는 값이라, 관련 사이트(links)와 달리 새 글/기존 글 불러오기
+  // 모두에서 항상 공란으로 시작(사용자 확정 — 2026-10-01).
+  const [bodyLinkName, setBodyLinkName] = useState('');
+  const [bodyLinkUrl, setBodyLinkUrl] = useState('');
+  const [insertBodyLink, setInsertBodyLink] = useState(false);
   const [showReviewProductModal, setShowReviewProductModal] = useState(false);
   const [reviewProductInput, setReviewProductInput] = useState('');
   const [writingStyle, setWritingStyle] = useState('auto');
@@ -420,6 +430,15 @@ export default function PostCreate() {
     setReviewProductName(rp.reviewProductName || '');
     // 2026-08-09 신규: "관련 사이트를 게시글에 삽입" 체크 여부도 함께 복원
     setInsertLinks(!!rp.insertLinks);
+    // 2026-10-01 신규: 본문 중간 링크 카드 — 기존 "관련 사이트" 데이터에서
+    // 자동으로 끌어오지는 않지만(사용자 확정: AI 생성 링크 승계 없음),
+    // 이 전용 칸에 사용자가 직접 입력해 임시저장/검수 대기로 저장해둔
+    // 값이 있다면 그 값 그대로 복원한다(topic/keywords와 동일한 원칙).
+    // 처음 만드는 글이거나 이 필드가 없던 기존 글이면 rp.bodyLinkUrl이
+    // 비어있어 자연히 공란으로 시작한다.
+    setBodyLinkName(rp.bodyLinkName || '');
+    setBodyLinkUrl(rp.bodyLinkUrl || '');
+    setInsertBodyLink(!!rp.insertBodyLink);
 
     const rpImages = rp.images || [];
     setImages(IMG_POSITIONS.map((pos, i) => ({
@@ -523,16 +542,20 @@ export default function PostCreate() {
   // 게 있으면 그 지점 그대로, 없으면 1~5개를 무작위로 고름. 미리보기와
   // 실제 발행이 어긋나지 않도록 이 함수는 발행 액션 시점에 한 번만
   // 호출해 resolvedBonusPoints에 저장하고 재사용한다.
+  // 2026-09-13 변경: "개수를 1~5 중 균등 추첨 → 그 개수만큼 무작위로 고름"
+  // 방식은 개수 자체가 20%씩 균등해 실사용 체감상 "대부분 4~5장이
+  // 들어가다가 가끔 뚝 떨어진다"는 인상을 줌(main.js pickRandomBonusPoints와
+  // 동일 배경). 5개 슬롯이 각각 독립적으로 75% 확률로 포함되도록 변경(평균
+  // 3.75장). 5개 모두 제외되는 극희박한 경우 안전장치로 최소 1장은 무작위로
+  // 강제 포함한다. main.js의 pickRandomBonusPoints()와 동일한 방식으로
+  // 맞춰둠(프론트 UI 경로와 백엔드 안전망 경로가 항상 같은 분포를 갖도록).
+  const BONUS_SLOT_INCLUDE_RATE = 0.75;
   const resolveBonusPoints = () => {
     const manual = [...insertSelected].map(i => i - 5).filter(i => i >= 0 && i <= 4);
     if (manual.length > 0) return manual;
-    const pts = [0, 1, 2, 3, 4];
-    for (let i = pts.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pts[i], pts[j]] = [pts[j], pts[i]];
-    }
-    const count = 1 + Math.floor(Math.random() * 5); // 1~5
-    return pts.slice(0, count);
+    const pts = [0, 1, 2, 3, 4].filter(() => Math.random() < BONUS_SLOT_INCLUDE_RATE);
+    if (pts.length === 0) pts.push(Math.floor(Math.random() * 5));
+    return pts;
   };
 
   // ── 키워드 자동 생성 ──────────────────────────────────────
@@ -574,6 +597,10 @@ export default function PostCreate() {
     setReviewProductName('');
     // 2026-08-09 신규: 관련 사이트 삽입 체크박스도 기본값(해제)으로 초기화
     setInsertLinks(false);
+    // 2026-10-01 신규: 본문 중간 링크 카드도 기본값(공란/해제)으로 초기화
+    setBodyLinkName('');
+    setBodyLinkUrl('');
+    setInsertBodyLink(false);
   };
 
   // ── [개발자 전용 테스트] URL 글 가져오기 ──────────────────
@@ -853,6 +880,11 @@ export default function PostCreate() {
           // 생성한 관련 사이트 원본을 그대로 저장(체크 상태 자체는 insertLinks로 별도 저장)
           links: Array.isArray(result.links) ? result.links : [],
           insertLinks,
+          // 2026-10-01 신규: 본문 중간 링크 카드 — 임시저장 후 다시 불러올 때
+          // 사용자가 입력 중이던 값을 잃지 않도록 함께 저장(자동 생성 아님).
+          bodyLinkName,
+          bodyLinkUrl,
+          insertBodyLink,
           hashtags: hashtagList,
           images: images.map(img => ({ id: img.id, url: img.url, thumb: img.thumb, alt: img.alt, photographer: img.photographer })),
           category: publishCategory.trim(),
@@ -895,6 +927,9 @@ export default function PostCreate() {
           // 2026-08-09 신규: "게시글에 삽입" 체크박스 해제 시 실제 발행과
           // 동일하게 관련 사이트를 빼서 테스트
           links: insertLinks && Array.isArray(result.links) ? result.links : [],
+          // 2026-10-01 신규: 본문 중간 링크 카드 — "본문에 삽입" 체크 +
+          // URL 입력 시에만 전달(미입력/미체크면 null로 전달해 백엔드가 건너뜀)
+          bodyLink: insertBodyLink && bodyLinkUrl.trim() ? { name: bodyLinkName.trim(), url: bodyLinkUrl.trim() } : null,
           hashtags: hashtagList,
           images: images.map(img => ({ url: img.url, alt: img.alt })),
           category: publishCategory.trim(),
@@ -948,6 +983,9 @@ export default function PostCreate() {
           conclusion: result.conclusion,
           // 2026-08-09 신규: "게시글에 삽입" 체크박스가 해제돼 있으면 관련 사이트를 뺌
           links: insertLinks && Array.isArray(result.links) ? result.links : [],
+          // 2026-10-01 신규: 본문 중간 링크 카드 — "본문에 삽입" 체크 +
+          // URL 입력 시에만 전달(미입력/미체크면 null로 전달해 백엔드가 건너뜀)
+          bodyLink: insertBodyLink && bodyLinkUrl.trim() ? { name: bodyLinkName.trim(), url: bodyLinkUrl.trim() } : null,
           hashtags: hashtagList,
           images: images.map(img => ({ url: img.url, alt: img.alt })),
           category: publishCategory.trim(),
@@ -1049,6 +1087,9 @@ export default function PostCreate() {
           conclusion: result.conclusion,
           // 2026-08-09 신규: "게시글에 삽입" 체크박스가 해제돼 있으면 관련 사이트를 뺌
           links: insertLinks && Array.isArray(result.links) ? result.links : [],
+          // 2026-10-01 신규: 본문 중간 링크 카드 — "본문에 삽입" 체크 +
+          // URL 입력 시에만 전달(미입력/미체크면 null로 전달해 백엔드가 건너뜀)
+          bodyLink: insertBodyLink && bodyLinkUrl.trim() ? { name: bodyLinkName.trim(), url: bodyLinkUrl.trim() } : null,
           hashtags: hashtagList,
           images: images.map(img => ({ url: img.url, alt: img.alt })),
           category: publishCategory.trim(),
@@ -1417,6 +1458,12 @@ export default function PostCreate() {
                 onChange={(next) => setResult(p => ({ ...p, links: next }))}
                 insertEnabled={insertLinks}
                 onToggleInsertEnabled={setInsertLinks}
+                bodyLinkName={bodyLinkName}
+                bodyLinkUrl={bodyLinkUrl}
+                onBodyLinkNameChange={setBodyLinkName}
+                onBodyLinkUrlChange={setBodyLinkUrl}
+                insertBodyLink={insertBodyLink}
+                onToggleInsertBodyLink={setInsertBodyLink}
               />
             </>
           )}
@@ -2260,7 +2307,12 @@ function ImageSection({ images, kwList, onSwap, onUpload, onAltChange, onRefresh
 // 계정 관리 화면의 "선택 삭제" 패턴(휴지통 버튼 → 체크박스 → 일괄삭제)과
 // 동일한 UX를 재사용 — 줄마다 +/- 버튼을 두지 않고 섹션 제목 옆에 작은
 // 버튼 2개만 두어 공간을 절약한다(사용자 요청).
-function LinksSection({ links, onChange, insertEnabled, onToggleInsertEnabled }) {
+function LinksSection({
+  links, onChange, insertEnabled, onToggleInsertEnabled,
+  // 2026-10-01 신규: 본문 중간 링크 카드 전용 입력칸
+  bodyLinkName, bodyLinkUrl, onBodyLinkNameChange, onBodyLinkUrlChange,
+  insertBodyLink, onToggleInsertBodyLink,
+}) {
   const list = Array.isArray(links) ? links : [];
   const [bulkMode, setBulkMode] = React.useState(false);
   const [selectedIdx, setSelectedIdx] = React.useState(new Set());
@@ -2343,8 +2395,38 @@ function LinksSection({ links, onChange, insertEnabled, onToggleInsertEnabled })
             />
             <span>게시글에 삽입</span>
           </label>
+          {/* 2026-10-01 신규: 본문 중간 링크 카드(네이버 에디터 "링크" 버튼
+              삽입 결과와 동일한 미리보기 카드) 삽입 여부 — 아래 전용 입력칸의
+              URL을 본문 중간(구분선 위치)에 넣을지 독립적으로 켜고 끈다. */}
+          <label className="links-insert-toggle" title="체크하고 아래 전용 URL칸에 주소를 입력해야 본문 중간에 링크 미리보기 카드가 삽입됩니다.">
+            <input
+              type="checkbox"
+              checked={!!insertBodyLink}
+              onChange={e => onToggleInsertBodyLink(e.target.checked)}
+            />
+            <span>본문에 삽입</span>
+          </label>
         </div>
       </div>
+
+      {/* 2026-10-01 신규: 본문 중간 링크 카드 전용 입력칸 — 아래 "관련 사이트"
+          목록과는 완전히 별개의 항목. AI 자동 생성이나 기존 목록 데이터
+          승계 없이 항상 사용자가 직접 입력(사용자 확정, 2026-10-01). */}
+      <div className="links-row links-row-bodylink">
+        <input
+          className="input links-name-input"
+          placeholder="사이트 이름"
+          value={bodyLinkName || ''}
+          onChange={e => onBodyLinkNameChange(e.target.value)}
+        />
+        <input
+          className="input links-url-input"
+          placeholder="https:// (본문 중간에 삽입할 주소)"
+          value={bodyLinkUrl || ''}
+          onChange={e => onBodyLinkUrlChange(e.target.value)}
+        />
+      </div>
+      <hr className="links-bodylink-divider" />
 
       {list.length === 0 ? (
         <p className="image-hint">등록된 관련 사이트가 없습니다. "+ 추가"를 눌러 등록하세요.</p>

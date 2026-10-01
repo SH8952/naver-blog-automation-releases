@@ -1946,6 +1946,12 @@ const SETTINGS_DEFAULTS = {
   // 아니면 항상 'unsplash'로만 동작(searchImagesMultiProvider 참고) —
   // 배포판 동작은 이 값과 무관하게 100% 기존과 동일.
   pexelsKey: '', pixabayKey: '', imagePlatform: 'unsplash',
+  // 2026-09-13 신규: 스톡 사진(Unsplash 등 원격 다운로드 사진) 자동 가공
+  // (무작위 크롭/좌우반전/색감조정) 켜고 끄는 스위치. 기본값 true — 다른
+  // 블로그와 동일한 스톡 사진을 그대로 쓰면 네이버가 유사(중복) 이미지로
+  // 인식해 노출에 불리할 수 있다는 사용자 우려에 따라 기본 활성화. 로컬
+  // 업로드 사진(사용자 원본)에는 이 설정과 무관하게 적용되지 않음.
+  stockPhotoAutoProcess: true,
   aiProvider: 'gemini',
   geminiModel: 'gemini-3.1-flash-lite',
   groqModel: 'openai/gpt-oss-120b',
@@ -3101,11 +3107,18 @@ function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenc
   // 나온다"고 지적 — 기존엔 "감성형(감정 표현 풍부)" 한 줄뿐이라 AI에게
   // 실제로 문체를 바꿀 구체적 지침이 없었음. 각 톤에 실행 가능한 구체적
   // 작성 지침을 추가해 보강.
+  // 2026-08-25 재정리: 실사용 결과 일상형/감성형이 거의 구분되지 않고
+  // 모든 톤이 "-습니다/-했다"체로 딱딱하게 나온다는 지적 — 원인은 종결
+  // 어미(말투) 결정을 톤이 아니라 별도의 "문체"(writingStyle) 설정에
+  // 맡기고 있었고 그 기본값(자동 혼합)이 구체적 기준 없이 AI에게 위임돼
+  // 있었기 때문. 이제 각 톤 정의 안에 기본 종결어미까지 직접 지정하고,
+  // 일상형(사실 위주 대화체)과 감성형(감정·분위기 위주 대화체)을 예시
+  // 문장까지 넣어 층을 나눔.
   const toneMap    = {
-    info: '정보형(객관적 사실 중심) — 설명체 위주로 명확하고 간결하게, 감정 표현은 절제',
-    daily: '일상형(친근하고 편안한 말투) — 친구에게 얘기하듯 편안하고 부담 없는 어투로, 격식체보다 구어체 위주',
-    review: '리뷰형(장단점 분석) — 실제로 써본 사람처럼 장점과 단점을 솔직하게 비교 평가',
-    emotional: '감성형(감정 표현 풍부) — 딱딱한 설명체를 피하고 1인칭 감탄·소감·오감 묘사를 자주 사용해 사람 냄새 나는 문장으로 작성. "정말 좋았다", "생각보다 훨씬" 처럼 감정이 드러나는 표현을 적극 사용할 것',
+    info: '정보형(객관적 사실 중심) — 불필요한 감정 표현 없이 사실·수치·절차를 명확하게 전달. 종결어미는 "~합니다/~됩니다" 같은 문어체를 기본으로 하되, 계속 반복되어 딱딱해 보이지 않도록 "~인데요/~하죠"를 가끔 섞어 리듬을 줄 것. 감탄사·1인칭 소감은 쓰지 말 것',
+    daily: '일상형(친구에게 편하게 얘기하듯, 사실·경험 위주) — 종결어미는 해요체("~했어요", "~하더라고요", "~인데요")를 기본으로 하고 "~습니다"체는 거의 쓰지 말 것. 실제 있었던 일을 시간 순서대로 편하게 이야기하듯 서술하고 "그러다가", "근데" 같은 일상 대화체 연결어를 적극 사용할 것. 오감 묘사나 여운 있는 감탄은 최소화 — 사실과 경험을 편하게 전달하는 데 집중',
+    review: '리뷰형(장단점 분석) — 실제로 써본 사람 시점에서 해요체 위주로 장단점을 솔직하게 비교 평가. "좋았어요/아쉬웠어요"처럼 구체적 평가 어미를 사용하고, 지나치게 딱딱한 결론형 문장(~합니다)은 피할 것',
+    emotional: '감성형(감정·분위기 표현 중심) — 일상형과 마찬가지로 해요체를 기본 어미로 쓰되, 그 위에 오감 묘사·감탄사·여운을 반드시 얹을 것. 예: "~하는 느낌이었어요", "생각보다 훨씬 ~하더라고요", "괜히 뭉클했어요". 사실을 나열하기보다 그 순간 느낀 감정과 분위기를 우선적으로 묘사할 것. 감탄사(우와, 와, 헉)나 느낌표는 과하지 않게 1~2회 정도 자연스럽게 사용 가능',
   };
   // 2026-08-24 신규: "사용자" 톤 — 가져온 파일에서 학습해 저장해둔
   // 문체 요약(customStyleSummary)이 있으면 그걸 그대로 지침으로 사용.
@@ -3114,7 +3127,12 @@ function buildPrompt({ topic, keywords, tone, writingStyle, personalExp, sentenc
   const toneLabel = (tone === 'custom' && customStyleSummary)
     ? `사용자 지정 문체 — 아래는 이 사용자가 실제로 쓴 글을 분석해 학습한 문체 특징이다. 이 특징을 최대한 그대로 따라 글을 쓸 것: ${customStyleSummary}`
     : (toneMap[tone] || toneMap.info);
-  const styleMap   = { auto: '구어체와 문어체를 자연스럽게 혼합', colloquial: '구어체 위주(~했어요, ~인데요)', formal: '문어체 위주(~합니다, ~됩니다)' };
+  // 2026-08-25 수정: "자동"의 기존 지시("구어체와 문어체를 자연스럽게
+  // 혼합")가 기준 없이 AI에게 위임되면서 위 toneMap이 방금 지정한 종결
+  // 어미 지침과 충돌·희석되는 문제가 있었음 — "자동"일 때는 톤이 이미
+  // 정한 어미를 그대로 따르도록 명시해 우선순위를 분명히 함. 사용자가
+  // 구어체/문어체를 명시적으로 고른 경우에는 기존처럼 그 선택이 우선.
+  const styleMap   = { auto: '위 "글 톤"이 이미 정한 종결어미를 그대로 따를 것(별도로 구어체·문어체를 다시 섞으려 하지 말 것)', colloquial: '구어체 위주(~했어요, ~인데요)', formal: '문어체 위주(~합니다, ~됩니다)' };
   const expMap     = { auto: '자연스럽게 적당히 삽입', many: '많이 삽입(리뷰 느낌)', few: '최소한으로 삽입', none: '경험담 없이 순수 정보 중심' };
   const sentMap    = { auto: '짧은 문장과 긴 문장을 랜덤하게 혼합', short: '짧은 문장 위주로 템포감 있게', long: '긴 문장 위주로 상세하게' };
   const kwStr      = keywords && keywords.length ? keywords.join(', ') : '없음';
@@ -3171,10 +3189,16 @@ ${referenceItems.map((r, i) => `  ${i + 1}. ${r.title}${r.summary ? ` — ${r.su
 - [언어 규칙 - 절대 최우선 준수, 위반 시 전체 거부]
   · 반드시 순수 한국어(한글)로만 작성할 것 — 예외 없음
   · 영어 단어·표현·약어 완전 금지 (예: "OK", "tip", "point", "style" 등 모두 금지)
+  · [예외 - 2026-09-12 신규, 기술 약어/규격명] 단, USB・HDMI・LED・CPU・GPU・
+    SSD・HDD・API・URL・PDF・RGB・GPS・VR・AR・NFC 같은 국제 통용 기술
+    약어/규격 명칭은 원래의 로마자 그대로 표기할 것 — "유에스비",
+    "에이치디엠아이"처럼 한글로 발음대로 풀어쓰지 말 것. 이 예외는 이런
+    기술 약어에만 적용되고, 그 외 일반 영어 단어·표현에는 적용되지 않음
   · 베트남어·일본어·중국어·기타 외국어 완전 금지 (예: rát, được, の, 的 등)
   · 한자(漢字) 완전 금지 — 음독·훈독 모두 금지
   · 외래어는 반드시 한글 표기 (이미 한국어화 된 단어만 허용: 예 커피, 택시)
-  · 알파벳·악센트 문자(à á â ã ä å 등) 완전 금지
+  · 알파벳·악센트 문자(à á â ã ä å 등) 완전 금지 (단, 위에서 예외로 허용한
+    기술 약어/규격 명칭은 제외)
 - [구조 형식 - 3단계 제목 체계, 반드시 줄 시작에 작성]
   · 대분류: ## 제목명   (색상 박스로 표시됨)
   · 중분류: ### 제목명  (회색 박스로 표시됨)
@@ -3189,6 +3213,12 @@ ${referenceItems.map((r, i) => `  ${i + 1}. ${r.title}${r.summary ? ` — ${r.su
 - [글 톤 - 필수 준수, 문체 전체에 반영] ${toneLabel}
 ${reviewToneGuide}- 문체: ${styleMap[writingStyle] || styleMap.auto}
 - 개인 경험담: ${expMap[personalExp] || expMap.auto}
+${personalExp !== 'none' ? `- [경험담 구체화 규칙 - 2026-09-12 신규, 필수 준수] 개인 경험담을 넣을 때는
+  뭉뚱그린 일반론이 아니라 실제 겪은 일처럼 아래 요소를 반드시 포함할 것
+  · 계기: 왜/언제 하게 됐는지 구체적인 기간・횟수・상황을 문장에 포함
+    (예: "3년 만에 바꾸면서", "지난주에 처음 써보고")
+  · 사소한 단점이나 아쉬웠던 점을 최소 1가지 포함 — 장점만 나열하지 말 것
+  · 그 경험을 통해 실제로 느낀 구체적인 변화나 인상을 서술할 것` : ''}
 - 문장 길이: ${sentMap[sentenceStyle] || sentMap.auto}
 - 주요 키워드: ${kwStr}
 - [키워드 삽입 규칙 - 필수] 위 키워드 각각을 글 전체에 최소 3~5회 이상 자연스럽게
@@ -3211,6 +3241,19 @@ ${reviewToneGuide}- 문체: ${styleMap[writingStyle] || styleMap.auto}
 - [마무리 작성 규칙 - SEO] 마무리(conclusion) 문단에는 핵심 키워드를 다시 한 번
   자연스럽게 언급하고, 마지막 문장은 독자의 댓글・공감을 유도하는 질문형
   문장으로 마무리할 것
+- [마무리 클리셰 금지 - 2026-09-12 신규, 절대 준수] 아래와 같은 AI 특유의
+  교훈적・원론적 요약 멘트로 글을 맺지 말 것
+  · 금지 표현(예시): "~하시길 바랍니다", "~에 도움이 되셨기를 바랍니다",
+    "건강한 삶/일상으로 돌아가는 길", "~하는 하루 되세요", "늘 건강하시길
+    바랍니다", "행복한 하루 보내세요" 류의 도덕적・원론적 덕담 전체
+  · 대신 아래 방식 중 하나를 자연스럽게 골라 실제 블로거처럼 마무리할 것
+    (매번 다른 방식을 무작위로 선택 — 특정 문구를 고정적으로 반복하지 말 것)
+    1) 다음에 시도해볼 계획을 구체적으로 언급 (예: "다음엔 ~도 직접 써볼
+       예정입니다")
+    2) 독자의 궁금한 점이나 경험을 댓글로 유도 (예: "~한 경험 있으신 분은
+       댓글로 알려주세요")
+    3) 자신의 최종 판단이나 소감을 짧고 담백하게 한 문장으로 정리
+    4) 관련해서 다음에 다룰 만한 주제를 자연스럽게 언급하며 여운을 남김
 - [사실 정확성 - 절대 준수, 2026-07-22 신규] 지금 당장의 정확한 가격,
   특정 업체·플랫폼명, 오늘 기준 수치처럼 검증되지 않은 구체적 사실을
   확신 있게 단정하지 말 것. 그런 내용이 필요하면 "보통", "일반적으로",
@@ -3477,10 +3520,12 @@ function callGemini(apiKey, prompt, model, maxOutputTokens = 8192) {
 // llama-3.3-70b-versatile/llama-3.1-8b-instant도 2026-08-16 단종 예정(Groq
 // 공식 발표) — gemma2-9b-it는 2025-10-08에 이미 단종되어 예전부터 폴백2가
 // 죽어있었음. Groq 권장 대체 모델인 openai/gpt-oss 계열로 전면 교체.
+// 2026-09-29: qwen/qwen3.6-27b -> qwen/qwen3.8-27b 로 버전 갱신(공식 문서 확인,
+// 무료 플랜 rate limit은 동일 1000rpm/250000tpm 유지).
 const GROQ_MODELS = {
   'openai/gpt-oss-120b': { rpm: 1000, tpm: 250000, label: 'GPT-OSS 120B (고품질)' },
   'openai/gpt-oss-20b':  { rpm: 1000, tpm: 250000, label: 'GPT-OSS 20B (빠름, 폴백1)' },
-  'qwen/qwen3.6-27b':    { rpm: 1000, tpm: 250000, label: 'Qwen3.6 27B (폴백2, Preview)' },
+  'qwen/qwen3.8-27b':    { rpm: 1000, tpm: 250000, label: 'Qwen3.8 27B (폴백2, Preview)' },
 };
 
 function callGroq(apiKey, prompt, model = 'openai/gpt-oss-120b', maxOutputTokens = 8192) {
@@ -3877,7 +3922,7 @@ ipcMain.handle('settings:testAliexpress', async (event, appKey, appSecret, track
 
 // ── IPC: 키워드 자동 생성 (항상 Groq openai/gpt-oss-20b 사용 — 무료 플랜
 // 기준 RPM 30 / RPD 1K / TPM 8K, 공식 rate-limits 문서 2026-07-20 확인.
-// gpt-oss-120b·qwen3.6-27b도 무료 플랜 RPD는 동일(1K)하지만 gpt-oss-20b가
+// gpt-oss-120b·qwen3.8-27b도 무료 플랜 RPD는 동일(1K)하지만 gpt-oss-20b가
 // 가장 빠르고(1000 t/s) 저렴해 이 짧은 작업에 고정 배정) ──
 ipcMain.handle('post:suggestKeywords', async (event, { topic }) => {
   try {
@@ -3996,6 +4041,60 @@ function stripForeignChars(text) {
     .trim();
 }
 
+// ── 외래어 표기법 사전 기반 강제 치환 (2026-09-12 신규) ──
+// 프롬프트 지시만으로는 "컨텐츠"→"콘텐츠"처럼 흔히 틀리는 외래어 표기가
+// 확률적으로만 지켜져(제미나이 포스팅 분석 피드백 ④), 국립국어원 표준
+// 표기와 다른 관용적 오표기를 코드 단에서 결정적으로 치환한다. CJK_MAP과
+// 동일하게 split/join 치환 — 아래 키들은 다른 단어의 부분 문자열로
+// 섞여 오탐될 가능성이 낮은 것만 골랐다.
+// ── 기술 약어 한글 풀어쓰기 방지 (2026-09-12 신규) ──
+// 사용자 피드백: USB/HDMI 같은 기술 약어가 "유에스비"/"에이치디엠아이"처럼
+// 한글 발음대로 풀어써지는 경우가 있으면 안 됨(원래 로마자 그대로 써야
+// 함). 위 언어 규칙에 프롬프트 지시를 추가했지만 확률적으로만 지켜지므로,
+// 실수로 한글 발음대로 풀어쓴 경우를 로마자로 되돌리는 결정적 치환을
+// 코드 단에도 추가한다. 일상 대화에서 자연스럽게 쓰이는 "티비"/"피씨"/
+// "아이디" 같은 항목은 오히려 자연스러운 표현이라 제외 — 실제로 사람이
+// 한글로 풀어쓰는 일이 거의 없는, 명백히 어색한 항목만 포함.
+const ACRONYM_LATINIZE_MAP = {
+  '유에스비':'USB', '에이치디엠아이':'HDMI', '엘이디':'LED',
+  '씨피유':'CPU', '지피유':'GPU', '에스에스디':'SSD', '에이치디디':'HDD',
+  '에이피아이':'API', '유알엘':'URL', '피디에프':'PDF', '알지비':'RGB',
+  '지피에스':'GPS', '브이알':'VR', '에이알':'AR', '엔에프씨':'NFC',
+};
+function applyAcronymLatinization(text) {
+  if (!text) return text;
+  let result = text;
+  for (const [from, to] of Object.entries(ACRONYM_LATINIZE_MAP)) {
+    result = result.split(from).join(to);
+  }
+  return result;
+}
+
+const LOANWORD_GLOSSARY = {
+  '컨텐츠':'콘텐츠', '컨텐트':'콘텐츠',
+  '악세사리':'액세서리', '악세서리':'액세서리',
+  '어플리케이션':'애플리케이션', '어플':'앱',
+  '유투브':'유튜브',
+  '스케쥴':'스케줄', '리더쉽':'리더십', '라이센스':'라이선스',
+  '로얄티':'로열티', '캐쉬백':'캐시백', '메세지':'메시지',
+  '카달로그':'카탈로그', '초코렛':'초콜릿', '캬라멜':'캐러멜',
+  '소세지':'소시지', '팜플렛':'팸플릿', '심포지움':'심포지엄',
+  '알콜':'알코올', '악세스':'액세스', '컨셉':'콘셉트',
+  '리모콘':'리모컨', '에어콘':'에어컨', '케찹':'케첩',
+  '후라이팬':'프라이팬', '화일':'파일', '도너츠':'도넛',
+  '트랜디':'트렌디', '앙케이트':'앙케트', '아이섀도우':'아이섀도',
+  '알러지':'알레르기', '컨퍼런스':'콘퍼런스', '팬더':'판다',
+  '다이나믹':'다이내믹', '브로셔':'브로슈어', '언텍트':'언택트',
+};
+function applyLoanwordGlossary(text) {
+  if (!text) return text;
+  let result = text;
+  for (const [from, to] of Object.entries(LOANWORD_GLOSSARY)) {
+    result = result.split(from).join(to);
+  }
+  return result;
+}
+
 // 2026-07-08 신규: 썸네일 문구(thumbText) 글자수 강제에 쓰이는 헬퍼.
 // countChars()는 generatePostContent() 내부 지역함수라 여기서 재사용할 수
 // 없어 별도로 모듈 레벨에 둠(post:regenerateSection 핸들러에서도 공용).
@@ -4060,7 +4159,7 @@ ${AI_CLICHE_BAN}
     const reviewed = await callAI(reviewPrompt);
     if (reviewed && reviewed.thumbText) {
       const before = result;
-      result = stripForeignChars(stripCJK(reviewed.thumbText));
+      result = applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(reviewed.thumbText))));
       writeLog('INFO', 'AI', `썸네일 문구 검토 완료`, `"${before}" → "${result}"`);
     }
   } catch (e) {
@@ -4339,16 +4438,16 @@ async function generatePostContent(params) {
     // 후처리
     const applyPostProcess = (r) => {
       if (!r) return r;
-      r.intro      = stripForeignChars(stripCJK(r.intro));
+      r.intro      = applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(r.intro))));
       // 2026-07-07: stripCJK/stripForeignChars 이후 헤딩 레벨 검증/자동
       // 보정을 마지막에 적용 — 대/중/소분류 구조 강제(코드 단)
-      r.body       = normalizeBodyHeadingLevels(stripForeignChars(stripCJK(r.body)));
-      r.conclusion = stripForeignChars(stripCJK(r.conclusion));
-      r.title      = stripForeignChars(stripCJK(r.title));
+      r.body       = normalizeBodyHeadingLevels(applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(r.body)))));
+      r.conclusion = applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(r.conclusion))));
+      r.title      = applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(r.title))));
       // 2026-07-08 신규: 썸네일 전용 문구 — title과 동일하게 정제.
       // AI가 필드를 누락하면 빈 문자열로 두고, 실제 사용 시점(generateThumbnail
       // 호출부)에서 title로 폴백하므로 여기서 강제로 채우지 않음.
-      r.thumbText  = stripForeignChars(stripCJK(r.thumbText || ''));
+      r.thumbText  = applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(r.thumbText || ''))));
       r.hashtags   = normalizeHashtags(r.hashtags);
       if (!Array.isArray(r.links)) r.links = [];
       return r;
@@ -4432,13 +4531,14 @@ ${result.body}
 위 본문의 기존 내용과 구조(##/###/####/▪)를 최대한 유지하면서, 자연스러운
 위치에 구체적인 1인칭 경험 문장(예: "제가 직접 ~해봤을 때", "저는 ~하면서
 ~을 느꼈습니다")을 최소 1곳 이상 추가하세요. 겉도는 뭉뚱그린 감상이 아니라
-구체적인 상황・행동・느낀 점이 드러나야 합니다.
+구체적인 상황・행동・느낀 점이 드러나야 하며, 가능하면 구체적인 기간・횟수와
+사소한 단점 1가지도 함께 담으세요.
 - 순수 한국어(한글)만 사용
 - JSON 형식으로만 응답: {"body": "경험담이 추가된 전체 본문"}`;
         try {
           const withExp = await callAI(expPrompt);
           if (withExp && withExp.body && hasPersonalExperience(withExp.body)) {
-            result.body = normalizeBodyHeadingLevels(stripForeignChars(stripCJK(withExp.body)));
+            result.body = normalizeBodyHeadingLevels(applyAcronymLatinization(applyLoanwordGlossary(stripForeignChars(stripCJK(withExp.body)))));
             chars = countChars(result);
             writeLog('INFO', 'AI', `경험담 보정 재시도 완료 — ${chars}자`);
           } else {
@@ -4890,35 +4990,73 @@ async function downloadImageBuffer(imageUrl) {
 // 방식) 소스 자체를 작게 만들어 넣는 방식이라 별도 리사이즈 자동화가
 // 필요 없다. 기존 본문 이미지 호출부는 scale을 안 넘기므로 전부 그대로
 // 원본 크기 유지(제휴 광고 상품 이미지에만 이 옵션을 사용).
-async function insertImageViaClipboard(publishWin, imageUrl, scale = 1, fixedSize = null) {
-  if (!imageUrl || imageUrl.startsWith('data:') || publishWin.isDestroyed()) return false;
+async function insertImageViaClipboard(publishWin, imageUrl, scale = 1, fixedSize = null, skipStockProcess = false) {
+  if (!imageUrl || publishWin.isDestroyed()) return false;
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const { nativeImage } = require('electron');
+  const isLocalDataUrl = imageUrl.startsWith('data:');
 
   try {
-    writeLog('INFO', 'PUBLISH', '이미지 다운로드 시작', imageUrl.slice(0, 80));
-    let buf = await downloadImageBuffer(imageUrl);
-    writeLog('INFO', 'PUBLISH', '이미지 다운로드 완료', `${buf.length} bytes`);
-
-    let img = nativeImage.createFromBuffer(buf);
-    if (img.isEmpty()) {
-      // 2026-08-24 추가: 실사용 테스트로 Pixabay 다운로드 URL이 간헐적으로
-      // 정상 이미지 대신 손상/빈 응답(예: 19바이트)을 주는 사례를 확인.
-      // 일시적 네트워크/CDN 이슈일 가능성이 높아 보여, 완전히 포기하기
-      // 전에 짧은 대기 후 재다운로드를 최대 2회 더 시도한다(총 3회).
-      writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty) — 재다운로드 시도', `buf=${buf.length}`);
-      for (let attempt = 1; attempt <= 2 && img.isEmpty(); attempt++) {
-        await sleep(500);
-        buf = await downloadImageBuffer(imageUrl);
-        writeLog('INFO', 'PUBLISH', `이미지 재다운로드(${attempt}/2)`, `${buf.length} bytes`);
-        img = nativeImage.createFromBuffer(buf);
-      }
+    let img;
+    if (isLocalDataUrl) {
+      // 2026-09-13 추가: 지금까지는 이 함수 맨 위에서 data: URL(사용자가
+      // 로컬에서 업로드한 사진)이면 무조건 false를 반환해 조용히 건너뛰고
+      // 있었음 — 사용자 실사용으로 "본문에 로컬 사진이 통째로 빠진다"는
+      // 문제로 확인됨. data: URL은 이미 완성된 이미지 데이터라 다운로드가
+      // 필요 없고, nativeImage로 직접 디코딩하면 된다.
+      writeLog('INFO', 'PUBLISH', '로컬 이미지(업로드) 클립보드 삽입 시작');
+      img = nativeImage.createFromDataURL(imageUrl);
       if (img.isEmpty()) {
-        writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty) — 재다운로드 후에도 실패', `buf=${buf.length}`);
+        writeLog('WARN', 'PUBLISH', '로컬 이미지 변환 실패 (isEmpty) — data URL 손상 가능성, 건너뜀');
         return false;
       }
-      writeLog('INFO', 'PUBLISH', '이미지 재다운로드로 복구 성공');
+    } else {
+      writeLog('INFO', 'PUBLISH', '이미지 다운로드 시작', imageUrl.slice(0, 80));
+      let buf = await downloadImageBuffer(imageUrl);
+      writeLog('INFO', 'PUBLISH', '이미지 다운로드 완료', `${buf.length} bytes`);
+
+      img = nativeImage.createFromBuffer(buf);
+      if (img.isEmpty()) {
+        // 2026-08-24 추가: 실사용 테스트로 Pixabay 다운로드 URL이 간헐적으로
+        // 정상 이미지 대신 손상/빈 응답(예: 19바이트)을 주는 사례를 확인.
+        // 일시적 네트워크/CDN 이슈일 가능성이 높아 보여, 완전히 포기하기
+        // 전에 짧은 대기 후 재다운로드를 최대 2회 더 시도한다(총 3회).
+        writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty) — 재다운로드 시도', `buf=${buf.length}`);
+        for (let attempt = 1; attempt <= 2 && img.isEmpty(); attempt++) {
+          await sleep(500);
+          buf = await downloadImageBuffer(imageUrl);
+          writeLog('INFO', 'PUBLISH', `이미지 재다운로드(${attempt}/2)`, `${buf.length} bytes`);
+          img = nativeImage.createFromBuffer(buf);
+        }
+        if (img.isEmpty()) {
+          writeLog('WARN', 'PUBLISH', '이미지 변환 실패 (isEmpty) — 재다운로드 후에도 실패', `buf=${buf.length}`);
+          return false;
+        }
+        writeLog('INFO', 'PUBLISH', '이미지 재다운로드로 복구 성공');
+      }
+
+      // 2026-09-13 신규: 스톡 사진(원격 URL로 받아온 사진) 자동 가공 —
+      // 제휴 광고 상품 이미지(skipStockProcess=true)와 로컬 업로드 사진
+      // (위 isLocalDataUrl 분기)에는 적용하지 않는다. 다운로드+디코딩이
+      // 정상 확인된 뒤에만 가공을 시도하고, 실패 시 원본 img를 그대로
+      // 사용(발행이 이 단계에서 절대 막히지 않도록 안전하게 폴백).
+      if (!skipStockProcess && getStore().get('settings.stockPhotoAutoProcess', true)) {
+        try {
+          const processedDataUrl = await processStockPhotoDataUrl(img.toDataURL());
+          if (processedDataUrl) {
+            const processedImg = nativeImage.createFromDataURL(processedDataUrl);
+            if (!processedImg.isEmpty()) {
+              img = processedImg;
+              writeLog('INFO', 'PUBLISH', '스톡 사진 자동 가공 완료(크롭/반전/색감조정)');
+            } else {
+              writeLog('WARN', 'PUBLISH', '스톡 사진 가공 결과 손상 — 원본 사용');
+            }
+          }
+        } catch (e) {
+          writeLog('WARN', 'PUBLISH', '스톡 사진 자동 가공 예외 — 원본 사용', e.message);
+        }
+      }
     }
 
     // 2026-07-23: "원본 대비 %" 축소는 원본이 크면(예: 1200x1200 → 70%=840x840)
@@ -6606,6 +6744,15 @@ async function searchImagesMultiProvider(query, perPage, context, page = 1) {
 async function fetchImageAsDataUrl(url) {
   try {
     if (!url) return null;
+    // 2026-09-12 추가: 사용자가 로컬 사진을 업로드하면 'image:upload' IPC가
+    // 이미 완성된 "data:image/...;base64,..." 문자열을 돌려주는데(썸네일
+    // 배경으로 이 사진을 선택했을 때 customBgUrl로 그대로 여기까지 전달됨),
+    // 이 경우 fetch()로 다시 내려받을 필요가 없다 — 실사용 확인 결과, 직접
+    // 촬영해 업로드한 사진을 썸네일 배경으로 선택해도 실제 발행 결과에는
+    // 반영되지 않고 조용히 Unsplash 자동 검색으로 대체되는 문제가 있었음.
+    // data: URL은 이미 인코딩이 끝난 데이터이므로 그대로 반환해 이 문제와
+    // 불필요한 네트워크 왕복을 함께 없앤다.
+    if (url.startsWith('data:')) return url;
     const imgRes = await fetch(url);
     if (!imgRes.ok) return null;
     const arrBuf = await imgRes.arrayBuffer();
@@ -6619,6 +6766,123 @@ async function fetchImageAsDataUrl(url) {
 }
 
 // Unsplash에서 주제 관련 사진을 검색해 base64 data URL로 반환. 실패 시 null.
+// 2026-09-13 신규: 썸네일 배경 사진을 540x540 캔버스에 넣기 전 크기 축소.
+// generateThumbnail()은 만들어진 HTML 전체를
+// thumbWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+// 로 로드하는데, 사용자가 업로드한 원본 해상도 사진(스마트폰 사진은 보통
+// 수 MB, base64 data URL로는 수백만~천만 자 이상)을 그대로 CSS
+// background-image로 그 HTML 안에 심으면 최종 data: URL 길이가 크로미움의
+// 실질적 URL 길이 한도를 넘어 loadURL이 조용히 실패 — "썸네일 배경으로
+// 로컬 사진을 선택해도 썸네일 자체가 아예 안 만들어진다"는 사용자 실사용
+// 보고의 원인이었음. 540x540 캔버스에는 원본 해상도가 필요 없으므로,
+// 긴 변 기준 900px로 축소 + JPEG 재인코딩(85% 품질)해 data URL 크기를
+// 수십 KB 수준으로 줄인다. Unsplash 등 원격 검색 사진에도 동일하게
+// 적용해도 무해하다(원본이 이미 작으면 축소하지 않고 그대로 반환).
+function shrinkDataUrlForThumbBg(dataUrl, maxDim = 900) {
+  try {
+    if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
+    const { nativeImage } = require('electron');
+    let img = nativeImage.createFromDataURL(dataUrl);
+    if (img.isEmpty()) return dataUrl;
+    const size = img.getSize();
+    if (Math.max(size.width, size.height) > maxDim) {
+      const ratio = maxDim / Math.max(size.width, size.height);
+      const resized = img.resize({
+        width: Math.max(1, Math.round(size.width * ratio)),
+        height: Math.max(1, Math.round(size.height * ratio)),
+      });
+      if (!resized.isEmpty()) img = resized;
+    }
+    const jpegBuf = img.toJPEG(85);
+    if (!jpegBuf || !jpegBuf.length) return dataUrl;
+    return `data:image/jpeg;base64,${jpegBuf.toString('base64')}`;
+  } catch (e) {
+    writeLog('WARN', 'THUMB', '썸네일 배경 사진 축소 실패 — 원본 크기로 진행', e.message);
+    return dataUrl;
+  }
+}
+
+// 2026-09-13 신규: 스톡 사진(Unsplash/Pexels/Pixabay 등 원격 URL로 받아온
+// 사진) 자동 가공 — "다른 블로그도 다 쓰는 동일한 스톡 사진을 그대로
+// 올리면 네이버가 유사(중복) 이미지로 인식해 노출에 불리할 수 있다"는
+// 사용자 우려에 따라 도입. 로컬 업로드 사진(사용자 원본)에는 적용하지
+// 않음 — 호출부(insertImageViaClipboard의 원격 URL 분기, generateThumbnail의
+// !isLocalUserPhoto 분기)에서만 이 함수를 거치도록 분기한다.
+// 숨김 BrowserWindow의 <canvas>에서 (1) 85~95% 무작위 크롭(중요 피사체가
+// 잘리지 않도록 중앙 위주로만 위치를 살짝 흔듦), (2) 50% 확률 좌우 반전,
+// (3) 밝기·대비·채도를 각각 ±5~10%(채도는 ±10%) 무작위 조정 — 이 세
+// 가지를 사진마다 독립적으로 무작위 적용해 매번 다른 결과물이 나오게
+// 한다. 사진 데이터는 loadURL이 아니라 executeJavaScript 인자로 전달 —
+// 2026-09-13에 겪은 "긴 data: URL을 HTML에 통째로 심어 loadURL 자체가
+// 조용히 실패"하는 문제(썸네일 버그, shrinkDataUrlForThumbBg 참고)가
+// 여기서 재발하지 않도록 하기 위함. 실패 시 null을 반환하며, 호출부는
+// 이 경우 반드시 원본 이미지 그대로 폴백해야 한다(발행이 이 단계에서
+// 절대 막히지 않도록).
+async function processStockPhotoDataUrl(dataUrl) {
+  if (!dataUrl) return null;
+  const { BrowserWindow } = require('electron');
+  let win = null;
+  try {
+    win = new BrowserWindow({
+      show: false,
+      width: 100, height: 100,
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+    const shellHtml = `<!DOCTYPE html><html><body>
+      <canvas id="c"></canvas>
+      <script>
+        window.__processStockPhoto = function(dataUrl, opts) {
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = function() {
+              try {
+                const iw = img.naturalWidth, ih = img.naturalHeight;
+                const cw = Math.max(1, Math.round(iw * opts.cropFrac));
+                const ch = Math.max(1, Math.round(ih * opts.cropFrac));
+                const maxOffX = iw - cw, maxOffY = ih - ch;
+                const sx = Math.round((0.5 + opts.offX * 0.5) * maxOffX);
+                const sy = Math.round((0.5 + opts.offY * 0.5) * maxOffY);
+                const canvas = document.getElementById('c');
+                canvas.width = cw; canvas.height = ch;
+                const ctx = canvas.getContext('2d');
+                ctx.filter = 'brightness(' + opts.brightness + ') contrast(' + opts.contrast + ') saturate(' + opts.saturate + ')';
+                if (opts.flip) { ctx.translate(cw, 0); ctx.scale(-1, 1); }
+                ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+                resolve(canvas.toDataURL('image/jpeg', 0.9));
+              } catch (e) { resolve(null); }
+            };
+            img.onerror = function() { resolve(null); };
+            img.src = dataUrl;
+          });
+        };
+      </script>
+    </body></html>`;
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(shellHtml));
+
+    // 무작위 파라미터는 Node 쪽에서 생성 — 크롭 85~95%, 오프셋은 남는
+    // 여백의 절반 이내에서만 흔들어 중요 피사체가 잘릴 위험을 줄임,
+    // 좌우반전 50%, 밝기/대비 ±5~10%·채도 ±10% 무작위.
+    const opts = {
+      cropFrac: 0.85 + Math.random() * 0.10,
+      offX: (Math.random() * 2 - 1),
+      offY: (Math.random() * 2 - 1),
+      flip: Math.random() < 0.5,
+      brightness: (0.95 + Math.random() * 0.10).toFixed(3),
+      contrast: (0.95 + Math.random() * 0.10).toFixed(3),
+      saturate: (0.90 + Math.random() * 0.20).toFixed(3),
+    };
+    const result = await win.webContents.executeJavaScript(
+      `window.__processStockPhoto(${JSON.stringify(dataUrl)}, ${JSON.stringify(opts)})`
+    );
+    return result || null;
+  } catch (e) {
+    writeLog('WARN', 'PUBLISH', '스톡 사진 자동 가공 실패 — 원본 그대로 진행', e.message);
+    return null;
+  } finally {
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+}
+
 async function fetchThumbBackgroundPhoto(query) {
   try {
     const apiKey = getStore().get('settings.unsplashKey', '');
@@ -6665,8 +6929,32 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
   // 수행한다 — 사용자가 "사진 배경은 유지하고 테두리 디자인만 바뀌길" 원한다고
   // 명시적으로 확인했기 때문에, 22종은 전부 기존 포토 프레임형과 같은 사진 배경 위에
   // 얹는 장식일 뿐 사진 검색 로직 자체는 default와 동일하게 유지한다.
+  // 2026-09-13 추가: 사용자가 직접 촬영해 업로드한 사진(로컬)인지 여부를
+  // customBgUrl이 변환되기 전(원본 값) 시점에 미리 판별해둔다.
+  // image:upload IPC는 항상 data: URL을 반환하고, Unsplash/Pexels/Pixabay
+  // 등 웹에서 가져온 스톡 사진은 항상 https:// 원격 URL이므로 이 시점의
+  // 접두사만으로 정확히 구분 가능 — 별도 플래그 전달(IPC 필드 추가) 없이
+  // 기존 값만으로 판별 가능함. 아래에서 bgPhoto가 fetchImageAsDataUrl()을
+  // 거치며 어차피 data: URL로 변환되므로, 변환 후 시점엔 출처 구분이
+  // 불가능해지기 때문에 반드시 이 시점에 먼저 판별해야 한다.
+  const isLocalUserPhoto = !!(customBgUrl && customBgUrl.startsWith('data:'));
   let bgPhoto = customBgUrl ? await fetchImageAsDataUrl(customBgUrl) : null;
   if (!bgPhoto) bgPhoto = await fetchThumbBackgroundPhoto(query);
+  // 2026-09-13 신규: 로컬 업로드 사진이 아닌(=스톡) 배경 사진에는 자동
+  // 가공(무작위 크롭/좌우반전/색감조정)을 적용 — 본문 이미지와 동일한
+  // 목적(동일 스톡 사진을 그대로 쓰면 유사 이미지로 인식될 위험 완화).
+  // 로컬 업로드 사진은 사용자 원본이라 대상에서 제외.
+  if (bgPhoto && !isLocalUserPhoto && getStore().get('settings.stockPhotoAutoProcess', true)) {
+    try {
+      const processed = await processStockPhotoDataUrl(bgPhoto);
+      if (processed) bgPhoto = processed;
+    } catch (e) {
+      writeLog('WARN', 'THUMB', '썸네일 배경 스톡 사진 자동 가공 실패 — 원본 사용', e.message);
+    }
+  }
+  // 2026-09-13 추가: loadURL 길이 한도 문제 방지(위 shrinkDataUrlForThumbBg
+  // 설명 참고) — 사진 출처(로컬 업로드/원격 검색)와 무관하게 항상 적용.
+  if (bgPhoto) bgPhoto = shrinkDataUrlForThumbBg(bgPhoto);
 
   // 사진을 못 가져온 경우에만 그라데이션 폴백 스타일 선택 (색상 고정 시 동일 인덱스 사용).
   // design이 선택된 경우엔 THUMB_STYLES 대신 design.bg를 폴백 색상으로 사용.
@@ -6737,9 +7025,34 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
     const borderAccent = accent;
 
     const bgTint = design ? design.bg : fallbackStyle.bg;
-    const bodyBg = bgPhoto
+    // 2026-09-13 추가: 사용자가 직접 촬영해 업로드한 사진은 세로/가로 비율이
+    // 540x540 정사각형과 다른 경우가 대부분이라, 기존 'cover' 방식(꽉 채우되
+    // 넘치는 부분을 무조건 잘라냄)을 쓰면 세로 사진은 위아래가, 가로로 매우
+    // 긴 사진은 좌우가 잘리는 문제가 있었음(실사용 보고). 로컬 업로드 사진일
+    // 때만 사진 전체가 잘리지 않고 항상 온전히 보이도록 처리한다. 기존
+    // Unsplash 등 원격 스톡 사진은 통상 비율이 잘 맞고 지금까지 문제 없이
+    // 써왔으므로 그대로 'cover' 단일 레이어 방식 유지.
+    // 2026-09-13(같은 날 수정): 처음엔 남는 여백을 ${bgTint}(테마 단색)로
+    // 채웠으나, 실제 썸네일을 확인한 사용자가 "사진이 잘리지 않는 대신
+    // 단색 여백이 보이는 것"보다 "같은 사진을 확대·블러 처리한 배경으로
+    // 자연스럽게 채우는" 방식(처음 제시했던 두 옵션 중 1번)을 원한다고
+    // 정정 요청 — 로컬 업로드 사진일 때는 body 자체 배경은 bgTint만 두고,
+    // 그 위에 (1) 캔버스를 꽉 채우도록 확대한 블러 레이어, (2) 잘림 없이
+    // 그대로 보이는 원본 레이어, 이렇게 두 장을 겹쳐 인스타그램 스토리와
+    // 유사한 형태로 구현한다(아래 .bg-blur/.bg-photo, HTML 삽입부 참고).
+    const useBlurBg = !!(isLocalUserPhoto && bgPhoto);
+    const bodyBg = (bgPhoto && !useBlurBg)
       ? `background:url('${bgPhoto}') center/cover no-repeat, ${bgTint}`
       : `background:${bgTint}`;
+    const blurLayerCss = useBlurBg ? `
+      .bg-blur{position:absolute;inset:-20px;z-index:0;
+        background:url('${bgPhoto}') center/cover no-repeat;
+        filter:blur(26px) brightness(0.6);transform:scale(1.15)}
+      .bg-photo{position:absolute;inset:0;z-index:1;
+        background:url('${bgPhoto}') center/contain no-repeat}` : '';
+    const blurLayerHtml = useBlurBg
+      ? `<div class="bg-blur"></div><div class="bg-photo"></div>`
+      : '';
 
     const defaultChromeCss = `
       .border-outer{position:absolute;inset:10px;border:3px solid ${borderAccent};border-radius:18px;z-index:2}
@@ -6761,7 +7074,8 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
       body{width:540px;height:540px;position:relative;overflow:hidden;
         ${bodyBg};
         font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif}
-      .overlay{position:absolute;inset:0;
+      ${blurLayerCss}
+      .overlay{position:absolute;inset:0;z-index:1;
         background:linear-gradient(180deg, rgba(0,0,0,0.32), rgba(0,0,0,0.5) 55%, rgba(0,0,0,0.68))}
       ${design ? '' : defaultChromeCss}
       ${design ? chrome.css : ''}
@@ -6777,6 +7091,7 @@ async function generateThumbnail(title, hashtags, customBgUrl = null) {
       .footer{position:absolute;bottom:${design && design.footerBottom ? design.footerBottom : 28}px;left:0;right:0;text-align:center;
         color:rgba(255,255,255,0.7);font-size:13px;z-index:3}
     </style></head><body>
+      ${blurLayerHtml}
       <div class="overlay"></div>
       ${design ? chrome.html : defaultChromeHtml}
       <div class="subtitle">BLOG POST</div>
@@ -7232,6 +7547,458 @@ async function attachLinkToLastImage(publishWin, url) {
   }
 }
 
+async function insertLinkCardAtCursor(publishWin, url) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // 링크 연결에 실패했을 때 팝업을 열어둔 채로 두면 이후 본문/이미지/
+  // 관련 사이트 삽입이 전부 이 팝업 위에서 진행되며 꼬이는 문제가
+  // 2026-07-23 실사용 테스트에서 확인됨 — 실패하는 모든 경로에서 반드시
+  // 이 함수로 팝업을 닫고 나가도록 한다.
+  const closeLinkPopup = async () => {
+    try {
+      const closeBtn = await publishWin.webContents.executeJavaScript(`
+        (function() {
+          var btn = document.querySelector('.se-popup-close-button');
+          if (!btn) return null;
+          var r = btn.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return null;
+          return { x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch(() => null);
+      if (closeBtn) {
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: closeBtn.x, y: closeBtn.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: closeBtn.x, y: closeBtn.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 팝업 닫기(닫기 버튼)', JSON.stringify(closeBtn));
+      } else {
+        publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+        publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Escape' });
+        writeLog('WARN', 'PUBLISH', '본문 링크 - 링크 팝업 닫기 버튼 못 찾음, Esc로 대체');
+      }
+      await sleep(300);
+    } catch (e) {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 링크 팝업 닫기 실패', e.message);
+    }
+  };
+  try {
+    // 2) 상단 "링크" 버튼 클릭 (사용자가 실제 DOM에서 확인해 알려준 선택자)
+    const linkBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var btn = document.querySelector('.se-oglink-toolbar-button');
+          if (!btn) return { found:false, reason:'btn_not_found' };
+          var r = btn.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'btn_zero_size' };
+          return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 4, 300
+    );
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 버튼 조회', JSON.stringify(linkBtnPos));
+    if (!linkBtnPos || !linkBtnPos.found) {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 링크 버튼 못 찾음 — 링크 연결 생략');
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: linkBtnPos.x, y: linkBtnPos.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: linkBtnPos.x, y: linkBtnPos.y, button: 'left', clickCount: 1 });
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 버튼 클릭', JSON.stringify(linkBtnPos));
+    await sleep(600);
+
+    // 3) 팝업의 URL 입력창 탐색 — 사용자가 실제 DOM을 확인해 알려준 정확한
+    // 선택자(input.se-popup-oglink-input, 2026-07-23)를 최우선 사용하고,
+    // 못 찾으면 기존 범용 탐색으로 폴백.
+    const linkInputInfo = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var best = document.querySelector('input.se-popup-oglink-input');
+          if (!best) {
+            var candidates = Array.from(document.querySelectorAll('input[type="text"], input[type="url"], input:not([type])'));
+            var visible = candidates.filter(function(el) {
+              var r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            if (!visible.length) return { found:false, reason:'no_visible_input', totalInputs: candidates.length };
+            best = visible.find(function(el) {
+              var ph = (el.placeholder || '').toLowerCase();
+              return ph.includes('http') || ph.includes('url') || ph.includes('링크') || ph.includes('주소');
+            }) || visible[0];
+          }
+          var r = best.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'input_zero_size' };
+          return { found:true, x: Math.round(r.left + 20), y: Math.round(r.top + r.height/2), placeholder: best.placeholder || '' };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 5, 300
+    );
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 입력창 조회', JSON.stringify(linkInputInfo));
+    if (!linkInputInfo || !linkInputInfo.found) {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 링크 입력창 못 찾음 — 링크 연결 생략(본문 글 자체는 정상 삽입됨)');
+      await closeLinkPopup();
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: linkInputInfo.x, y: linkInputInfo.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: linkInputInfo.x, y: linkInputInfo.y, button: 'left', clickCount: 1 });
+    await sleep(300);
+    clipboard.writeText(url);
+    publishWin.webContents.paste();
+    await sleep(300);
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 주소 입력', url.slice(0, 80));
+
+    // 3.5) 신규(2026-07-23, 사용자 실사용 테스트로 확인된 필수 단계): URL을
+    // 붙여넣는 것만으로는 "확인" 버튼이 비활성 상태로 남는다. 입력창 옆
+    // 돋보기(검색) 버튼(button.se-popup-oglink-button, data-log="pog.search")을
+    // 눌러 링크 미리보기 조회를 실행해야 확인 버튼이 활성화됨.
+    const searchBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var btn = document.querySelector('button.se-popup-oglink-button');
+          if (!btn) return { found:false, reason:'search_btn_not_found' };
+          var r = btn.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return { found:false, reason:'search_btn_zero_size' };
+          return { found:true, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found, 4, 300
+    );
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 검색(돋보기) 버튼 조회', JSON.stringify(searchBtnPos));
+    if (searchBtnPos && searchBtnPos.found) {
+      publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: searchBtnPos.x, y: searchBtnPos.y, button: 'left', clickCount: 1 });
+      publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: searchBtnPos.x, y: searchBtnPos.y, button: 'left', clickCount: 1 });
+      writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 검색(돋보기) 클릭', JSON.stringify(searchBtnPos));
+    } else {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 링크 검색(돋보기) 버튼 못 찾음 — 확인 버튼이 비활성 상태로 남을 수 있음');
+    }
+
+    // 미리보기 조회(네트워크 요청)가 끝날 때까지 대기 — 로딩 표시가 사라지거나
+    // 미리보기 내용이 채워지면 완료로 판단(최대 약 4초 재시도).
+    const previewReady = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var loading = document.querySelector('.se-popup-oglink-loading');
+          var loadingVisible = !!(loading && loading.getBoundingClientRect().height > 0 && getComputedStyle(loading).display !== 'none');
+          var preview = document.querySelector('.se-popup-oglink-preview');
+          var previewHasContent = !!(preview && preview.textContent && preview.textContent.trim().length > 0);
+          return { loadingVisible: loadingVisible, previewHasContent: previewHasContent };
+        })()
+      `).catch((e) => ({ loadingVisible: false, previewHasContent: false, err: e.message })),
+      (v) => v && (v.previewHasContent || !v.loadingVisible), 10, 400
+    );
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 미리보기 로딩 상태', JSON.stringify(previewReady));
+    await sleep(300);
+
+    // 4) 확인 버튼 — .se-popup-button-container 내부를 우선 탐색하고,
+    // 못 찾으면 기존처럼 라벨 텍스트로 폴백. disabled 상태면(=미리보기가
+    // 아직 준비 안 된 경우) 활성화될 때까지 재시도.
+    const confirmBtnPos = await retryUntilFound(
+      () => publishWin.webContents.executeJavaScript(`
+        (function() {
+          var container = document.querySelector('.se-popup-button-container');
+          var best = null;
+          if (container) {
+            best = Array.from(container.querySelectorAll('button')).find(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+          }
+          if (!best) {
+            var btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            var visible = btns.filter(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            var labels = ['확인', '적용', '등록', '삽입', '연결'];
+            best = visible.find(function(b) {
+              var t = (b.textContent || '').trim();
+              return labels.some(function(l){ return t === l || t.includes(l); });
+            });
+          }
+          if (!best) return { found:false, reason:'no_confirm_btn' };
+          var disabled = !!best.disabled || best.getAttribute('aria-disabled') === 'true' || best.classList.contains('disabled');
+          var r = best.getBoundingClientRect();
+          return { found:true, disabled: disabled, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), text: (best.textContent||'').trim() };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+      (v) => v && v.found && !v.disabled, 6, 400
+    );
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 확인 버튼 조회', JSON.stringify(confirmBtnPos));
+    if (!confirmBtnPos || !confirmBtnPos.found || confirmBtnPos.disabled) {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 확인 버튼이 끝내 비활성/미발견 — 링크 연결 포기, 팝업 닫음(본문 글 자체는 정상 삽입됨)');
+      await closeLinkPopup();
+      return false;
+    }
+    publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: confirmBtnPos.x, y: confirmBtnPos.y, button: 'left', clickCount: 1 });
+    publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: confirmBtnPos.x, y: confirmBtnPos.y, button: 'left', clickCount: 1 });
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 링크 확인 클릭', JSON.stringify(confirmBtnPos));
+    await sleep(400);
+
+    // 4.5) 신규(2026-07-23): 확인 클릭이 "좌표는 정상이고 클릭도 보냈는데
+    // 실제로는 팝업이 그대로 열려있던" 실사용 사고가 확인됨(미리보기
+    // 이미지가 늦게 로드되며 버튼 위치가 클릭 직전에 미세하게 밀렸을
+    // 가능성 등, 정확한 원인은 불확실). 클릭을 보냈다고 바로 성공으로
+    // 믿지 말고, 팝업이 실제로 사라졌는지 재확인 → 남아있으면 좌표를
+    // 새로 다시 재서 1회 더 클릭 → 그래도 남아있으면 닫기 버튼으로
+    // 강제 종료하고 실패 처리(이후 자동화가 팝업 위에서 계속 진행되며
+    // 전체가 막히는 사고를 방지).
+    const popupStillOpen = async () => publishWin.webContents.executeJavaScript(`
+      (function() {
+        var el = document.querySelector('.se-popup-oglink-input-holder, .se-popup-close-button');
+        if (!el) return false;
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      })()
+    `).catch(() => false);
+
+    let stillOpen = await popupStillOpen();
+    writeLog('INFO', 'PUBLISH', '본문 링크 - 확인 클릭 후 팝업 상태 확인', stillOpen ? '아직 열려있음' : '닫힘(정상)');
+
+    if (stillOpen) {
+      // 좌표를 다시 재서 1회 재시도
+      const retryBtnPos = await publishWin.webContents.executeJavaScript(`
+        (function() {
+          var container = document.querySelector('.se-popup-button-container');
+          var best = null;
+          if (container) {
+            best = Array.from(container.querySelectorAll('button')).find(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+          }
+          if (!best) {
+            var btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+            var visible = btns.filter(function(b) {
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
+            var labels = ['확인', '적용', '등록', '삽입', '연결'];
+            best = visible.find(function(b) {
+              var t = (b.textContent || '').trim();
+              return labels.some(function(l){ return t === l || t.includes(l); });
+            });
+          }
+          if (!best) return { found:false };
+          var disabled = !!best.disabled || best.getAttribute('aria-disabled') === 'true' || best.classList.contains('disabled');
+          var r = best.getBoundingClientRect();
+          return { found:true, disabled: disabled, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
+        })()
+      `).catch((e) => ({ found:false, reason:'js_err:' + e.message }));
+      writeLog('INFO', 'PUBLISH', '본문 링크 - 확인 버튼 재조회(2차 시도)', JSON.stringify(retryBtnPos));
+      if (retryBtnPos && retryBtnPos.found && !retryBtnPos.disabled) {
+        publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: retryBtnPos.x, y: retryBtnPos.y, button: 'left', clickCount: 1 });
+        publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: retryBtnPos.x, y: retryBtnPos.y, button: 'left', clickCount: 1 });
+        writeLog('INFO', 'PUBLISH', '본문 링크 - 확인 재클릭', JSON.stringify(retryBtnPos));
+        await sleep(500);
+        stillOpen = await popupStillOpen();
+        writeLog('INFO', 'PUBLISH', '본문 링크 - 재클릭 후 팝업 상태 확인', stillOpen ? '아직 열려있음' : '닫힘(정상)');
+      } else {
+        writeLog('WARN', 'PUBLISH', '본문 링크 - 확인 버튼 재조회 실패');
+      }
+    }
+
+    if (stillOpen) {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 재클릭에도 팝업이 안 닫힘 — 링크 연결 포기, 팝업 강제 닫음(본문 글 자체는 정상 삽입됨)');
+      await closeLinkPopup();
+      return false;
+    }
+
+    // 5) 가운데 정렬(2026-10-01 추가, 사용자 요청 — 삽입된 카드가 기본값인
+    // 좌측 정렬로 남는 문제 수정). 이미지 가운데 정렬(insertImgSection)에서
+    // 검증된 "요소 선택 → .se-context-toolbar-cycle-toggle-container
+    // [data-name="align"] 토글 버튼 클릭" 방식을 재사용하되, 네이버 에디터
+    // 내부의 정확한 카드 섹션 클래스명을 추측하지 않고 방금 삽입한 URL과
+    // 일치하는 <a href>를 역으로 찾아 그 카드(가장 가까운 se-component/
+    // se-section-* 조상)를 특정한다. 실패해도 치명적이지 않도록(좌측
+    // 정렬로만 남음, 본문 글 자체는 이미 정상 삽입된 상태) 보수적으로
+    // 설계 — 이미지 쪽처럼 misclick으로 엉뚱한 팝업(지도 등)이 뜨면 자동
+    // 복구하되, 클릭 반영을 맹목적으로 재시도하지는 않는다(cycle 토글이라
+    // 잘못 재시도하면 우측 정렬로 넘어갈 위험이 있음 — 1회만 안전하게
+    // 시도하고, 실패 시 다음 테스트 발행 로그로 원인 확인 후 보강 예정).
+    try {
+      // 2026-10-01 2차 수정: 1차(URL href 역추적) 방식이 실사용 테스트에서
+      // anchor_not_found로 매번 실패함(사용자 로그로 확인) — 편집 중인
+      // SE3 화면에서는 이 카드가 실제 <a href="URL"> 형태로 렌더링되지
+      // 않는 것으로 추정됨. URL 매칭 대신, 우리가 직접 통제하는 삽입 순서
+      // (본문 → <hr> → [커서 위치에 카드 삽입])를 이용해 "방금 삽입한
+      // <hr> 바로 다음에 오는, 보이는(텍스트/이미지/링크를 포함한) 첫
+      // 형제 요소"를 카드로 간주하는 방식으로 교체. 네이버 에디터 내부의
+      // 카드 전용 클래스명을 전혀 몰라도 되는 더 안전한 방식.
+      // 2026-10-01 3차 수정: 2차(hr의 "형제" 요소 탐색) 방식이 실사용
+      // 테스트에서 엉뚱한 요소(cls:"se-canvas-bottom" — 에디터 캔버스
+      // 맨 아래의 여백/스페이서로 추정)를 카드로 잘못 인식함(사용자 로그로
+      // 확인). 원인은 두 가지로 추정: (1) hr 조상 탐색이 실제로 se-component/
+      // se-section- 클래스를 못 찾았는데도 그냥 6단계 조상을 그대로 쓴 버그
+      // (매칭 여부를 검증하지 않았음), (2)애초에 새 카드가 hr과 "같은
+      // 레벨의 형제"로 삽입되지 않고 다른 위치(예: hr 다음 빈 문단 컴포넌트
+      // 내부)에 중첩되어 들어갔을 가능성 — 즉 "형제" 가정 자체가 구조에
+      // 안 맞을 수 있음. 그래서 "형제" 레벨 탐색 대신, hr 이후의 모든
+      // 요소를 문서 순서대로 훑어(querySelectorAll('*')은 document order
+      // 보장) 그중 "카드처럼 보이는"(이미지를 포함하고 텍스트가 있는, 또는
+      // 최소한 텍스트가 꽤 있는) 가장 먼저 나오는 요소를 카드로 간주하는
+      // 더 구조-불가지론적인 방식으로 교체. 알려진 스페이서/placeholder
+      // 패턴은 명시적으로 제외. 성공/실패 여부와 무관하게 후보 목록을
+      // 항상 로그에 남겨, 혹시 이번에도 틀리면 다음 로그만으로 확정 가능.
+      const findCardAnchorJs = (extra) => `
+        (function() {
+          try {
+            var root = document.querySelector('.se-main-container') || document.body;
+            var hrs = root.querySelectorAll('hr');
+            if (!hrs.length) return { found:false, reason:'hr_not_found' };
+            var lastHr = hrs[hrs.length - 1];
+            var all = root.querySelectorAll('*');
+            var hrIndex = -1;
+            for (var ai = 0; ai < all.length; ai++) { if (all[ai] === lastHr) { hrIndex = ai; break; } }
+            if (hrIndex === -1) return { found:false, reason:'hr_index_not_found' };
+            var DENY = /se-canvas-bottom|se-help|se-placeholder|se-dummy|se-scroll-spacer/i;
+            var candidates = [];
+            var section = null;
+            var scanEnd = Math.min(all.length, hrIndex + 60);
+            for (var bi = hrIndex + 1; bi < scanEnd; bi++) {
+              var node = all[bi];
+              var cls = (node.className || '').toString();
+              if (DENY.test(cls)) continue;
+              var r = node.getBoundingClientRect();
+              if (r.width < 20 || r.height < 20) continue;
+              var txt = (node.textContent || '').trim();
+              var hasImg = !!node.querySelector('img');
+              if (candidates.length < 20) {
+                candidates.push({ idx: bi - hrIndex, tag: node.tagName, cls: cls.slice(0, 100), w: Math.round(r.width), h: Math.round(r.height), textLen: txt.length, hasImg: hasImg, textSnippet: txt.slice(0, 60) });
+              }
+              if (!section && hasImg && txt.length > 5) { section = node; break; }
+            }
+            if (!section) {
+              for (var bj = hrIndex + 1; bj < scanEnd; bj++) {
+                var node2 = all[bj];
+                var cls2 = (node2.className || '').toString();
+                if (DENY.test(cls2)) continue;
+                var r2 = node2.getBoundingClientRect();
+                if (r2.width < 20 || r2.height < 20) continue;
+                var txt2 = (node2.textContent || '').trim();
+                if (txt2.length > 10) { section = node2; break; }
+              }
+            }
+            if (!section) {
+              return { found:false, reason:'card_not_found_after_hr', candidates: candidates };
+            }
+            ${extra}
+          } catch (e) {
+            return { found:false, reason:'js_err:' + e.message };
+          }
+        })()
+      `;
+
+      const cardScroll = await retryUntilFound(
+        () => publishWin.webContents.executeJavaScript(findCardAnchorJs(`
+            section.scrollIntoView({ block:'center', inline:'nearest', behavior:'instant' });
+            return { found:true, cls: (section.className || '').toString().slice(0, 80), tag: section.tagName, candidates: candidates };
+        `)).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+        (v) => v && v.found, 5, 400
+      );
+      writeLog('INFO', 'PUBLISH', '본문 링크 - 카드 요소 탐색/스크롤', JSON.stringify(cardScroll));
+
+      if (cardScroll && cardScroll.found) {
+        await sleep(500);
+
+        const cardClickPos = await retryUntilFound(
+          () => publishWin.webContents.executeJavaScript(findCardAnchorJs(`
+              var r = section.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) return { found:false, reason:'zero_size' };
+              var x = Math.round(r.left + r.width / 2);
+              var y = Math.round(r.top + Math.min(r.height / 2, 40));
+              var hit = document.elementFromPoint(x, y);
+              var safe = !!(hit && (hit === section || section.contains(hit)));
+              return { found:true, x:x, y:y, safe:safe, hitTag: hit ? hit.tagName : null };
+          `)).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+          (v) => v && v.found, 3, 300
+        );
+        writeLog('INFO', 'PUBLISH', '본문 링크 - 카드 선택 클릭 좌표', JSON.stringify(cardClickPos));
+
+        if (cardClickPos && cardClickPos.found && cardClickPos.safe) {
+          publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: cardClickPos.x, y: cardClickPos.y, button: 'left', clickCount: 1 });
+          publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: cardClickPos.x, y: cardClickPos.y, button: 'left', clickCount: 1 });
+          writeLog('INFO', 'PUBLISH', '본문 링크 - 카드 클릭(선택)', JSON.stringify(cardClickPos));
+          await sleep(400);
+
+          const alignBtnPos = await retryUntilFound(
+            () => publishWin.webContents.executeJavaScript(`
+              (function() {
+                var container = document.querySelector('.se-context-toolbar-cycle-toggle-container[data-name="align"]');
+                if (!container) return { found:false, reason:'container_not_found' };
+                var btn = Array.from(container.querySelectorAll('button')).find(function(b) {
+                  var r = b.getBoundingClientRect();
+                  return r.width > 0 && r.height > 0;
+                });
+                if (!btn) return { found:false, reason:'no_visible_button' };
+                var r = btn.getBoundingClientRect();
+                var x = Math.round(r.left + r.width/2);
+                var y = Math.round(r.top + r.height/2);
+                var hit = document.elementFromPoint(x, y);
+                var safe = !!(hit && (hit === btn || btn.contains(hit) || (hit.closest && hit.closest('button') === btn)));
+                return { found:true, x:x, y:y, safe:safe, hitTag: hit ? hit.tagName : null, hitClass: hit ? (hit.className || '').toString().slice(0, 80) : null };
+              })()
+            `).catch((e) => ({ found:false, reason:'js_err:' + e.message })),
+            (v) => v && v.found, 5, 400
+          );
+          writeLog('INFO', 'PUBLISH', '본문 링크 - 카드 정렬 버튼 조회', JSON.stringify(alignBtnPos));
+
+          // 2026-10-01 추가: 본문 이미지 가운데 정렬(insertImgSection)에서
+          // 이미 실사용 테스트로 검증된 benignMiss 예외를 재사용. elementFromPoint
+          // 안전검증에서 "SPAN.se-toolbar-icon"(버튼 안의 아이콘 글자일 뿐,
+          // 장소/링크 등 위험한 다른 버튼이 아님)에 걸린 경우에 한해서만
+          // 좌표를 믿고 클릭을 강행한다 — 그 외의(진짜 위험할 수 있는) 장애물은
+          // 여전히 클릭을 막는다.
+          const benignMiss = !!(alignBtnPos && alignBtnPos.found && !alignBtnPos.safe
+            && alignBtnPos.hitTag === 'SPAN' && alignBtnPos.hitClass === 'se-toolbar-icon');
+
+          if (alignBtnPos && alignBtnPos.found && (alignBtnPos.safe || benignMiss)) {
+            if (benignMiss) {
+              writeLog('WARN', 'PUBLISH', '본문 링크 - 정렬 버튼 안전 확인 실패했으나 위험하지 않은 장애물(아이콘)로 판단 — 클릭 강행', JSON.stringify(alignBtnPos));
+            }
+            publishWin.webContents.sendInputEvent({ type: 'mouseDown', x: alignBtnPos.x, y: alignBtnPos.y, button: 'left', clickCount: 1 });
+            publishWin.webContents.sendInputEvent({ type: 'mouseUp',   x: alignBtnPos.x, y: alignBtnPos.y, button: 'left', clickCount: 1 });
+            writeLog('INFO', 'PUBLISH', '본문 링크 - 카드 가운데 정렬 클릭', JSON.stringify(alignBtnPos));
+            await sleep(400);
+
+            // misclick으로 엉뚱한 팝업(지도 등)이 열렸다면 자동 복구
+            const popupAfterAlign = await publishWin.webContents.executeJavaScript(`
+              (function() {
+                var btn = document.querySelector('.se-popup-close-button');
+                if (!btn) return { found:false };
+                var r = btn.getBoundingClientRect();
+                return { found: r.width > 0 && r.height > 0 };
+              })()
+            `).catch(() => ({ found:false }));
+            if (popupAfterAlign && popupAfterAlign.found) {
+              writeLog('WARN', 'PUBLISH', '본문 링크 - 정렬 클릭 후 예상치 못한 팝업 감지 — 자동으로 닫음');
+              await publishWin.webContents.executeJavaScript(`
+                (function() { var btn = document.querySelector('.se-popup-close-button'); if (btn) btn.click(); })()
+              `).catch(() => {});
+              await sleep(300);
+            }
+          } else {
+            writeLog('WARN', 'PUBLISH', '본문 링크 - 카드 정렬 버튼 안전 위치 확보 실패 — 좌측 정렬 상태로 유지됨', JSON.stringify(alignBtnPos));
+          }
+
+          // 정렬 처리 후 카드 선택 해제(다음 본문 붙여넣기가 선택 상태
+          // 위에서 엉뚱하게 반영되는 것을 방지) — Escape로 안전하게 해제.
+          publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+          publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Escape' });
+          await sleep(150);
+        } else {
+          writeLog('WARN', 'PUBLISH', '본문 링크 - 카드 선택 좌표 확보 실패 — 좌측 정렬 상태로 유지됨(본문 글 자체는 정상 삽입됨)', JSON.stringify(cardClickPos));
+        }
+      } else {
+        writeLog('WARN', 'PUBLISH', '본문 링크 - 삽입된 카드 요소를 못 찾음 — 가운데 정렬 생략(본문 글 자체는 정상 삽입됨)');
+      }
+    } catch (e) {
+      writeLog('WARN', 'PUBLISH', '본문 링크 - 가운데 정렬 처리 중 예외(무시, 본문 글 자체는 정상 삽입됨)', e.message);
+    }
+
+    return true;
+  } catch (e) {
+    writeLog('WARN', 'PUBLISH', '본문 링크 - 링크 연결 실패', e.message);
+    await closeLinkPopup();
+    return false;
+  }
+}
+
+
 async function publishToNaver({ accountId, postId, title, thumbText = null, content, hashtags, images, category, visibility, autoThumbnail, headless = true, reserveAt = null, preGeneratedThumbPath = null, forcedStyleIndex = null, forcedLayoutId = null, thumbBgUrl = null, testMode = false, bonusPoints = null, reviewProductName = null }) {
   // 2026-07-24 신규: 테스트 모드(개발자 전용) — 실제 발행 버튼 클릭 직전까지만
   // 자동화를 수행하고 멈춘다. 실제 SE3 붙여넣기 결과를 검사(DevTools)로 그대로
@@ -7633,14 +8400,18 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 전달한다. bonusPoints가 아예 안 넘어온 경우(자동화 루프·예약 발행
   // 재실행 등 프론트 UI가 없는 경로)는 여기서 자체적으로 1~5개 지점을
   // 무작위로 고른다 — 어떤 경로로 발행되든 항상 결정되도록 하는 안전망.
+  // 2026-09-13 변경: "개수를 1~5 중 균등 추첨 → 그 개수만큼 무작위로 고름"
+  // 방식은 슬롯 5개가 한 덩어리로 묶여 있어(개수 자체가 20%씩 균등) 실사용
+  // 체감상 "대부분 4~5장이 들어가다가 가끔 뚝 떨어진다"는 인상을 줌.
+  // 사용자 요청으로 5개 슬롯이 각각 독립적으로 75% 확률로 포함되도록 변경
+  // (평균 3.75장, 기존보다 더 촘촘하고 자연스러운 분포). 5개 모두 제외되는
+  // 극희박한 경우(0.25^5 ≈ 0.1%)에 대비해 안전장치로 최소 1장은 무작위로
+  // 강제 포함한다.
+  const BONUS_SLOT_INCLUDE_RATE = 0.75;
   const pickRandomBonusPoints = () => {
-    const pts = [0, 1, 2, 3, 4];
-    for (let i = pts.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pts[i], pts[j]] = [pts[j], pts[i]];
-    }
-    const count = 1 + Math.floor(Math.random() * 5); // 1~5
-    return pts.slice(0, count);
+    const pts = [0, 1, 2, 3, 4].filter(() => Math.random() < BONUS_SLOT_INCLUDE_RATE);
+    if (pts.length === 0) pts.push(Math.floor(Math.random() * 5));
+    return pts;
   };
   const bonusSet = new Set(Array.isArray(bonusPoints) ? bonusPoints : pickRandomBonusPoints());
 
@@ -7834,12 +8605,15 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 기존과 동일하게 동작.
   const insertImgSection = async (img, label, opts = {}) => {
     if (!img || !img.url) return;
-    const { scale = 1, center = false, fixedSize = null } = opts;
+    // 2026-09-13 추가: skipStockProcess — 제휴 광고 상품 이미지처럼 원본
+    // 그대로 보여줘야 하는 경우에만 true로 넘겨 스톡 사진 자동 가공을
+    // 건너뛴다(기본 false = 본문 이미지 5장/보너스 이미지는 그대로 적용).
+    const { scale = 1, center = false, fixedSize = null, skipStockProcess = false } = opts;
     // 이미지 앞 줄바꿈
     publishWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     publishWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 'Return' });
     await sleep(200);
-    const ok = await insertImageViaClipboard(publishWin, img.url, scale, fixedSize);
+    const ok = await insertImageViaClipboard(publishWin, img.url, scale, fixedSize, skipStockProcess);
     writeLog('INFO', 'PUBLISH', label + ' 이미지 삽입', ok ? 'OK' : 'FAIL/SKIP');
     await sleep(300);
 
@@ -8430,7 +9204,9 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       // 테스트). 원본 크기와 무관하게 항상 고정 560px(긴 쪽 기준, 비율
       // 유지)로 축소하는 방식으로 교체(본문 이미지 5장에는 영향 없음,
       // 이 호출부만 적용).
-      await insertImgSection({ url: affiliateAd.product.image }, `${label} 상품이미지`, { fixedSize: 560, center: true });
+      // 2026-09-13 추가: 제휴 광고 상품 이미지는 원본 그대로(신뢰도 문제로
+      // 가공 대상에서 제외) — skipStockProcess: true.
+      await insertImgSection({ url: affiliateAd.product.image }, `${label} 상품이미지`, { fixedSize: 560, center: true, skipStockProcess: true });
     }
     await pasteHtml(affiliateAdHtml, `${label} 상품정보`);
   };
@@ -8477,7 +9253,33 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
     usedMidImages = true;
   }
   if (part2) {
-    await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
+    // 2026-10-01 신규: 본문 중간 링크 카드(네이버 에디터 "링크" 버튼으로
+    // 생성되는 썸네일+제목+설명 미리보기 카드) 삽입 — content.bodyLink에
+    // 실제 URL이 채워져 있을 때만 동작(사용자가 글쓰기 화면에서 "본문에
+    // 삽입" 체크 + URL 입력 시). part2 안에는 항상 대분류2(H2) 제목이
+    // 포함돼 있고([[body-structure-fixed-counts]]: 대분류 정확히 2개 ×
+    // 중분류 각 2개), toNaverHtml()이 그 제목 직전에 자동으로 <hr>을
+    // 넣는 지점이 바로 이 구분선 — 사용자가 지금까지 수동으로 링크를
+    // 넣어오던 자리와 정확히 동일한 위치(실제 발행 게시글 3~4건을
+    // 사용자가 직접 비교해 확인한 패턴). splitBodyAtNthH2로 그 경계에서
+    // part2를 한 번 더 쪼개 가운데 끼워 넣는다. 분할 실패(AI가 대분류/
+    // 중분류 개수 규칙을 정확히 안 지킨 예외 상황) 시에는 조용히 건너뛰고
+    // 기존처럼 part2를 통째로 붙여넣어 발행 자체는 막히지 않도록 한다.
+    const bodyLinkUrlRaw = (content.bodyLink && String(content.bodyLink.url || '').trim()) || '';
+    const h2Split = bodyLinkUrlRaw ? splitBodyAtNthH2(part2, 1) : null;
+    if (h2Split) {
+      await pasteHtml(buildBodyHtml(h2Split.before, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
+      await pasteHtml('<hr>', '본문 중간 구분선');
+      const bodyLinkSafeUrl = /^https?:\/\//i.test(bodyLinkUrlRaw) ? bodyLinkUrlRaw : `https://${bodyLinkUrlRaw}`;
+      const bodyLinkOk = await insertLinkCardAtCursor(publishWin, bodyLinkSafeUrl);
+      writeLog(bodyLinkOk ? 'INFO' : 'WARN', 'PUBLISH', '본문 중간 링크 카드 삽입', bodyLinkOk ? 'OK' : 'FAIL/SKIP');
+      await pasteHtml(buildBodyHtml(h2Split.after, editorFont, iconCycler, postStylePreset), '본문(대분류2 제목)');
+    } else {
+      if (bodyLinkUrlRaw) {
+        writeLog('WARN', 'PUBLISH', '본문 중간 링크 카드 삽입 생략(구조 분할 실패)', 'part2 내 대분류2 제목을 찾지 못함');
+      }
+      await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
+    }
     await insertImgSection(imgs[2], '이미지3', { center: true });
     if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
     usedMidImages = true;
@@ -9422,7 +10224,7 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       post.title,
       // 2026-07-08: thumbText(썸네일 전용 문구)도 함께 저장
       // 2026-07-23: tone도 함께 저장 — 발행 이력 등에서 재발행할 때도 제휴 광고 게이팅 유지
-      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '', tone: post.tone || '' }),
+      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '', tone: post.tone || '', bodyLink: post.bodyLink || null }),
       JSON.stringify(post.hashtags || []),
       JSON.stringify(post.images || [])
     );
@@ -9435,7 +10237,7 @@ ipcMain.handle('publish:now', async (event, { accountId, post }) => {
       // 2026-07-08: 썸네일 전용 문구 — 있으면 제목 대신 썸네일에 사용
       thumbText: post.thumbText || null,
       // 2026-07-23: tone — 제휴 광고가 "리뷰형" 톤에서만 동작하도록 게이팅하는 데 사용
-      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '' },
+      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '', bodyLink: post.bodyLink || null },
       hashtags: post.hashtags || [],
       images: post.images || [],
       category: post.category || '',
@@ -9484,7 +10286,7 @@ ipcMain.handle('publish:test', async (event, { accountId, post }) => {
       postId: null,
       title: post.title,
       thumbText: post.thumbText || null,
-      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '' },
+      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '', bodyLink: post.bodyLink || null },
       hashtags: post.hashtags || [],
       images: post.images || [],
       category: post.category || '',
@@ -9587,7 +10389,7 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       post.title,
       // 2026-07-08: thumbText(썸네일 전용 문구)도 함께 저장
       // 2026-07-23: tone도 함께 저장 — 발행 이력 등에서 재발행할 때도 제휴 광고 게이팅 유지
-      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '', tone: post.tone || '' }),
+      JSON.stringify({ intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], thumbText: post.thumbText || '', tone: post.tone || '', bodyLink: post.bodyLink || null }),
       JSON.stringify(post.hashtags || []),
       JSON.stringify(post.images || []),
       scheduledAt
@@ -9601,7 +10403,7 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
       // 2026-07-08: 썸네일 전용 문구 — 있으면 제목 대신 썸네일에 사용
       thumbText: post.thumbText || null,
       // 2026-07-23: tone — 제휴 광고가 "리뷰형" 톤에서만 동작하도록 게이팅하는 데 사용
-      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '' },
+      content: { intro: post.intro, body: post.body, conclusion: post.conclusion, links: post.links || [], tone: post.tone || '', bodyLink: post.bodyLink || null },
       hashtags: post.hashtags || [],
       images: post.images || [],
       category: post.category || '',
@@ -10579,6 +11381,11 @@ ipcMain.handle('post:saveDraft', async (event, { accountId, post }) => {
       // 2026-08-09 신규: "관련 사이트를 게시글에 삽입" 체크 여부도 함께 저장해
       // 재사용 시 그대로 복원(links 자체는 항상 원본 그대로 저장됨).
       insertLinks: !!post.insertLinks,
+      // 2026-10-01 신규: 본문 중간 링크 카드 — 이름/URL은 매번 직접 입력하는
+      // 값이라 재사용 시에도 사용자가 입력한 값 그대로만 복원(자동 생성 없음).
+      bodyLinkName: post.bodyLinkName || '',
+      bodyLinkUrl: post.bodyLinkUrl || '',
+      insertBodyLink: !!post.insertBodyLink,
     };
     const insertInfo = db.prepare(
       `INSERT INTO posts (account_id, naver_id, title, content_json, hashtags, images_json, status, category, visibility, auto_thumbnail, source, memo, created_at)
