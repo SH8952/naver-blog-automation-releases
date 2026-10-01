@@ -42,3 +42,8 @@ build-obfuscated-maps/
 # 매 빌드 시 자동 재생성되는 폴더이므로 항상 제외해야 함 — 절대 다시
 # 빼지 말 것(HARD RULE).
 dist/
+
+# 더블클릭 자동 커밋 스크립트 — 실행 성공 시 자기 자신을 삭제하도록 설계됨
+# (commit-script-full-auto-requirement). git 추적 대상이면 매 실행마다
+# "삭제됨" diff가 반복 발생하므로 추적에서만 제외(파일 자체는 유지). (2026-10-01)
+커밋.command
