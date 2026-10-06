@@ -891,11 +891,16 @@
   font-size: 15px;
   line-height: 1.7;
 }
+/* 2026-10-06 수정: 기존 max-height:320px + object-fit:cover 조합이 세로
+   (폭보다 높이가 긴) 사진을 좁고 낮은 박스에 억지로 채우면서 상/하가 크게
+   잘려 보이는 문제가 사용자 보고로 확인됨. 이 스타일은 미리보기 화면
+   전용이며 실제 네이버 에디터 삽입 로직(main.js insertImageViaClipboard)과는
+   무관하지만, 실제 발행 결과(가로폭에 맞춰 비율 유지, 잘림 없음)와 더
+   비슷하게 보이도록 height:auto로 변경 — 잘림을 완전히 제거. */
 .preview-body-img {
   display: block;
   width: 100%;
-  max-height: 320px;
-  object-fit: cover;
+  height: auto;
   border-radius: var(--radius-sm);
   margin: 10px 0;
 }

@@ -89,10 +89,15 @@ export default function ReviewQueue() {
   // 만들어진 글로 미리보기→테스트(발행 안 함)를 반복 수행하기 위함.
   // handleMoveToEditor와 로직은 같지만 deleteReview 호출이 없어 검수 대기
   // 목록에 원본이 계속 남는다는 점만 다름.
-  const buildReviewPostPayload = (post) => {
+  // 2026-10-06 수정: post:getReviewQueue가 더 이상 images_json을 내려주지
+  // 않으므로(목록 화면 크래시 방지를 위한 조치), 사진이 실제로 필요한 이
+  // 시점에 post:getReviewImages로 그 글 한 건의 사진만 따로 불러오도록
+  // 비동기 함수로 변경.
+  const buildReviewPostPayload = async (post) => {
     const content = parseContent(post);
     let images = [];
-    try { images = JSON.parse(post.images_json || '[]'); } catch { /* 무시 */ }
+    const imgRes = await window.electronAPI.post.getReviewImages(post.id);
+    if (imgRes.success) images = imgRes.images;
     let hashtags = [];
     try { hashtags = JSON.parse(post.hashtags || '[]'); } catch { /* 무시 */ }
     return {
@@ -125,8 +130,9 @@ export default function ReviewQueue() {
     };
   };
 
-  const handleTestOpen = (post) => {
-    navigate('/post-create', { state: { reviewPost: buildReviewPostPayload(post) } });
+  const handleTestOpen = async (post) => {
+    const reviewPost = await buildReviewPostPayload(post);
+    navigate('/post-create', { state: { reviewPost } });
   };
 
   // 2026-07-07 신규: 검수 대기 글을 "글 생성" 화면으로 옮겨서 사용자가 직접
@@ -137,7 +143,8 @@ export default function ReviewQueue() {
     setMovingId(post.id);
     const content = parseContent(post);
     let images = [];
-    try { images = JSON.parse(post.images_json || '[]'); } catch { /* 무시 */ }
+    const imgRes = await window.electronAPI.post.getReviewImages(post.id);
+    if (imgRes.success) images = imgRes.images;
     let hashtags = [];
     try { hashtags = JSON.parse(post.hashtags || '[]'); } catch { /* 무시 */ }
     const reviewPost = {

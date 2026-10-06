@@ -109,6 +109,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 반자동 검수 대기 목록 조회 (2026-07-05 신규) */
     getReviewQueue: () => ipcRenderer.invoke('post:getReviewQueue'),
 
+    /** 검수 대기 글 한 건의 사진만 조회 (2026-10-06 신규 — 목록 조회에서
+     * images_json을 뺀 대신, 실제로 사진이 필요할 때만 따로 불러옴) */
+    getReviewImages: (id) => ipcRenderer.invoke('post:getReviewImages', { id }),
+
     /** 검수 대기 글 최종 발행 */
     publishReview: (id) => ipcRenderer.invoke('post:publishReview', { id }),
 

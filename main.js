@@ -4947,8 +4947,62 @@ ipcMain.handle('image:upload', async () => {
     const ext      = filePath.split('.').pop().toLowerCase();
     const mimeMap  = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
     const mime     = mimeMap[ext] || 'image/jpeg';
-    const base64   = fs.readFileSync(filePath).toString('base64');
-    const dataUrl  = `data:${mime};base64,${base64}`;
+
+    // 2026-10-06 신규(사용자 요청): 직접 촬영 후 보정한 사진은 용량이 커서
+    // (수십 MB) 네이버 에디터에 원본 그대로 붙여넣을 때 오류가 발생하는
+    // 문제가 보고됨. 기존에는 fs.readFileSync 결과를 가공 없이 그대로
+    // base64 인코딩해 저장했음(용량 축소 전혀 없음). Electron 내장
+    // nativeImage(별도 패키지 설치 불필요 — 제휴 광고 이미지 축소에 이미
+    // 실사용 검증된 것과 동일한 API)로 업로드 시점에 미리 "긴 변 기준
+    // 업로드용 해상도"로 축소 + JPEG 재인코딩해 저장한다. 이렇게 하면
+    // (1) 미리보기에 저장되는 데이터 용량도 함께 줄고, (2) 발행 시
+    // 네이버 에디터로 들어가는 용량도 같이 줄어드는 효과를 한 곳에서
+    // 얻을 수 있다. gif(애니메이션)는 리사이즈/재인코딩 시 움직임이
+    // 깨질 수 있어 원본 그대로 유지. 디코딩 실패 등 예외 상황에서는
+    // 발행 자체가 막히지 않도록 원본 그대로 폴백한다.
+    const MAX_UPLOAD_DIMENSION = 1920; // 네이버 블로그 본문 표시 기준 이보다 클 필요 없음
+    const UPLOAD_JPEG_QUALITY  = 85;   // 육안상 원본과 차이가 거의 없는 수준
+
+    let dataUrl;
+    const rawBuf = fs.readFileSync(filePath);
+
+    if (ext === 'gif') {
+      dataUrl = `data:${mime};base64,${rawBuf.toString('base64')}`;
+    } else {
+      try {
+        const { nativeImage } = require('electron');
+        let img = nativeImage.createFromBuffer(rawBuf);
+        if (img.isEmpty()) {
+          writeLog('WARN', 'IMAGE', '로컬 업로드 이미지 축소용 디코딩 실패 — 원본 그대로 사용', filePath);
+          dataUrl = `data:${mime};base64,${rawBuf.toString('base64')}`;
+        } else {
+          const orig = img.getSize();
+          const longSide = Math.max(orig.width, orig.height);
+          if (longSide > MAX_UPLOAD_DIMENSION) {
+            const ratio = MAX_UPLOAD_DIMENSION / longSide;
+            const resized = img.resize({
+              width: Math.max(1, Math.round(orig.width * ratio)),
+              height: Math.max(1, Math.round(orig.height * ratio)),
+            });
+            if (!resized.isEmpty()) {
+              img = resized;
+              writeLog('INFO', 'IMAGE', '로컬 업로드 이미지 축소', `${orig.width}x${orig.height} → ${img.getSize().width}x${img.getSize().height}`);
+            }
+          }
+          if (ext === 'png') {
+            // 투명도를 가질 수 있는 PNG는 포맷 유지(해상도만 축소)
+            dataUrl = img.toDataURL();
+          } else {
+            // jpg/jpeg/webp는 JPEG로 재인코딩해 용량을 추가로 절감
+            const jpegBuf = img.toJPEG(UPLOAD_JPEG_QUALITY);
+            dataUrl = `data:image/jpeg;base64,${jpegBuf.toString('base64')}`;
+          }
+        }
+      } catch (e) {
+        writeLog('WARN', 'IMAGE', '로컬 업로드 이미지 축소 중 예외 — 원본 그대로 사용', e.message);
+        dataUrl = `data:${mime};base64,${rawBuf.toString('base64')}`;
+      }
+    }
 
     return { success: true, image: { id: `local_${Date.now()}`, url: dataUrl, thumb: dataUrl, alt: '', photographer: '로컬 이미지' } };
   } catch (err) {
@@ -9228,10 +9282,15 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // _pre-revert-body-image-center-align.js(1차 롤백 직전, center:true 버전) /
   // backups/2026-08-24/main.js_backup_2026-08-24_pre-body-image-align-hardening.js
   // (이번 하드닝 수정 전, 즉 "언스플래시만 안전하게 쓰던" 롤백 상태 지점).
-  await insertImgSection(imgs[0], '이미지1', { center: true });
+  // 2026-10-06 수정(사용자 요청): 본문 삽입 이미지가 네이버 에디터에서
+  // 너무 크게 보여 fixedSize:700(긴 변 기준 700px)을 추가 — 블로그 본문
+  // 표시폭(약 650~700px)과 맞춰, 에디터에 붙여넣는 순간부터 실제로 작게
+  // 들어가도록 함(업로드 단계의 1920px 축소와는 별개로 본문 삽입 시점에
+  // 한 번 더 축소). 본문 5장 + 보너스 5장(총 10곳) 전부 동일 적용.
+  await insertImgSection(imgs[0], '이미지1', { center: true, fixedSize: 700 });
   // 2026-08-04 신규: 보너스 이미지 — 이 지점(0)이 선택된 경우만 이미지1
   // 바로 뒤에 한 장 더 삽입(기존 이미지1 위치/순서는 변경하지 않음)
-  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스', { center: true });
+  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스', { center: true, fixedSize: 700 });
   // 제휴 광고 — 도입부 아래(위치 설정 'intro'|'both'일 때만)
   if (affiliateAd && (affiliateAd.position === 'intro' || affiliateAd.position === 'both')) {
     await insertAffiliateAd('제휴 광고(도입부 아래)');
@@ -9248,8 +9307,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   let usedMidImages = false;
   if (part1) {
     await pasteHtml(buildBodyHtml(part1, editorFont, iconCycler, postStylePreset), '본문(대분류1 도입)');
-    await insertImgSection(imgs[1], '이미지2', { center: true });
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true });
+    await insertImgSection(imgs[1], '이미지2', { center: true, fixedSize: 700 });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true, fixedSize: 700 });
     usedMidImages = true;
   }
   if (part2) {
@@ -9280,24 +9339,24 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       }
       await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
     }
-    await insertImgSection(imgs[2], '이미지3', { center: true });
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
+    await insertImgSection(imgs[2], '이미지3', { center: true, fixedSize: 700 });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true, fixedSize: 700 });
     usedMidImages = true;
   }
   if (part3) {
     await pasteHtml(buildBodyHtml(part3, editorFont, iconCycler, postStylePreset), '본문(중분류2)');
-    await insertImgSection(imgs[3], '이미지4', { center: true });
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true });
+    await insertImgSection(imgs[3], '이미지4', { center: true, fixedSize: 700 });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true, fixedSize: 700 });
     usedMidImages = true;
   }
   await pasteHtml(buildBodyHtml(part4, editorFont, iconCycler, postStylePreset), '본문(대분류2)');
   if (!usedMidImages) {
-    await insertImgSection(imgs[1], '이미지2', { center: true });
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true });
-    await insertImgSection(imgs[2], '이미지3', { center: true });
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true });
-    await insertImgSection(imgs[3], '이미지4', { center: true });
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true });
+    await insertImgSection(imgs[1], '이미지2', { center: true, fixedSize: 700 });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true, fixedSize: 700 });
+    await insertImgSection(imgs[2], '이미지3', { center: true, fixedSize: 700 });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true, fixedSize: 700 });
+    await insertImgSection(imgs[3], '이미지4', { center: true, fixedSize: 700 });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true, fixedSize: 700 });
   }
 
   // 제휴 광고 — 본문 아래(위치 설정 'body'|'both'일 때만, 기본값)
@@ -9307,8 +9366,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
   // 이미지 5 (마무리 시작 지점 — 2026-07-07: 기존엔 마무리 "뒤"였으나
   // 마무리를 읽는 도중 시각적 전환을 주도록 마무리 "시작 지점"으로 변경)
-  await insertImgSection(imgs[4], '이미지5', { center: true });
-  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스', { center: true });
+  await insertImgSection(imgs[4], '이미지5', { center: true, fixedSize: 700 });
+  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스', { center: true, fixedSize: 700 });
   // 마무리
   await pasteHtml(buildConclusionHtml(content.conclusion, editorFont, iconCycler, postStylePreset), '마무리');
   // 관련 사이트 링크 섹션 — 2026-07-23: 게시 직전 실제 접속 가능한
@@ -10180,7 +10239,11 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
           // published_at은 건드리지 않고 'reserved' 상태로만 표시한다.
           gdb().prepare("UPDATE posts SET status='reserved' WHERE id=?").run(postId);
         } else {
-          gdb().prepare("UPDATE posts SET status='published', published_at=datetime('now','localtime') WHERE id=?").run(postId);
+          // 2026-10-06 수정: 발행 완료 순간 사진 데이터(images_json)를 함께 비움.
+          // 사용자 요청 — 발행 기록(제목/시각/계정/URL 등)은 영구 보존하되,
+          // 이미 네이버에 올라간 사진 원본 데이터까지 DB에 계속 쌓아둘
+          // 필요는 없음(검수대기/예약발행 크래시의 근본 원인이기도 했음).
+          gdb().prepare("UPDATE posts SET status='published', published_at=datetime('now','localtime'), images_json='[]' WHERE id=?").run(postId);
         }
       }
     } catch { /* ignore */ }
@@ -10436,11 +10499,26 @@ ipcMain.handle('publish:schedule', async (event, { accountId, post, scheduledAt 
 });
 
 // ── IPC: 발행 목록 조회 ───────────────────────────────────────
+// 2026-10-06 수정(크래시 긴급 수정 — post:getReviewQueue와 동일한 문제):
+// 이 핸들러는 "발행 이력"(History.jsx, 필터 없이 호출 시 전체 글)과
+// "발행 스케줄러"(PublishScheduler.jsx, 월 단위로 호출)에서 쓰이는데,
+// 기존엔 p.*로 images_json(사진 base64 데이터)까지 전부 불러왔음. 두
+// 화면 모두 목록에 사진을 전혀 표시하지 않는데도(코드 확인 완료 —
+// images_json을 참조하는 곳이 없음) 매번 이 무거운 데이터까지 IPC로
+// 직렬화해 넘기고 있었음. 임시저장/예약 글에 용량이 큰 사진이 쌓이면
+// (실사용 중 "예약 발행" 84건 합계 561MB, "검수 대기" 2건 합계 1GB
+// 발생) Electron이 그대로 죽는(EXC_BREAKPOINT 네이티브 크래시) 문제가
+// post:getReviewQueue와 똑같이 재현됨. images_json만 제외하고 나머지
+// 컬럼만 명시적으로 선택 — 이 두 화면도 이제 DB에 사진이 아무리 쌓여
+// 있어도 죽지 않는다.
 ipcMain.handle('publish:getAll', (event, filters = {}) => {
   try {
     const { getDB } = require('./src/db');
     let sql = `
-      SELECT p.*, a.nickname AS account_nickname,
+      SELECT p.id, p.account_id, p.naver_id, p.title, p.content_json, p.hashtags,
+             p.status, p.scheduled_at, p.published_at, p.post_url, p.error_msg,
+             p.created_at, p.category, p.visibility, p.auto_thumbnail, p.source, p.memo,
+             a.nickname AS account_nickname,
         (SELECT views FROM post_view_stats v WHERE v.post_id = p.id ORDER BY v.stat_date DESC LIMIT 1) AS latest_views,
         (SELECT stat_date FROM post_view_stats v WHERE v.post_id = p.id ORDER BY v.stat_date DESC LIMIT 1) AS latest_views_date
       FROM posts p
@@ -11340,11 +11418,24 @@ ipcMain.handle('automationLoop:cancelShutdown', () => {
 });
 
 // ── IPC: 반자동 검수 대기 목록 ─────────────────────────────────
+// 2026-10-06 수정(크래시 긴급 수정): 기존엔 p.*로 images_json(사진 base64
+// 데이터)까지 전부 불러왔는데, ReviewQueue.jsx 목록 화면은 사진을 전혀
+// 표시하지 않음에도 이 무거운 데이터를 매번 통째로 IPC로 직렬화해 넘기고
+// 있었음. 임시저장 글에 용량이 큰 사진이 쌓이면(실사용 중 한 건이
+// 500MB대까지 발생) Electron이 직렬화 과정에서 그대로 죽는(EXC_BREAKPOINT
+// 네이티브 크래시) 문제가 확인됨. 목록에는 사진이 필요 없으므로
+// images_json만 제외하고 나머지 컬럼만 명시적으로 선택 — DB에 아무리
+// 큰 사진이 쌓여 있어도 목록 화면 자체는 더 이상 죽지 않도록 함. 사진이
+// 실제로 필요한 "테스트로 열기"/"글 생성으로 이동" 시점에는 아래
+// post:getReviewImages로 그 글 하나만 따로 불러온다.
 ipcMain.handle('post:getReviewQueue', () => {
   try {
     const { getDB } = require('./src/db');
     const rows = getDB().prepare(`
-      SELECT p.*, a.naver_id as account_naver_id, a.nickname as account_nickname
+      SELECT p.id, p.account_id, p.naver_id, p.title, p.content_json, p.hashtags,
+             p.status, p.scheduled_at, p.published_at, p.post_url, p.error_msg,
+             p.created_at, p.category, p.visibility, p.auto_thumbnail, p.source, p.memo,
+             a.naver_id as account_naver_id, a.nickname as account_nickname
       FROM posts p LEFT JOIN accounts a ON a.id = p.account_id
       WHERE p.status = 'review'
       ORDER BY p.created_at DESC
@@ -11352,6 +11443,24 @@ ipcMain.handle('post:getReviewQueue', () => {
     return { success: true, posts: rows };
   } catch (err) {
     return { success: false, error: err.message, posts: [] };
+  }
+});
+
+// ── IPC: 검수 대기 글 한 건의 사진만 조회 (2026-10-06 신규) ──────────
+// 위 post:getReviewQueue가 더 이상 images_json을 내려주지 않게 되면서,
+// "테스트로 열기"/"글 생성으로 이동"처럼 실제로 사진이 필요한 시점에만
+// 글 한 건의 images_json을 따로 불러오기 위한 핸들러. status='review'
+// 조건을 그대로 둬서 검수 대기가 아닌 글의 사진을 엉뚱하게 노출하지 않음.
+ipcMain.handle('post:getReviewImages', (event, { id }) => {
+  try {
+    const { getDB } = require('./src/db');
+    const row = getDB().prepare("SELECT images_json FROM posts WHERE id = ? AND status = 'review'").get(id);
+    if (!row) return { success: false, error: '대상 글을 찾을 수 없습니다.' };
+    let images = [];
+    try { images = JSON.parse(row.images_json || '[]'); } catch { /* 무시 */ }
+    return { success: true, images };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
 });
 
@@ -11469,7 +11578,8 @@ ipcMain.handle('post:markPublished', (event, { id }) => {
     const db = getDB();
     const post = db.prepare("SELECT id FROM posts WHERE id = ? AND status = 'review'").get(id);
     if (!post) return { success: false, error: '대상 글을 찾을 수 없습니다.' };
-    db.prepare("UPDATE posts SET status='published', published_at=datetime('now','localtime') WHERE id=?").run(id);
+    // 2026-10-06 수정: 위와 동일 — 발행 완료 처리 시 사진 데이터 비움.
+    db.prepare("UPDATE posts SET status='published', published_at=datetime('now','localtime'), images_json='[]' WHERE id=?").run(id);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
