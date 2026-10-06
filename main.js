@@ -8657,6 +8657,15 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // opts.scale(2026-07-23 신규, 기본 1)/opts.center(기본 false): 제휴 광고
   // 상품 이미지에만 사용 — 본문 이미지 5장 호출부는 opts를 안 넘기므로
   // 기존과 동일하게 동작.
+  // 2026-10-06 수정(사용자 요청): fixedSize:700 축소는 사용자가 직접
+  // 촬영/업로드한 사진(네이버 에디터에서 너무 크게 보이던 문제)에만
+  // 필요했던 것으로 확인됨 — 글감 수집(언스플래시/픽사베이/펙셀스)
+  // 스톡 사진은 실사용 테스트(발행 전/후 비교) 결과 축소 적용 여부에
+  // 체감 차이가 없다고 판단되어 제외. 로컬 업로드 사진은 image:upload
+  // 단계에서 data: URL로 저장되고, 스톡 사진은 원격 http(s) URL 그대로
+  // 쓰이므로(insertImageViaClipboard의 isLocalDataUrl 분기와 동일 판별
+  // 기준) url이 'data:'로 시작할 때만 700px 축소를 적용한다.
+  const localFixedSize = (img) => (img && typeof img.url === 'string' && img.url.startsWith('data:')) ? 700 : null;
   const insertImgSection = async (img, label, opts = {}) => {
     if (!img || !img.url) return;
     // 2026-09-13 추가: skipStockProcess — 제휴 광고 상품 이미지처럼 원본
@@ -9287,10 +9296,10 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   // 표시폭(약 650~700px)과 맞춰, 에디터에 붙여넣는 순간부터 실제로 작게
   // 들어가도록 함(업로드 단계의 1920px 축소와는 별개로 본문 삽입 시점에
   // 한 번 더 축소). 본문 5장 + 보너스 5장(총 10곳) 전부 동일 적용.
-  await insertImgSection(imgs[0], '이미지1', { center: true, fixedSize: 700 });
+  await insertImgSection(imgs[0], '이미지1', { center: true, fixedSize: localFixedSize(imgs[0]) });
   // 2026-08-04 신규: 보너스 이미지 — 이 지점(0)이 선택된 경우만 이미지1
   // 바로 뒤에 한 장 더 삽입(기존 이미지1 위치/순서는 변경하지 않음)
-  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스', { center: true, fixedSize: 700 });
+  if (bonusSet.has(0) && imgs[5]) await insertImgSection(imgs[5], '이미지1-보너스', { center: true, fixedSize: localFixedSize(imgs[5]) });
   // 제휴 광고 — 도입부 아래(위치 설정 'intro'|'both'일 때만)
   if (affiliateAd && (affiliateAd.position === 'intro' || affiliateAd.position === 'both')) {
     await insertAffiliateAd('제휴 광고(도입부 아래)');
@@ -9307,8 +9316,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
   let usedMidImages = false;
   if (part1) {
     await pasteHtml(buildBodyHtml(part1, editorFont, iconCycler, postStylePreset), '본문(대분류1 도입)');
-    await insertImgSection(imgs[1], '이미지2', { center: true, fixedSize: 700 });
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true, fixedSize: 700 });
+    await insertImgSection(imgs[1], '이미지2', { center: true, fixedSize: localFixedSize(imgs[1]) });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true, fixedSize: localFixedSize(imgs[6]) });
     usedMidImages = true;
   }
   if (part2) {
@@ -9339,24 +9348,24 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
       }
       await pasteHtml(buildBodyHtml(part2, editorFont, iconCycler, postStylePreset), '본문(중분류1)');
     }
-    await insertImgSection(imgs[2], '이미지3', { center: true, fixedSize: 700 });
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true, fixedSize: 700 });
+    await insertImgSection(imgs[2], '이미지3', { center: true, fixedSize: localFixedSize(imgs[2]) });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true, fixedSize: localFixedSize(imgs[7]) });
     usedMidImages = true;
   }
   if (part3) {
     await pasteHtml(buildBodyHtml(part3, editorFont, iconCycler, postStylePreset), '본문(중분류2)');
-    await insertImgSection(imgs[3], '이미지4', { center: true, fixedSize: 700 });
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true, fixedSize: 700 });
+    await insertImgSection(imgs[3], '이미지4', { center: true, fixedSize: localFixedSize(imgs[3]) });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true, fixedSize: localFixedSize(imgs[8]) });
     usedMidImages = true;
   }
   await pasteHtml(buildBodyHtml(part4, editorFont, iconCycler, postStylePreset), '본문(대분류2)');
   if (!usedMidImages) {
-    await insertImgSection(imgs[1], '이미지2', { center: true, fixedSize: 700 });
-    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true, fixedSize: 700 });
-    await insertImgSection(imgs[2], '이미지3', { center: true, fixedSize: 700 });
-    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true, fixedSize: 700 });
-    await insertImgSection(imgs[3], '이미지4', { center: true, fixedSize: 700 });
-    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true, fixedSize: 700 });
+    await insertImgSection(imgs[1], '이미지2', { center: true, fixedSize: localFixedSize(imgs[1]) });
+    if (bonusSet.has(1) && imgs[6]) await insertImgSection(imgs[6], '이미지2-보너스', { center: true, fixedSize: localFixedSize(imgs[6]) });
+    await insertImgSection(imgs[2], '이미지3', { center: true, fixedSize: localFixedSize(imgs[2]) });
+    if (bonusSet.has(2) && imgs[7]) await insertImgSection(imgs[7], '이미지3-보너스', { center: true, fixedSize: localFixedSize(imgs[7]) });
+    await insertImgSection(imgs[3], '이미지4', { center: true, fixedSize: localFixedSize(imgs[3]) });
+    if (bonusSet.has(3) && imgs[8]) await insertImgSection(imgs[8], '이미지4-보너스', { center: true, fixedSize: localFixedSize(imgs[8]) });
   }
 
   // 제휴 광고 — 본문 아래(위치 설정 'body'|'both'일 때만, 기본값)
@@ -9366,8 +9375,8 @@ async function publishToNaver({ accountId, postId, title, thumbText = null, cont
 
   // 이미지 5 (마무리 시작 지점 — 2026-07-07: 기존엔 마무리 "뒤"였으나
   // 마무리를 읽는 도중 시각적 전환을 주도록 마무리 "시작 지점"으로 변경)
-  await insertImgSection(imgs[4], '이미지5', { center: true, fixedSize: 700 });
-  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스', { center: true, fixedSize: 700 });
+  await insertImgSection(imgs[4], '이미지5', { center: true, fixedSize: localFixedSize(imgs[4]) });
+  if (bonusSet.has(4) && imgs[9]) await insertImgSection(imgs[9], '이미지5-보너스', { center: true, fixedSize: localFixedSize(imgs[9]) });
   // 마무리
   await pasteHtml(buildConclusionHtml(content.conclusion, editorFont, iconCycler, postStylePreset), '마무리');
   // 관련 사이트 링크 섹션 — 2026-07-23: 게시 직전 실제 접속 가능한
