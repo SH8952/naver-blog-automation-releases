@@ -21,10 +21,10 @@ const DEFAULTS = {
   postLayout: -1,
   editorFont: '바른히피',
   aiProvider: 'gemini',
-  geminiModel: 'gemini-3.1-flash-lite',
+  geminiModel: 'gemini-3.5-flash-lite',
   groqModel: 'openai/gpt-oss-120b',
-  openaiModel: 'gpt-4o',
-  claudeModel: 'claude-sonnet-5',
+  openaiModel: 'gpt-6.1-sol',
+  claudeModel: 'claude-sonnet-5-5',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   maxDailyPosts: 3, intervalMin: 30, intervalMax: 120, similarityThreshold: 70,
   // 2026-07-23 신규: 제휴 광고(쿠팡파트너스/알리익스프레스)
@@ -1223,13 +1223,11 @@ export default function Settings() {
           <div className="form-group">
             <label>Gemini 모델</label>
             <select className="input" value={form.geminiModel} onChange={e => set('geminiModel', e.target.value)}>
-              <option value="gemini-3.8-flash">Gemini 3.8 Flash — 최신 세대 (무료, 2026-09 확인)</option>
-              <option value="gemini-3.7-flash">Gemini 3.7 Flash — 최신 세대 (무료, 2026-09 확인)</option>
-              <option value="gemini-3.6-flash">Gemini 3.6 Flash — 최신 세대 (무료, 2026-09 확인)</option>
-              <option value="gemini-3.5-flash">Gemini 3.5 Flash — 최고지능, 에이전틱·코딩 특화 (무료)</option>
-              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — 절약형 신형 (무료, 2026-09 확인)</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite — 절약·빠름 (무료, 권장)</option>
-              <option value="gemini-3-flash-preview">Gemini 3 Flash — 신형 균형 (무료)</option>
+              <option value="gemini-3.8-flash">Gemini 3.8 Flash — 최신 세대, 최고지능 (무료, 2026-11 확인)</option>
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash — 이전 세대 균형형 (무료, 2026-11 확인)</option>
+              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — 절약·빠름 (무료, 권장)</option>
+              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite — 구형, 2027-05 단계적 종료 예정 (무료)</option>
+              <option value="gemini-3-flash-preview">Gemini 3 Flash — 구형 균형 (무료)</option>
               <option value="gemini-2.5-flash">Gemini 2.5 Flash — 구세대 안정적 가성비 (무료)</option>
               <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite — 구세대 초저가·최고속 (무료)</option>
               <option disabled>── 유료 전용 모델 ──</option>
@@ -1266,7 +1264,7 @@ export default function Settings() {
               <option value="openai/gpt-oss-20b">GPT-OSS 20B — 초경량·초고속</option>
               <option value="groq/compound">Compound — 에이전트 시스템 (웹검색·코드실행 자동판단)</option>
               <option disabled>── 프리미엄(고비용) 모델 ──</option>
-              <option value="qwen/qwen3.8-27b">Qwen3.8 27B — Groq 내 최고지능 추론 (Preview, 2026-09 확인)</option>
+              <option value="qwen/qwen3.8-27b">Qwen3.8 27B — Groq 내 최고지능 추론 (Preview, 2026-11 확인)</option>
             </select>
           </div>
         </>)}
@@ -1297,15 +1295,11 @@ export default function Settings() {
           <div className="form-group">
             <label>OpenAI 모델</label>
             <select className="input" value={form.openaiModel} onChange={e => set('openaiModel', e.target.value)}>
-              <option value="gpt-6-luna">GPT-6 Luna — 신세대 경량·저비용 (2026-09 확인)</option>
-              <option value="gpt-6-sol">GPT-6 Sol — 신세대 코딩·에이전틱 특화 (2026-09 확인)</option>
-              <option value="gpt-5.6-luna">GPT-5.6 Luna — 최신 경량·저비용</option>
-              <option value="gpt-5.6-terra">GPT-5.6 Terra — 최신 균형 (권장)</option>
-              <option value="gpt-4o">GPT-4o — 안정적 고품질 (한국어 우수)</option>
-              <option value="gpt-4o-mini">GPT-4o Mini — 빠름·저렴</option>
+              <option value="gpt-6.1-sol">GPT-6.1 Sol — 지능·비용 균형, OpenAI 공식 권장 (권장, 2026-11 확인)</option>
+              <option value="gpt-6.1-terra">GPT-6.1 Terra — 자연스러운 글쓰기 특화 (2026-11 확인)</option>
+              <option value="gpt-6-luna">GPT-6 Luna — 경량·저비용, 고빈도 작업용 (2026-11 확인)</option>
               <option disabled>── 프리미엄(고비용) 모델 ──</option>
-              <option value="gpt-6-astra">GPT-6 Astra — 신세대 최상위 플래그십 (2026-09 확인)</option>
-              <option value="gpt-5.6-sol">GPT-5.6 Sol — 최고 성능 플래그십</option>
+              <option value="gpt-6-astra">GPT-6 Astra — 최상위 플래그십 (2026-11 확인)</option>
             </select>
           </div>
         </>)}
@@ -1337,13 +1331,13 @@ export default function Settings() {
             <label>Claude 모델</label>
             <select className="input" value={form.claudeModel} onChange={e => set('claudeModel', e.target.value)}>
               <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — 빠름·저렴</option>
-              <option value="claude-sonnet-5">Claude Sonnet 5 — 균형 (권장)</option>
-              <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — 신세대 균형 (2026-09 확인)</option>
+              <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — 속도·지능 균형, 신규 기본 모델 (권장, 2026-11 확인)</option>
+              <option value="claude-sonnet-5">Claude Sonnet 5 — 이전 세대 균형 (2026-11 확인)</option>
               <option disabled>── 프리미엄(고비용) 모델 ──</option>
               <option value="claude-opus-4-8">Claude Opus 4.8 — 최고품질 (느림·고비용)</option>
-              <option value="claude-opus-5-5">Claude Opus 5.5 — 신세대 최고품질 (2026-09 확인)</option>
+              <option value="claude-opus-5-5">Claude Opus 5.5 — 신세대 최고품질 (2026-11 확인)</option>
               <option value="claude-fable-5">Claude Fable 5 — 최상위 플래그십 (최고비용)</option>
-              <option value="claude-fable-5-1">Claude Fable 5.1 — 신세대 최상위 플래그십 (2026-09 확인)</option>
+              <option value="claude-fable-5-1">Claude Fable 5.1 — 신세대 최상위 플래그십 (2026-11 확인)</option>
             </select>
           </div>
         </>)}

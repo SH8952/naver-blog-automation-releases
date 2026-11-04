@@ -1953,7 +1953,7 @@ const SETTINGS_DEFAULTS = {
   // 업로드 사진(사용자 원본)에는 이 설정과 무관하게 적용되지 않음.
   stockPhotoAutoProcess: true,
   aiProvider: 'gemini',
-  geminiModel: 'gemini-3.1-flash-lite',
+  geminiModel: 'gemini-3.5-flash-lite',
   groqModel: 'openai/gpt-oss-120b',
   sentenceStyle: 'auto', writingStyle: 'auto', personalExp: 'auto', tone: 'info',
   // 2026-07-14: 프리미엄 등급의 하루 최대 발행 기본값 0 = 무제한
@@ -3639,14 +3639,14 @@ async function callAI(prompt, maxOutputTokens = 8192) {
 
   if (provider === 'openai') {
     const apiKey = (store.get('settings.openaiKey', '') || '').trim();
-    const model  = store.get('settings.openaiModel', 'gpt-4o');
+    const model  = store.get('settings.openaiModel', 'gpt-6.1-sol');
     if (!apiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.');
     return callOpenAI(apiKey, prompt, model, maxOutputTokens);
   }
 
   if (provider === 'claude') {
     const apiKey = (store.get('settings.claudeKey', '') || '').trim();
-    const model  = store.get('settings.claudeModel', 'claude-sonnet-5');
+    const model  = store.get('settings.claudeModel', 'claude-sonnet-5-5');
     if (!apiKey) throw new Error('Claude API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.');
     return callClaude(apiKey, prompt, model, maxOutputTokens);
   }
@@ -3687,7 +3687,7 @@ async function callAI(prompt, maxOutputTokens = 8192) {
 
   // 기본: Gemini
   const apiKey = (store.get('settings.geminiKey', '') || '').trim();
-  const model  = store.get('settings.geminiModel', 'gemini-3.1-flash-lite');
+  const model  = store.get('settings.geminiModel', 'gemini-3.5-flash-lite');
   if (!apiKey) throw new Error('Gemini API 키가 설정되지 않았습니다.\n환경설정에서 키를 입력해 주세요.');
   return callGemini(apiKey, prompt, model, maxOutputTokens);
 }
